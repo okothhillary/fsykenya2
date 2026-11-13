@@ -1,5 +1,5 @@
 
-const firebaseConfig = {
+const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBr69YFaKKYoa2VovDJBPPTwS3mjFgu0Co",
   authDomain: "fsykenya2.firebaseapp.com",
   projectId: "fsykenya2",
