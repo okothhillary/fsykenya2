@@ -1,4 +1,5 @@
-const FIREBASE_CONFIG = {
+
+const firebaseConfig = {
   apiKey: "AIzaSyBr69YFaKKYoa2VovDJBPPTwS3mjFgu0Co",
   authDomain: "fsykenya2.firebaseapp.com",
   projectId: "fsykenya2",
@@ -7,8 +8,7 @@ const FIREBASE_CONFIG = {
   appId: "1:922718506149:web:26e2b68af9c2880885514c",
   measurementId: "G-QGTBQ86NBD"
 };
-
-const OWNER_EMAILS = ['hillarywokoth@gmail.com'];
+const OWNER_EMAILS = ['hillarywokoth@gmail.com', 'ryanmali001@gmail.com'];
 
 /* ---------- Firebase layer: the small database/user/download interface the app uses ---------- */
 const FB = { app: null, auth: null, fs: null, user: null };
@@ -1219,14 +1219,14 @@ PAGE_IMPL.access = {
     <div class="panel"><h2>Create an account</h2><form id="invForm" class="form">
       <label>Full name<input id="invName" required autocomplete="off"></label>
       <label>Google email<input id="invEmail" type="email" required autocomplete="off" placeholder="name@gmail.com"></label>
-      <label>Role<select id="invRole" required>${opt('', 'Choose…')}${Object.keys(ROLES).filter(r => r !== 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select></label>
+      <label>Role<select id="invRole" required>${opt('', 'Choose…')}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select></label>
       <label>Staff record<select id="invStaff">${opt('', '— Link later')}${S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role])).join('')}</select></label>
       <p class="note span2" style="margin:0">Counselors and ACs must be linked to their staff record. That decides which group and company, and whose medical and dietary notes, they can see.</p>
       <div class="span2"><button class="btn primary" type="submit">Create account</button></div></form></div>
     <div class="panel"><div class="panel-head"><h2>Accounts you created</h2><span class="note" id="invCount"></span></div><div id="invList"></div></div>
     <div class="panel"><h2>Sign-in requests</h2><p class="note" style="margin-top:-4px">From people whose Google email did not match an account. Choosing a role creates an account for that email.</p><div id="acReq"></div></div>
     <div class="panel"><h2>What each role sees and does</h2><div class="tablewrap"><table><thead><tr><th>Role</th><th>Sees</th><th>Can</th></tr></thead><tbody>
-      <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts.</td></tr>
+      <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
       <tr><td>Session directing couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Medical, dietary and T-shirt lists and the tally.</td></tr>
@@ -1237,7 +1237,7 @@ PAGE_IMPL.access = {
   async update() {
     const invs = Object.entries(S.invites).sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''));
     const claimed = {}; for (const uid in S.members) { const h = S.members[uid].h; if (h) claimed[h] = uid; }
-    const roleOpts = cur => Object.keys(ROLES).filter(r => r !== 'regadmin').map(r => opt(r, ROLES[r], r === cur)).join('');
+    const roleOpts = cur => Object.keys(ROLES).filter(r => r !== 'regadmin' || r === cur || realRole() === 'regadmin').map(r => opt(r, ROLES[r], r === cur)).join('');
     const staffOpts = cur => opt('', '— Not linked', !cur) + S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role], x.id === cur)).join('');
     if (!$('#invList')) return;
     $('#invCount').textContent = invs.length ? `${Object.keys(claimed).filter(h => S.invites[h]).length} of ${invs.length} signed in` : '';
