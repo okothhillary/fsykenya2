@@ -1,10 +1,3 @@
-/* =====================================================================
-   FSY Kenya 2nd 2026 Check-in
-   1. Paste your Firebase web app settings below (Firebase console ›
-      Project settings › Your apps › SDK setup and configuration › Config).
-   2. Put the Google email(s) of the registration admin in OWNER_EMAILS.
-      Use the same email(s) in firestore.rules.
-   ===================================================================== */
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBr69YFaKKYoa2VovDJBPPTwS3mjFgu0Co",
   authDomain: "fsykenya2.firebaseapp.com",
@@ -14,6 +7,7 @@ const FIREBASE_CONFIG = {
   appId: "1:922718506149:web:26e2b68af9c2880885514c",
   measurementId: "G-QGTBQ86NBD"
 };
+
 const OWNER_EMAILS = ['hillarywokoth@gmail.com'];
 
 /* ---------- Firebase layer: the small database/user/download interface the app uses ---------- */
@@ -827,7 +821,7 @@ function renderHeader() {
     h += `<select id="viewAs" aria-label="Preview as role" style="padding:5px 8px;font-size:.82rem">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select>`;
   }
   const wa = document.activeElement; if (!(wa && wa.id === 'viewAs')) $('#who').innerHTML = h;
-  const top = $('#top'); if (top) document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px');
+  const top = $('#top'); if (top) { document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px'); const sticky = getComputedStyle(top).position === 'sticky'; const tabs = document.querySelector('.tabs'); document.documentElement.style.setProperty('--stick', sticky ? (top.offsetHeight + (tabs ? tabs.offsetHeight : 0)) + 'px' : '0px'); }
 }
 function renderNav() {
   const cur = currentPage();
@@ -890,18 +884,22 @@ PAGE_IMPL.checkin = {
     if (!UI.filterSet) { UI.filterSet = true; if (['counselor', 'ac'].includes(role())) UI.filter = 'mine'; }
     const r = role();
     const mineLabel = r === 'counselor' ? 'My group' : (r === 'ac' || r === 'coordinator') ? 'My companies' : null;
-    return `<section class="pagehead"><div><h1>Check-in</h1><p class="note" style="margin:4px 0 0">Search by name, ward or branch, group (e.g. G12) or registration ID.</p></div></section>
-    <div class="kpis" id="ciK"></div>
-    <div class="toolbar"><input type="search" id="ciQ" placeholder="Search participants…" value="${esc(UI.q)}" autocomplete="off" aria-label="Search participants"></div>
-    <div class="toolbar"><div class="seg" role="group" aria-label="Filter by status">${[['all', 'Everyone'], ['arrive', 'Not arrived'], ['in', 'Checked in'], ['out', 'Checked out']].concat(mineLabel ? [['mine', mineLabel]] : []).map(([v, l]) => `<button data-act="ciF" data-v="${v}" aria-pressed="${UI.filter === v}">${l}</button>`).join('')}</div>
-    <span id="ciSel" class="inline"></span></div>
+    const segs = [['all', 'Everyone'], ['arrive', 'Not arrived'], ['in', 'Checked in'], ['out', 'Checked out']].concat(mineLabel ? [['mine', mineLabel]] : []);
+    return `<section class="ci-head"><h1>Check-in</h1><div class="ministats" id="ciK"></div></section>
+    <div id="ciAnchor"></div>
+    <div class="searchbar" id="ciBar">
+      <div class="searchrow"><input type="search" id="ciQ" placeholder="Type a name, unit or G12…" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
+      <div class="segscroll"><div class="seg" role="group" aria-label="Filter by status">${segs.map(([v, l]) => `<button data-act="ciF" data-v="${v}" aria-pressed="${UI.filter === v}">${l}</button>`).join('')}</div></div>
+    </div>
+    <details class="morefilters" id="ciMoreF"><summary>Stake and ward filter <span id="ciFN"></span></summary><div class="inline" id="ciSel" style="margin-top:8px"></div></details>
     <div id="ciList" class="cards"></div><div class="more" id="ciMore"></div>`;
   },
   update() {
     const P = S.P;
     const exp = P.filter(p => p.elig && p.src !== 'walkin').length;
     const inn = P.filter(p => p.s === 'in').length, out = P.filter(p => p.s === 'out').length, wk = P.filter(p => p.src === 'walkin' && p.s).length;
-    $('#ciK').innerHTML = `<div class="kpi hero"><span>Checked in</span><b>${inn}</b></div><div class="kpi"><span>Expected</span><b>${exp}</b></div><div class="kpi"><span>Arrived</span><b>${pct(P.filter(p => p.elig && p.src !== 'walkin' && p.s).length, exp)}%</b></div><div class="kpi"><span>Walk-ins</span><b>${wk}</b></div><div class="kpi"><span>Checked out</span><b>${out}</b></div>`;
+    $('#ciK').innerHTML = `<span class="hot"><b>${inn}</b> in</span><span><b>${exp}</b> expected</span><span><b>${pct(P.filter(p => p.elig && p.src !== 'walkin' && p.s).length, exp)}%</b> arrived</span><span><b>${wk}</b> walk-ins</span><span><b>${out}</b> out</span>`;
+    $('#ciFN').textContent = UI.unit ? '· ' + UI.unit : UI.stake ? '· ' + UI.stake : '';
     const stakes = uniq(P.map(p => p.stake).filter(Boolean)).sort();
     const units = uniq(P.filter(p => !UI.stake || p.stake === UI.stake).map(p => p.unit).filter(Boolean)).sort();
     $('#ciSel').innerHTML = `<select id="ciStake" aria-label="Stake">${opt('', 'All stakes', !UI.stake)}${stakes.map(s => opt(s, s, s === UI.stake)).join('')}</select><select id="ciUnit" aria-label="Ward or branch">${opt('', 'All wards & branches', !UI.unit)}${units.map(s => opt(s, s, s === UI.unit)).join('')}</select>`;
@@ -918,6 +916,7 @@ PAGE_IMPL.checkin = {
     });
     if (UI.filter === 'arrive' && !toks.length) list = list.filter(p => p.elig);
     const shown = list.slice(0, UI.limit);
+    $('#ciCount').textContent = toks.length || UI.filter !== 'all' || UI.stake ? list.length + (list.length === 1 ? ' match' : ' matches') : '';
     $('#ciList').innerHTML = shown.length ? shown.map(pCard).join('') : `<div class="empty" style="grid-column:1/-1"><h3>${P.length ? 'No one matches' : 'No participants yet'}</h3>${P.length ? 'Try fewer letters, or switch the filter to Everyone. Someone who is not on the list can be added as a walk-in.' : (can.admin() ? 'Upload the FSY portal export on the Data & areas tab to start.' : 'The registration admin has not uploaded participants yet.')}</div>`;
     $('#ciMore').innerHTML = list.length > UI.limit ? `<button class="btn" data-act="ciMore">Show more (${list.length - UI.limit} left)</button>` : (list.length ? `<span class="muted">${list.length} shown</span>` : '');
   }
@@ -927,15 +926,16 @@ function pCard(p) {
   const issues = !seesPrivate(p) ? '' : (p.medIssue ? '<span class="chip warn">Medical</span>' : '') + (p.dietIssue ? '<span class="chip warn">Diet</span>' : '');
   const ck = can.checkin();
   const acts = !ck ? '' : p.s === 'in' ? `<button class="btn" data-act="ciUndo" data-id="${esc(p.id)}">Undo check-in</button><button class="btn" data-act="ciOut" data-id="${esc(p.id)}">Check out</button>` : p.s === 'out' ? `<button class="btn primary" data-act="ciIn" data-id="${esc(p.id)}">Check in again</button>` : `<button class="btn primary" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`;
+  const tee = p.tshirt ? esc(SIZE_LABEL[p.tshirt] || p.tshirt) : `<span class="est">${esc(SIZE_LABEL[(S.tee && S.tee.perPerson[p.id]) || ''] || 'Not given')}</span> <small class="muted">est.</small>`;
   return `<article class="pcard st-${p.s || 'none'}">
-    <div class="pc-top"><div style="min-width:0"><h3>${esc(p.name)}</h3><div class="sub"><span class="chip">${p.age != null ? p.age + ' yrs' : 'Age ?'}</span>${chipG(p.gender)}${chipBand(p.band)}</div></div>${st}</div>
-    <dl class="pc-grid"><div><dt>Group · counselor</dt><dd>${p.group ? 'G' + p.group.num + ' · ' + esc(p.counselor ? p.counselor.name : 'No counselor') : '<span class="muted">Not assigned</span>'}</dd></div>
-    <div><dt>Company</dt><dd>${p.company ? 'Company ' + p.company.num : '<span class="muted">—</span>'}</dd></div>
-    <div><dt>T-shirt</dt><dd>${p.tshirt ? esc(SIZE_LABEL[p.tshirt] || p.tshirt) : `<span class="est">${esc(SIZE_LABEL[(S.tee && S.tee.perPerson[p.id]) || ''] || 'Not given')}</span> <small class="muted">est.</small>`}</dd></div>
-    <div><dt>Ward / branch</dt><dd>${esc(p.unit || '—')}</dd></div>
-    <div class="wide"><dt>Stake / district</dt><dd>${esc(p.stake || '—')}</dd></div></dl>
-    ${(p.flags.length || issues || p.ov) ? `<div class="flags">${flagChips(p, ['walkin', 'area', 'status', 'pending', 'gender', 'age', 'agerange'])}${issues}</div>` : ''}
-    <div class="pc-actions">${acts}<button class="btn small" data-act="detail" data-id="${esc(p.id)}" style="flex:0 0 auto">Details</button></div></article>`;
+    <div class="pc-top"><div style="min-width:0"><h3>${esc(p.name)}</h3><div class="sub"><span class="chip">${p.age != null ? p.age + ' yrs' : 'Age ?'}</span>${chipG(p.gender)}${chipBand(p.band)}${issues}</div></div>${st}</div>
+    <div class="pc-lines">
+      <div><span class="k">Group</span><span>${p.group ? '<b>G' + p.group.num + '</b> · ' + esc(p.counselor ? p.counselor.name : 'No counselor') + (p.company ? ' · <b>Co ' + p.company.num + '</b>' : '') : '<span class="muted">Not assigned yet</span>'}</span></div>
+      <div><span class="k">Unit</span><span>${esc(p.unit || '—')}<span class="muted"> · ${esc(p.stake || '—')}</span></span></div>
+      <div><span class="k">Size</span><span>${tee}</span></div>
+    </div>
+    ${(p.flags.length || p.ov) && flagChips(p, ['walkin', 'area', 'status', 'pending', 'gender', 'age', 'agerange']) ? `<div class="flags">${flagChips(p, ['walkin', 'area', 'status', 'pending', 'gender', 'age', 'agerange'])}</div>` : ''}
+    <div class="pc-actions">${acts}<button class="btn" data-act="detail" data-id="${esc(p.id)}" style="flex:0 0 auto">Details</button></div></article>`;
 }
 
 /* ---------- page: tally ---------- */
@@ -1314,8 +1314,9 @@ document.addEventListener('click', async e => {
     case 'signIn': await signIn(); break;
     case 'signOut': await FB.auth.signOut(); break;
     case 'ciF': UI.filter = v; UI.limit = 40; UI.frameKey = ''; render(); break;
+    case 'ciClear': { const q = $('#ciQ'); q.value = ''; UI.q = ''; UI.limit = 40; PAGE_IMPL.checkin.update(); q.focus(); break; }
     case 'ciMore': UI.limit += 60; render(); break;
-    case 'ciIn': setState(id, { s: 'in', ti: now, by: S.uid }); toast('Checked in'); break;
+    case 'ciIn': { const p = S.P.find(x => x.id === id); setState(id, { s: 'in', ti: now, by: S.uid }); toast((p ? p.first : '') + ' checked in' + (p && p.group ? ' · G' + p.group.num : '')); break; }
     case 'ciUndo': setState(id, { s: '', ti: null, by: S.uid }); toast('Check-in undone'); break;
     case 'ciOut': setState(id, { s: 'out', to: now, by: S.uid }); toast('Checked out'); break;
     case 'detail': openDetail(id); break;
@@ -1411,8 +1412,11 @@ document.addEventListener('submit', async e => {
   }
 });
 let qT = null;
+function pinSearch() { const a = $('#ciAnchor'); if (!a) return; const stick = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stick')) || 0; const y = a.getBoundingClientRect().top + window.scrollY - stick; if (Math.abs(window.scrollY - y) > 4) window.scrollTo({ top: y, behavior: 'smooth' }); }
+document.addEventListener('focusin', e => { if (e.target.id === 'ciQ' && window.matchMedia('(max-width: 700px)').matches) setTimeout(pinSearch, 250); });
+document.addEventListener('keydown', e => { if (e.target.id === 'ciQ' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
 document.addEventListener('input', e => {
-  if (e.target.id === 'ciQ') { clearTimeout(qT); qT = setTimeout(() => { UI.q = e.target.value; UI.limit = 40; PAGE_IMPL.checkin.update(); }, 120); }
+  if (e.target.id === 'ciQ') { clearTimeout(qT); qT = setTimeout(() => { UI.q = e.target.value; UI.limit = 40; PAGE_IMPL.checkin.update(); if (window.matchMedia('(max-width: 700px)').matches && document.activeElement === e.target) pinSearch(); }, 120); }
   if (e.target.id === 'acSearch' && S.user) {
     const q = e.target.value;
     S.user.search(q).then(hits => { const box = $('#acHits'); if (!box) return; box.innerHTML = hits.filter(h => !h.isMe).map(h => `<div class="inline" style="padding:4px 0"><b style="flex:1">${esc(h.name)}</b>${S.access[h.id] ? `<span class="chip">${esc(ROLES[S.access[h.id].role])}</span>` : `<select id="hitRole-${esc(h.id)}" aria-label="Role">${opt('', 'Role…')}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select><button class="btn small primary" data-act="acAdd" data-id="${esc(h.id)}">Add</button>`}</div>`).join('') || (q ? '<p class="note">No one found. People outside your workspace must open the page and send a request.</p>' : ''); });
