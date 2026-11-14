@@ -597,12 +597,14 @@ function seesPrivate(p) { return inScopeFor(p, role(), myStaffId()); }
 const can = {
   admin: () => ['regadmin', 'sdc'].includes(role()),
   deleteP: () => role() === 'regadmin',
-  checkin: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor'].includes(role()),
+  checkin: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
+  viewAll: () => ['regadmin', 'sdc', 'logistics'].includes(role()),
+  readOnly: () => role() === 'logistics',
   moveAny: () => ['regadmin', 'sdc', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
   logistics: () => !!role(),
   accounts: () => ['regadmin', 'sdc'].includes(role()),
-  headcount: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor'].includes(role())
+  headcount: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
   ['checkin', 'Check-in', () => can.checkin()],
@@ -611,8 +613,8 @@ const PAGES = [
   ['exceptions', 'Walk-ins & exceptions', () => can.checkin() || role() === 'logistics'],
   ['logistics', 'Logistics', () => can.logistics()],
   ['headcount', 'Headcount', () => can.headcount()],
-  ['staff', 'Staff', () => can.admin()],
-  ['data', 'Data & areas', () => can.admin()],
+  ['staff', 'Staff', () => can.admin() || can.viewAll()],
+  ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()]
 ];
 function allowedPages() { return PAGES.filter(p => p[2]()); }
@@ -824,7 +826,7 @@ const ICONS = {
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { logistics: ['logistics', 'exceptions', 'tally', 'companies'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+const NAV_ORDER = { logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -887,6 +889,14 @@ function render() {
   const page = PAGE_IMPL[pg];
   if (UI.frameKey !== key) { $('#main').innerHTML = page.frame(); UI.frameKey = key; window.scrollTo(0, 0); }
   page.update();
+  if (can.readOnly()) lockReadOnly(pg);
+}
+
+function lockReadOnly(pg) {
+  const m = $('#main');
+  m.querySelectorAll('.adm,.adm-hc').forEach(el => el.hidden = true);
+  if (pg === 'staff' || pg === 'data') m.querySelectorAll('input,select,textarea').forEach(el => { if (el.id !== 'ciQ') el.disabled = true; });
+  if (pg === 'headcount') m.querySelectorAll('.hc-toggle button,.hc-reason,[data-hcnote]').forEach(el => el.disabled = true);
 }
 
 /* ---------- participant scope helpers ---------- */
@@ -1300,11 +1310,11 @@ function teeBlock(L, H) {
 /* ---------- page: staff ---------- */
 PAGE_IMPL.staff = {
   frame() {
-    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 13–15 groups first, 23 and over to 16–18. Upload a spreadsheet on the Data tab or add people one at a time.</p></div><button class="btn primary" data-act="stAdd">+ Add staff member</button></section>
+    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 13–15 groups first, 23 and over to 16–18. Upload a spreadsheet on the Data tab or add people one at a time.</p></div><button class="btn primary adm" data-act="stAdd">+ Add staff member</button></section>
     <div id="stK" class="kpis"></div>
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
-    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stList"></div></section>
-    <details class="panel"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a directing couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
+    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stList"></div></section>
+    <details class="panel adm"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a directing couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
       <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></details>`;
   },
   update() {
@@ -1316,7 +1326,7 @@ PAGE_IMPL.staff = {
     const list = S.staffList.filter(s => s.role === UI.staffTab);
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') { const ns = C.filter(c => c.coordId === s.id).map(c => c.num).sort((a, b) => a - b); return ns.length ? 'Companies ' + ns.join(', ') : '—'; } return '—'; };
-    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}<br><small class="muted">${esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
+    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}<br><small class="muted">${esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
   }
 };
 function openStaffForm(id) {
@@ -1367,8 +1377,8 @@ function hcScopeGroups() {
 }
 PAGE_IMPL.headcount = {
   frame() {
-    const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live';
-    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Each counselor reports their group here. Missing youth and groups that have not reported are highlighted.' : 'Every group, company and missing youth for the night, updating live as counselors report.'}</p></div>${['regadmin', 'sdc', 'coordinator'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
+    const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live' + (can.readOnly() ? ' · view only' : '');
+    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Each counselor reports their group here. Missing youth and groups that have not reported are highlighted.' : 'Every group, company and missing youth for the night, updating live as counselors report.'}</p></div>${['regadmin', 'sdc', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
     <div class="segscroll"><div class="chips" id="hcDays"></div></div>
     <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>`;
   },
@@ -1380,7 +1390,7 @@ PAGE_IMPL.headcount = {
     const body = $('#hcBody');
     if (!Object.keys(S.org.groups).length) { body.innerHTML = '<div class="empty"><h3>No groups yet</h3>Headcounts start once companies and groups are generated.</div>'; return; }
     if (UI.hcGroup && S.org.groups[UI.hcGroup] && groups.some(g => g.id === UI.hcGroup)) { body.innerHTML = (r === 'counselor' ? '' : `<button class="btn" data-act="hcBack" style="align-self:flex-start">‹ Back to ${r === 'ac' ? 'your company' : 'all companies'}</button>`) + hcForm(hcGroup(S.org.groups[UI.hcGroup], day), day); return; }
-    if (r === 'counselor') { body.innerHTML = groups.length ? groups.map(g => hcForm(hcGroup(g, day), day)).join('') : '<div class="empty"><h3>No group linked to your account</h3>Ask the registration admin to link your account to your staff record on the Accounts tab.</div>'; return; }
+    if (r === 'counselor' && !can.readOnly()) { body.innerHTML = groups.length ? groups.map(g => hcForm(hcGroup(g, day), day)).join('') : '<div class="empty"><h3>No group linked to your account</h3>Ask the registration admin to link your account to your staff record on the Accounts tab.</div>'; return; }
     body.innerHTML = hcOverview(groups, day);
   }
 };
@@ -1396,10 +1406,10 @@ function hcForm(x, day) {
   return `<section class="panel hc-card">
     <div class="hc-head"><div><h2>G${g.num} · ${esc(cn ? cn.name : 'No counselor')}</h2><small class="muted">${c ? 'Company ' + c.num + ' · AC ' + esc(sName(c.acId) || '—') : 'No company'} · ${BANDS[g.band]} ${g.gender === 'F' ? 'young women' : 'young men'}</small></div><div>${status}</div></div>
     <div class="hc-count"><div><b class="${x.missing.length ? 'bad' : ''}">${x.present.length}</b><span> of ${x.expected} present</span></div><div class="hstats">${x.missing.length ? `<span class="chip bad">${x.missing.length} missing</span>` : ''}${x.unmarked.length ? `<span class="chip warn">${x.unmarked.length} not marked</span>` : ''}${!x.missing.length && !x.unmarked.length && x.expected ? '<span class="chip good">Everyone accounted for</span>' : ''}</div></div>
-    ${x.expected ? `${x.unmarked.length ? `<button class="btn" data-act="hcAll" data-g="${g.id}">Mark everyone else present</button>` : ''}<div class="hc-list">${rows}</div>` : '<p class="note">No one in this group is checked in, so there is nobody to count.</p>'}
+    ${x.expected ? `${x.unmarked.length ? `<button class="btn adm-hc" data-act="hcAll" data-g="${g.id}">Mark everyone else present</button>` : ''}<div class="hc-list">${rows}</div>` : '<p class="note">No one in this group is checked in, so there is nobody to count.</p>'}
     ${nc.length ? `<p class="note" style="margin:0">Not counted tonight: ${nc.map(p => esc(p.first) + (p.s === 'out' ? ' (checked out)' : ' (never arrived)')).join(', ')}.</p>` : ''}
     <label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">Note for your AC (optional)</span><textarea data-hcnote="${g.id}" rows="2" placeholder="Anything they should know">${esc(d.note || '')}</textarea></label>
-    <button class="btn go hc-submit" data-act="hcSubmit" data-g="${g.id}" ${!x.expected || x.unmarked.length ? 'disabled' : ''}>${x.submitted ? 'Update headcount' : 'Submit headcount'}${x.unmarked.length ? ` · mark ${x.unmarked.length} more` : ''}</button>
+    <button class="btn go hc-submit adm-hc" data-act="hcSubmit" data-g="${g.id}" ${!x.expected || x.unmarked.length ? 'disabled' : ''}>${x.submitted ? 'Update headcount' : 'Submit headcount'}${x.unmarked.length ? ` · mark ${x.unmarked.length} more` : ''}</button>
   </section>`;
 }
 function hcOverview(groups, day) {
@@ -1432,7 +1442,7 @@ async function hcWrite(gid, patch, submit) {
 PAGE_IMPL.data = {
   frame() {
     return `<section class="pagehead"><div><h1>Data & areas</h1><p class="note" style="margin:4px 0 0">Upload the FSY portal export, choose which stakes and units belong to this session, and clean up problem records.</p></div></section>
-    <div class="panel"><h2>Upload participants or staff</h2><p class="note">Excel (.xlsx, .xls) or .csv. Column headers are read from the first row and matched to fields. Rows are matched by Registration ID, so uploading a newer export updates people without losing check-ins or groups. The Type column decides who is a participant, counselor or assistant coordinator.</p>
+    <div class="panel adm"><h2>Upload participants or staff</h2><p class="note">Excel (.xlsx, .xls) or .csv. Column headers are read from the first row and matched to fields. Rows are matched by Registration ID, so uploading a newer export updates people without losing check-ins or groups. The Type column decides who is a participant, counselor or assistant coordinator.</p>
       <input type="file" id="impFile" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div id="impBox" style="margin-top:12px"></div></div>
     <div class="grid2"><div class="panel"><h2>Session settings</h2><form id="cfgForm" class="form">
       <label class="span2">Session name<input id="cfName" value="${esc(S.config.sessionName)}"></label>
@@ -1441,7 +1451,7 @@ PAGE_IMPL.data = {
       <label>Last headcount night<input id="cfHcEnd" type="date" value="${esc(S.config.hcEnd || '')}"></label>
       <label>Participants per group<input id="cfSize" type="number" min="4" max="20" value="${esc(S.config.groupSize)}"></label>
       <p class="note span2" style="margin:0">With a first day set, ages are worked out from birthdays on that day. Without it, the Age column from the upload is used.</p>
-      <div class="span2"><button class="btn primary" type="submit">Save settings</button></div></form>
+      <div class="span2 adm"><button class="btn primary" type="submit">Save settings</button></div></form>
       <h3 style="margin:16px 0 6px">Registration statuses</h3><div id="dStat"></div></div>
     <div class="panel"><h2>Data problems</h2><div id="dIss"></div></div></div>
     <div class="panel"><div class="panel-head"><h2>Stakes, wards and branches in this session</h2><span class="note">Untick an area to leave its youth out of the expected list and the groups.</span></div><div id="dAreas" class="arealist"></div></div>`;
@@ -1521,7 +1531,7 @@ PAGE_IMPL.access = {
       <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
       <tr><td>Session directing couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
-      <tr><td>Logistics</td><td>Whole session</td><td>Medical, dietary and T-shirt lists and the tally.</td></tr>
+      <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
       <tr><td>Assistant coordinator</td><td>Their company</td><td>Check in, move participants inside their company, logistics for their company.</td></tr>
       <tr><td>Counselor</td><td>Their group and company</td><td>Check in, undo and check out, add walk-ins, logistics for their company.</td></tr></tbody></table></div>
       <p class="note">These limits are enforced by the database's security rules, not only by the screens. Medical and dietary notes are stored apart; counselors, ACs, coordinators and logistics only receive the notes for the youth they are allowed to see.</p></div>`;
@@ -1650,12 +1660,12 @@ document.addEventListener('click', async e => {
     case 'hcDay': UI.hcDay = v; render(); break;
     case 'hcOpen': UI.hcGroup = t.dataset.g; render(); window.scrollTo(0, 0); break;
     case 'hcBack': UI.hcGroup = null; render(); break;
-    case 'hcMark': { const g = t.dataset.g; const cur = ((hcDoc(hcDay(), g) || {}).marks || {})[id]; await hcWrite(g, { marks: { [id]: cur === v ? null : v } }); break; }
-    case 'hcAll': { const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
-    case 'hcSubmit': { const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}. Sent to your AC.`); break; }
+    case 'hcMark': { if (can.readOnly()) break; const g = t.dataset.g; const cur = ((hcDoc(hcDay(), g) || {}).marks || {})[id]; await hcWrite(g, { marks: { [id]: cur === v ? null : v } }); break; }
+    case 'hcAll': { if (can.readOnly()) break; const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
+    case 'hcSubmit': { if (can.readOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}. Sent to your AC.`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
-    case 'stEdit': openStaffForm(id); break;
+    case 'stEdit': if (can.admin()) openStaffForm(id); break;
     case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'T-shirt']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.tshirt || ''])); exportCSV('fsy-staff.csv', rows); break; }
     case 'exCsv': { const L = PAGE_IMPL.exceptions.lists(); const rows = [['Type', 'Name', 'Age', 'Gender', 'Ward/branch', 'Stake', 'Status', 'Group']]; [['Walk-in', L.walk], ['Not on approved list', L.off], ['Checked in, no group', L.nog]].forEach(([t, list]) => list.forEach(p => rows.push([t, p.name, p.age ?? '', p.gender, p.unit, p.stake, p.s || 'not arrived', p.group ? 'G' + p.group.num : '']))); exportCSV('fsy-walkins-exceptions.csv', rows); break; }
     case 'stDel': { const st = S.staffMap[id]; if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
