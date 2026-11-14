@@ -50,7 +50,7 @@ const ROLES = {
 const STAFF_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics'];
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
 const SIZE_LABEL = { XS: 'Extra small', S: 'Small', M: 'Medium', L: 'Large', XL: 'XL', XXL: 'XXL', '3XL': '3XL', '': 'Not given' };
-const DEFAULT_CONFIG = { sessionName: 'FSY Kenya 2nd 2026', sessionStart: '', groupSize: 10, excludedStakes: [], excludedUnits: [], excludedStatuses: ['CANCELLED'] };
+const DEFAULT_CONFIG = { sessionName: 'FSY Kenya 2nd 2026', sessionStart: '', hcStart: '2026-12-07', hcEnd: '2026-12-11', groupSize: 10, excludedStakes: [], excludedUnits: [], excludedStatuses: ['CANCELLED'] };
 
 function fnv(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
 function bucketOf(id) { return 'b' + String(fnv(String(id)) % NBUCKETS).padStart(2, '0'); }
@@ -580,6 +580,7 @@ const S = {
   org: { groups: {}, companies: {} }, orgEx: false, config: Object.assign({}, DEFAULT_CONFIG), configEx: false,
   access: {}, accessEx: false, requests: {}, loaded: {},
   P: [], staffList: [], staffMap: {}, viewAs: null, viewAsStaff: null, names: {},
+  hc: {}, hcLoaded: false,
   medAdmin: false, email: null, medical: {}, medicalEx: new Set(), intake: {}, share: null, shares: {}, invites: {}, members: {}, inviteEmails: {}, claimTried: false
 };
 const UI = { page: null, frameKey: '', q: '', filter: 'all', stake: '', unit: '', limit: 40, logScope: 'all', staffTab: 'counselor', open: new Set(), openStakes: new Set(), band: '', imp: null, genLog: null, pending: false };
@@ -600,7 +601,8 @@ const can = {
   moveAny: () => ['regadmin', 'sdc', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
   logistics: () => !!role(),
-  accounts: () => ['regadmin', 'sdc'].includes(role())
+  accounts: () => ['regadmin', 'sdc'].includes(role()),
+  headcount: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor'].includes(role())
 };
 const PAGES = [
   ['checkin', 'Check-in', () => can.checkin()],
@@ -608,6 +610,7 @@ const PAGES = [
   ['companies', 'Companies & groups', () => can.checkin()],
   ['exceptions', 'Walk-ins & exceptions', () => can.checkin() || role() === 'logistics'],
   ['logistics', 'Logistics', () => can.logistics()],
+  ['headcount', 'Headcount', () => can.headcount()],
   ['staff', 'Staff', () => can.admin()],
   ['data', 'Data & areas', () => can.admin()],
   ['access', 'Accounts', () => can.accounts()]
@@ -745,6 +748,7 @@ function subscribe() {
   db.collection('state').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.stateEx.add(d.id); }); S.state = r; mark('state', sn.metadata); recompute(); }, onErr);
   db.doc('staff/all').onSnapshot(d => { S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
   db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
+  db.collection('headcount').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.hc = r; S.hcLoaded = true; recompute(); }, onErr);
   db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
   S.access = {}; S.loaded.access = true;
   if (S.medAdmin) {
@@ -813,11 +817,12 @@ const ICONS = {
   staff: I('<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M7.5 18c.6-2.3 2.4-3.5 4.5-3.5s3.9 1.2 4.5 3.5"/>'),
   data: I('<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>'),
   access: I('<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M18 5l2 2"/>'),
+  headcount: I('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><path d="m10 13 2 2 4-4"/>'),
   more: I('<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
-const SHORT = { checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
+const SHORT = { headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
 const NAV_ORDER = { logistics: ['logistics', 'exceptions', 'tally', 'companies'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
@@ -873,7 +878,7 @@ function gateView() {
 function render() {
   if (UI.pending) return;
   const ae = document.activeElement;
-  if (ae && $('#main').contains(ae) && (ae.tagName === 'SELECT' || (ae.tagName === 'INPUT' && ae.dataset.region))) { UI.pending = true; ae.addEventListener('blur', () => { UI.pending = false; render(); }, { once: true }); return; }
+  if (ae && $('#main').contains(ae) && (ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && (ae.dataset.region || ae.dataset.hcreason)))) { UI.pending = true; ae.addEventListener('blur', () => { setTimeout(() => { UI.pending = false; render(); }, 250); }, { once: true }); return; }
   renderHeader(); renderNav();
   const gate = gateView();
   if (gate) { const gk = 'gate' + fnv(gate); if (UI.frameKey !== gk) { $('#main').innerHTML = gate; UI.frameKey = gk; } return; }
@@ -1210,6 +1215,96 @@ function openStaffForm(id) {
   setTimeout(() => { const n = $('#stName'); if (n && !s) n.focus(); }, 60);
 }
 
+/* ---------- page: headcount (nightly, Dec 7–11) ---------- */
+const DAYNAME = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function isoUTC(d) { return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
+/** Tonight's date in Kenya time. Reports made after midnight but before 6 am count for the night before. */
+function nightOf(ts) { const t = new Date((ts || Date.now()) + 3 * 3600e3); if (t.getUTCHours() < 6) t.setUTCDate(t.getUTCDate() - 1); return isoUTC(t); }
+function hcNights() { const a = S.config.hcStart || DEFAULT_CONFIG.hcStart, b = S.config.hcEnd || DEFAULT_CONFIG.hcEnd; const out = []; const d = new Date(a + 'T00:00:00Z'), e = new Date(b + 'T00:00:00Z'); for (let i = 0; d <= e && i < 31; i++) { out.push(isoUTC(d)); d.setUTCDate(d.getUTCDate() + 1); } return out; }
+function nightLabel(iso, long) { const d = new Date(iso + 'T00:00:00Z'); return long ? `${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}` : `${DAYNAME[d.getUTCDay()]} ${d.getUTCDate()}`; }
+function hcDay() { const ns = hcNights(), t = nightOf(); if (UI.hcDay && ns.includes(UI.hcDay)) return UI.hcDay; if (ns.includes(t)) return t; return t < ns[0] ? ns[0] : ns[ns.length - 1]; }
+function hcDoc(day, gid) { return S.hc[day + '_' + gid] || null; }
+/** Everything about one group's headcount for one night. */
+function hcGroup(g, day) {
+  const doc = hcDoc(day, g.id);
+  const live = S.P.filter(p => p.g === g.id && p.s === 'in');
+  const ids = doc && doc.submitted && Array.isArray(doc.expected) ? doc.expected : live.map(p => p.id);
+  const byId = {}; S.P.forEach(p => byId[p.id] = p);
+  const people = ids.map(id => byId[id]).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const marks = (doc && doc.marks) || {};
+  const present = people.filter(p => marks[p.id] === 'p'), missing = people.filter(p => marks[p.id] === 'm'), unmarked = people.filter(p => !marks[p.id]);
+  const notCounted = S.P.filter(p => p.g === g.id && p.s !== 'in');
+  return { g, doc, people, present, missing, unmarked, notCounted, submitted: !!(doc && doc.submitted), expected: people.length };
+}
+function hcScopeGroups() {
+  const r = role(), G = Object.values(S.org.groups).sort((a, b) => a.num - b.num);
+  if (r === 'counselor') return myGroups();
+  if (r === 'ac') { const ids = myCompanies().map(c => c.id); return G.filter(g => ids.includes(g.companyId)); }
+  return G;
+}
+PAGE_IMPL.headcount = {
+  frame() {
+    const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live';
+    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Each counselor reports their group here. Missing youth and groups that have not reported are highlighted.' : 'Every group, company and missing youth for the night, updating live as counselors report.'}</p></div>${['regadmin', 'sdc', 'coordinator'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
+    <div class="segscroll"><div class="chips" id="hcDays"></div></div>
+    <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>`;
+  },
+  update() {
+    const day = hcDay(), tonight = nightOf(), r = role();
+    $('#hcTitle').textContent = (day === tonight ? 'Tonight · ' : '') + nightLabel(day, true);
+    const groups = hcScopeGroups();
+    $('#hcDays').innerHTML = hcNights().map(d => { const st = groups.map(g => hcGroup(g, d)).filter(x => x.expected); const done = st.length && st.every(x => x.submitted); const any = st.some(x => x.submitted); const n = st.filter(x => x.submitted).length; return `<button data-act="hcDay" data-v="${d}" aria-pressed="${d === day}">${nightLabel(d)}${d === tonight ? ' · tonight' : ''}${done ? ' ✓' : any ? ` · ${n}/${st.length}` : ''}</button>`; }).join('');
+    const body = $('#hcBody');
+    if (!Object.keys(S.org.groups).length) { body.innerHTML = '<div class="empty"><h3>No groups yet</h3>Headcounts start once companies and groups are generated.</div>'; return; }
+    if (UI.hcGroup && S.org.groups[UI.hcGroup] && groups.some(g => g.id === UI.hcGroup)) { body.innerHTML = (r === 'counselor' ? '' : `<button class="btn" data-act="hcBack" style="align-self:flex-start">‹ Back to ${r === 'ac' ? 'your company' : 'all companies'}</button>`) + hcForm(hcGroup(S.org.groups[UI.hcGroup], day), day); return; }
+    if (r === 'counselor') { body.innerHTML = groups.length ? groups.map(g => hcForm(hcGroup(g, day), day)).join('') : '<div class="empty"><h3>No group linked to your account</h3>Ask the registration admin to link your account to your staff record on the Accounts tab.</div>'; return; }
+    body.innerHTML = hcOverview(groups, day);
+  }
+};
+function hcForm(x, day) {
+  const g = x.g, c = g.companyId && S.org.companies[g.companyId], cn = g.counselorId && S.staffMap[g.counselorId];
+  const d = x.doc || {}, marks = d.marks || {}, reasons = d.reasons || {};
+  const status = x.submitted ? `<span class="chip good">Submitted ${esc(fmtTime(d.at))} · ${esc(d.byName || 'someone')}</span>${d.counselorId && d.byStaff && d.byStaff !== d.counselorId ? ' <span class="chip info">Reported for the counselor</span>' : ''}` : x.doc ? '<span class="chip warn">Not submitted yet</span>' : '<span class="chip bad">Not reported</span>';
+  const rows = x.people.map(p => { const m = marks[p.id]; return `<div class="hc-row ${m === 'm' ? 'is-missing' : m === 'p' ? 'is-present' : ''}">
+      <div class="hc-name"><b>${esc(p.name)}</b><small class="muted">${p.age ?? '?'} · ${esc(p.unit)}</small></div>
+      <div class="hc-toggle" role="group" aria-label="${esc(p.name)}"><button data-act="hcMark" data-v="p" data-id="${esc(p.id)}" data-g="${g.id}" aria-pressed="${m === 'p'}">Present</button><button data-act="hcMark" data-v="m" data-id="${esc(p.id)}" data-g="${g.id}" aria-pressed="${m === 'm'}">Missing</button></div>
+      ${m === 'm' ? `<input class="hc-reason" data-hcreason="${esc(p.id)}" data-g="${g.id}" placeholder="Where are they? (optional)" value="${esc(reasons[p.id] || '')}" autocomplete="off">` : ''}</div>`; }).join('');
+  const nc = x.notCounted;
+  return `<section class="panel hc-card">
+    <div class="hc-head"><div><h2>G${g.num} · ${esc(cn ? cn.name : 'No counselor')}</h2><small class="muted">${c ? 'Company ' + c.num + ' · AC ' + esc(sName(c.acId) || '—') : 'No company'} · ${BANDS[g.band]} ${g.gender === 'F' ? 'young women' : 'young men'}</small></div><div>${status}</div></div>
+    <div class="hc-count"><div><b class="${x.missing.length ? 'bad' : ''}">${x.present.length}</b><span> of ${x.expected} present</span></div><div class="hstats">${x.missing.length ? `<span class="chip bad">${x.missing.length} missing</span>` : ''}${x.unmarked.length ? `<span class="chip warn">${x.unmarked.length} not marked</span>` : ''}${!x.missing.length && !x.unmarked.length && x.expected ? '<span class="chip good">Everyone accounted for</span>' : ''}</div></div>
+    ${x.expected ? `${x.unmarked.length ? `<button class="btn" data-act="hcAll" data-g="${g.id}">Mark everyone else present</button>` : ''}<div class="hc-list">${rows}</div>` : '<p class="note">No one in this group is checked in, so there is nobody to count.</p>'}
+    ${nc.length ? `<p class="note" style="margin:0">Not counted tonight: ${nc.map(p => esc(p.first) + (p.s === 'out' ? ' (checked out)' : ' (never arrived)')).join(', ')}.</p>` : ''}
+    <label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">Note for your AC (optional)</span><textarea data-hcnote="${g.id}" rows="2" placeholder="Anything they should know">${esc(d.note || '')}</textarea></label>
+    <button class="btn go hc-submit" data-act="hcSubmit" data-g="${g.id}" ${!x.expected || x.unmarked.length ? 'disabled' : ''}>${x.submitted ? 'Update headcount' : 'Submit headcount'}${x.unmarked.length ? ` · mark ${x.unmarked.length} more` : ''}</button>
+  </section>`;
+}
+function hcOverview(groups, day) {
+  const r = role(); const xs = groups.map(g => hcGroup(g, day)).filter(x => x.expected || x.doc);
+  const reported = xs.filter(x => x.submitted), late = xs.filter(x => !x.submitted);
+  const pres = reported.reduce((a, x) => a + x.present.length, 0), exp = reported.reduce((a, x) => a + x.expected, 0), allIn = xs.reduce((a, x) => a + (x.submitted ? x.expected : S.P.filter(p => p.g === x.g.id && p.s === 'in').length), 0);
+  const missing = xs.flatMap(x => x.missing.map(p => ({ p, x }))).concat(xs.filter(x => x.submitted).flatMap(x => x.unmarked.map(p => ({ p, x, unmarked: true }))));
+  const comps = uniq(groups.map(g => g.companyId)).map(id => S.org.companies[id]).filter(Boolean).sort((a, b) => a.num - b.num);
+  let h = `<div class="kpis"><div class="kpi"><span>Groups reported</span><b>${reported.length} / ${xs.length}</b></div><div class="kpi"><span>Present</span><b>${pres} / ${exp}</b><small>in groups that reported · ${allIn} checked in</small></div><div class="kpi" style="${missing.length ? 'background:var(--bad);color:#fff' : ''}"><span>Missing</span><b>${missing.length}</b></div><div class="kpi"><span>Not reported yet</span><b>${late.length}</b></div></div>`;
+  h += `<section class="panel hc-alert ${missing.length ? 'on' : ''}"><div class="panel-head"><h2>Missing youth</h2><span class="chip ${missing.length ? 'bad' : 'good'}">${missing.length}</span></div>${missing.length ? `<div class="hc-miss">${missing.map(({ p, x, unmarked }) => { const c = x.g.companyId && S.org.companies[x.g.companyId]; const why = unmarked ? 'Not marked when submitted' : ((x.doc && x.doc.reasons && x.doc.reasons[p.id]) || 'No reason given'); return `<button class="hc-mi" data-act="hcOpen" data-g="${x.g.id}"><b>${esc(p.name)}</b><span>G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${c ? ' · Company ' + c.num : ''}</span><span class="why">${esc(why)}</span><small class="muted">${esc(p.age ?? '?')} yrs · ${esc(p.unit)}${x.doc && x.doc.at ? ' · reported ' + esc(fmtTime(x.doc.at)) + ' by ' + esc(x.doc.byName || '') : ''}</small></button>`; }).join('')}</div>` : '<p class="note">Nobody has been reported missing for this night.</p>'}</section>`;
+  h += `<section class="panel hc-alert ${late.length ? 'warn' : ''}"><div class="panel-head"><h2>Groups that haven't reported</h2><span class="chip ${late.length ? 'warn' : 'good'}">${late.length}</span></div>${late.length ? `<div class="flags">${late.map(x => `<button class="chip warn" data-act="hcOpen" data-g="${x.g.id}" style="cursor:pointer;padding:6px 11px">G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${x.doc ? ' · started' : ''}</button>`).join('')}</div>` : '<p class="note">Every group has reported.</p>'}</section>`;
+  h += `<div class="companies">${comps.map(c => { const cx = xs.filter(x => x.g.companyId === c.id), cr = cx.filter(x => x.submitted); const cp = cr.reduce((a, x) => a + x.present.length, 0), ce = cr.reduce((a, x) => a + x.expected, 0), cIn = S.P.filter(p => p.company && p.company.id === c.id && p.s === 'in').length, cm = cx.reduce((a, x) => a + x.missing.length, 0); const allDone = cx.length && cr.length === cx.length;
+    return `<section class="company"><div class="co-head"><div class="co-title"><h2>Company ${c.num}</h2><div class="inline">${cm ? `<span class="chip bad">${cm} missing</span>` : ''}${cx.length ? `<span class="chip ${allDone ? 'good' : 'warn'}">${cr.length}/${cx.length} reported</span>` : '<span class="chip">Nobody checked in</span>'}</div></div>
+      <div class="co-meta"><span class="muted">AC</span><span>${esc(sName(c.acId) || '—')}</span><span class="muted">Present</span><span class="num"><b>${cp}</b> of ${ce} in reported groups · ${cIn} checked in${allDone && ce !== cIn ? ' <span class="chip warn">totals differ from check-in</span>' : ''}</span></div></div>
+      ${cx.map(x => `<div class="grp"><div class="grp-row" data-act="hcOpen" data-g="${x.g.id}" role="button" tabindex="0"><span class="gnum">G${x.g.num}</span>${chipG(x.g.gender)}<span class="cn">${esc(sName(x.g.counselorId) || 'No counselor')}</span>${x.submitted ? `<span class="num">${x.present.length}/${x.expected}</span>${x.missing.length ? `<span class="chip bad">${x.missing.length} missing</span>` : '<span class="chip good">✓</span>'}` : `<span class="chip ${x.doc ? 'warn' : 'bad'}">${x.doc ? 'Started' : 'Not reported'}</span>`}<span class="muted">›</span></div></div>`).join('')}</section>`; }).join('')}</div>`;
+  return h;
+}
+let hcNoteT = {};
+async function hcWrite(gid, patch, submit) {
+  const day = hcDay(), id = day + '_' + gid, g = S.org.groups[gid]; if (!g) return;
+  const base = { date: day, groupId: gid, groupNum: g.num, companyId: g.companyId || null, counselorId: g.counselorId || null, by: S.uid, byName: S.meName || S.email || '', byRole: role(), byStaff: myStaffId() || null, updatedAt: Date.now() };
+  const cur = S.hc[id] || {};
+  const next = Object.assign({}, cur, base, patch, { marks: Object.assign({}, cur.marks || {}, patch.marks || {}), reasons: Object.assign({}, cur.reasons || {}, patch.reasons || {}) });
+  if (submit) Object.assign(next, { submitted: true, at: Date.now(), expected: hcGroup(g, day).people.map(p => p.id) });
+  S.hc = Object.assign({}, S.hc, { [id]: next }); render();
+  await setDoc('headcount/' + id, next).catch(fail);
+}
+
 /* ---------- page: data ---------- */
 PAGE_IMPL.data = {
   frame() {
@@ -1219,6 +1314,8 @@ PAGE_IMPL.data = {
     <div class="grid2"><div class="panel"><h2>Session settings</h2><form id="cfgForm" class="form">
       <label class="span2">Session name<input id="cfName" value="${esc(S.config.sessionName)}"></label>
       <label>First day of session<input id="cfStart" type="date" value="${esc(S.config.sessionStart || '')}"></label>
+      <label>First headcount night<input id="cfHcStart" type="date" value="${esc(S.config.hcStart || '')}"></label>
+      <label>Last headcount night<input id="cfHcEnd" type="date" value="${esc(S.config.hcEnd || '')}"></label>
       <label>Participants per group<input id="cfSize" type="number" min="4" max="20" value="${esc(S.config.groupSize)}"></label>
       <p class="note span2" style="margin:0">With a first day set, ages are worked out from birthdays on that day. Without it, the Age column from the upload is used.</p>
       <div class="span2"><button class="btn primary" type="submit">Save settings</button></div></form>
@@ -1421,6 +1518,13 @@ document.addEventListener('click', async e => {
     case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
     case 'testDel': { const tests = S.staffList.filter(s => s.test); if (!tests.length) { toast('There are no test staff.'); break; } if (!await confirmBox(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their leader. Press Rebalance afterwards to hand them to real staff.', 'Delete test staff', true)) break; const s = {}; S.staffList.filter(x => !x.test).forEach(x => s[x.id] = x); S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Test staff deleted'); break; }
     case 'stTab': UI.staffTab = v; render(); break;
+    case 'hcDay': UI.hcDay = v; render(); break;
+    case 'hcOpen': UI.hcGroup = t.dataset.g; render(); window.scrollTo(0, 0); break;
+    case 'hcBack': UI.hcGroup = null; render(); break;
+    case 'hcMark': { const g = t.dataset.g; const cur = ((hcDoc(hcDay(), g) || {}).marks || {})[id]; await hcWrite(g, { marks: { [id]: cur === v ? null : v } }); break; }
+    case 'hcAll': { const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
+    case 'hcSubmit': { const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}. Sent to your AC.`); break; }
+    case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
     case 'stEdit': openStaffForm(id); break;
     case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'T-shirt']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.tshirt || ''])); exportCSV('fsy-staff.csv', rows); break; }
@@ -1486,7 +1590,7 @@ document.addEventListener('submit', async e => {
     const h = emailKey(email); if (S.invites[h]) { toast('There is already an account for ' + email, true); return; }
     try { await setDoc('invites/' + h, { name, role: r, staffId: sid, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
   }
-  if (f.id === 'cfgForm') { await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), groupSize: Math.max(4, Math.min(20, parseInt(val('cfSize'), 10) || 10)) }); toast('Settings saved'); }
+  if (f.id === 'cfgForm') { await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, groupSize: Math.max(4, Math.min(20, parseInt(val('cfSize'), 10) || 10)) }); toast('Settings saved'); }
   if (f.id === 'edForm') {
     const id = f.dataset.id, b = bucketOf(id); const age = parseInt(val('edAge'), 10);
     const patch = { first: titleCase(val('edFirst')), last: titleCase(val('edLast')), gender: val('edGender'), bday: val('edBday'), ageCsv: isNaN(age) ? null : age, tshirt: val('edSize'), stake: clean(val('edStake')), unit: clean(val('edUnit')) }; const md = { med: val('edMed'), diet: val('edDiet') };
@@ -1496,6 +1600,10 @@ document.addEventListener('submit', async e => {
   }
 });
 let qT = null;
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset && t.dataset.hcreason) { const g = t.dataset.g, id = t.dataset.hcreason; clearTimeout(hcNoteT[id]); hcNoteT[id] = setTimeout(() => { const cur = hcDoc(hcDay(), g) || {}; const next = Object.assign({}, cur, { reasons: Object.assign({}, cur.reasons || {}, { [id]: t.value.slice(0, 200) }) }); S.hc[hcDay() + '_' + g] = next; setDoc('headcount/' + hcDay() + '_' + g, Object.assign(next, { by: S.uid, byName: S.meName || '', updatedAt: Date.now() })).catch(fail); }, 700); }
+});
 function pinSearch() { const a = $('#ciAnchor'); if (!a) return; const stick = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stick')) || 0; const y = a.getBoundingClientRect().top + window.scrollY - stick; if (Math.abs(window.scrollY - y) > 4) window.scrollTo({ top: y, behavior: 'smooth' }); }
 document.addEventListener('focusin', e => { if (e.target.id === 'ciQ' && window.matchMedia('(max-width: 899px)').matches) setTimeout(pinSearch, 250); });
 document.addEventListener('keydown', e => { if (e.target.id === 'ciQ' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
