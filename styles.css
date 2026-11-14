@@ -1,3 +1,13 @@
+/* =====================================================================
+   FSY Kenya 2nd 2026 Check-in — 2026 youth theme "Walk with Me"
+   Palette (2026 Theme Style Guide, page 6):
+     Blue 50  #002846   Blue 35 #005175   Blue 25 #007DA5   Blue 5–78% #C4E9F5
+     Yellow 15–82% #FCB449   Green 20–78% #8DBF67   Green 20–42% #BED7A7
+     Background: Green 20 – 6% tint #F6FAF4, always (the page opts out of dark mode)
+   Layout: phone first. App bar with the theme mark, a bright page banner,
+   a search bar that stays put, big tap targets and a bottom tab bar.
+   Wider screens get top tabs and multi-column cards.
+   ===================================================================== */
 :root{
   --blue50:#002846; --blue35:#005175; --blue25:#007da5; --blue5:#c4e9f5; --blue5t:#eaf6fa;
   --yellow:#fcb449; --green:#8dbf67; --green42:#bed7a7; --green6:#f6faf4;
@@ -356,7 +366,7 @@ a.issue[aria-current="true"] small{color:#1f4a66}
 @media (max-width:899px){
   input,select,textarea{font-size:16px}
   .livelabel,.who .nm{display:none}
-  .rolechip:not(.preview){display:none}
+  .who .rolechip:not(.preview){display:none}
   .pagehead .note{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .pagehead h1{font-size:1.45rem}
   .pcard{box-shadow:none}
@@ -438,3 +448,25 @@ a.issue[aria-current="true"] small{color:#1f4a66}
 .dz{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface2)}
 .dz>div{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1 1 220px}
 .dz small{font-size:.82rem}
+
+/* ---------- sessions & split ---------- */
+.sess-list{display:flex;flex-direction:column;gap:8px}
+.sess{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface2)}
+.sess>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.sess.cur{border-color:var(--green);box-shadow:inset 5px 0 0 var(--green)}
+.radio{display:flex;align-items:flex-start;gap:8px;padding:6px 0;font-weight:600;color:var(--ink);font-size:.92rem;flex-direction:row!important}
+.radio input{margin-top:3px;accent-color:var(--blue35);width:18px;height:18px}
+.sp-tree{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden;max-height:520px;overflow-y:auto}
+.sp-stake{border-bottom:1px solid var(--line)} .sp-stake:last-child{border-bottom:0}
+.sp-row{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;min-height:46px}
+.sp-row.st{background:var(--surface2)}
+.sp-row.un{padding-left:40px;font-size:.92rem;border-top:1px solid var(--line)}
+.sp-row .cnt{margin-left:auto;color:var(--muted);font-size:.82rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sp-sum{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding:12px 14px;border-radius:var(--r-sm);background:var(--blue5);color:#002846}
+.sess-pick{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);font-weight:700;cursor:pointer}
+.sesschk{cursor:pointer;padding:6px 10px;gap:6px}
+.sesschk input{width:16px;height:16px}
+.radio span{flex:1;min-width:0;font-weight:600}
+.radio small{font-weight:400}
+.form label.radio input,.radio input[type=radio]{width:18px!important;height:18px;flex:none;padding:0}
+.form label.radio{color:var(--ink);font-size:.92rem}

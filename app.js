@@ -1,12 +1,19 @@
-/*firebase*/
+/* FSY Kenya 2nd 2026 Check-in. Firebase settings and owner emails live in config.js. */
+/* ---------- Firebase layer: the small database/user/download interface the app uses ---------- */
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
+/* Each session keeps its own participants, check-ins, groups, staff, headcounts and medical notes.
+   The first session ("main") lives at the top level; sessions made by splitting live under sessions/<id>/.
+   Accounts, profiles, requests and the session list are shared by all sessions. */
+const SCOPED = new Set(['roster', 'state', 'staff', 'org', 'config', 'headcount', 'medical', 'share', 'intake']);
+function rawPath(sid, p) { return !sid || sid === 'main' ? p : `sessions/${sid}/${p}`; }
+function scoped(p) { return SCOPED.has(String(p).split('/')[0]) ? rawPath(S.sid, p) : p; }
 function fbErr(cb) { return e => { console.error(e); if (cb) cb({ code: e && e.code === 'permission-denied' ? 'invalid_argument' : 'unavailable', message: String(e && e.message) }); }; }
 function fbSnap(s) { return { id: s.id, exists: s.exists, data: () => (s.exists ? s.data() : undefined), metadata: { fromCache: s.metadata.fromCache, hasPendingWrites: s.metadata.hasPendingWrites } }; }
 function wrapWrite(p) { return p.catch(e => { throw { code: e && e.code === 'permission-denied' ? 'invalid_argument' : (e && e.code === 'resource-exhausted' ? 'quota_exceeded' : 'unavailable'), message: String(e && e.message) }; }); }
 function shimDoc(path) {
-  const r = FB.fs.doc(path);
+  const r = FB.fs.doc(scoped(path));
   return {
     id: r.id, path,
     get: async () => fbSnap(await r.get()),
@@ -18,7 +25,7 @@ function shimDoc(path) {
   };
 }
 function shimCol(path) {
-  const r = FB.fs.collection(path);
+  const r = FB.fs.collection(scoped(path));
   return {
     path, doc: id => shimDoc(path + '/' + id),
     onSnapshot: (next, err) => r.onSnapshot({ includeMetadataChanges: true }, s => next({ docs: s.docs.map(fbSnap), size: s.size, empty: s.empty, metadata: { fromCache: s.metadata.fromCache }, docChanges: () => [] }), fbErr(err))
@@ -575,13 +582,18 @@ const S = {
   org: { groups: {}, companies: {} }, orgEx: false, config: Object.assign({}, DEFAULT_CONFIG), configEx: false,
   access: {}, accessEx: false, requests: {}, loaded: {},
   P: [], staffList: [], staffMap: {}, viewAs: null, viewAsStaff: null, names: {},
-  hc: {}, hcLoaded: false,
+  hc: {}, hcLoaded: false, sid: 'main', sessions: {}, mySessions: [],
   medAdmin: false, email: null, medical: {}, medicalEx: new Set(), intake: {}, share: null, shares: {}, invites: {}, members: {}, inviteEmails: {}, claimTried: false
 };
 const UI = { page: null, frameKey: '', q: '', filter: 'all', stake: '', unit: '', limit: 40, logScope: 'all', staffTab: 'counselor', open: new Set(), openStakes: new Set(), band: '', imp: null, genLog: null, pending: false };
 
 /* ---------- roles ---------- */
-function inviteFor(uid) { const m = S.members[uid]; return m && m.h && S.invites[m.h] ? S.invites[m.h] : null; }
+const TOP_ROLES = ['regadmin', 'seventy'];
+function invSessions(i) { return i && Array.isArray(i.sessions) && i.sessions.length ? i.sessions : ['main']; }
+/** Does this account belong to the session being viewed? Registration admins and the Area Seventy belong to all. */
+function invHere(i) { return !!i && (TOP_ROLES.includes(i.role) || invSessions(i).includes(S.sid)); }
+function sessName(sid) { const x = S.sessions[sid]; return (x && x.name) || (sid === 'main' ? 'FSY Kenya 2nd 2026' : 'Session'); }
+function inviteFor(uid) { const m = S.members[uid]; const i = m && m.h && S.invites[m.h] ? S.invites[m.h] : null; return invHere(i) ? i : null; }
 function accountOf(uid) { if (S.access[uid]) return S.access[uid]; const i = inviteFor(uid); return i ? { role: i.role, staffId: i.staffId || null, via: 'invite' } : null; }
 function realRole() { if (S.isOwner) return 'regadmin'; const a = accountOf(S.uid); return a ? a.role : null; }
 function role() { return S.viewAs || realRole(); }
@@ -600,6 +612,7 @@ const can = {
   moveOwn: () => role() === 'ac',
   logistics: () => !!role(),
   accounts: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
+  split: () => TOP_ROLES.includes(realRole()),
   headcount: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
@@ -611,7 +624,8 @@ const PAGES = [
   ['headcount', 'Headcount', () => can.headcount()],
   ['staff', 'Staff', () => can.admin() || can.viewAll()],
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
-  ['access', 'Accounts', () => can.accounts()]
+  ['access', 'Accounts', () => can.accounts()],
+  ['sessions', 'Sessions', () => can.split()]
 ];
 function allowedPages() { return PAGES.filter(p => p[2]()); }
 function currentPage() {
@@ -755,7 +769,7 @@ function subscribe() {
     db.collection('profiles').onSnapshot(sn => { const m = {}, p = {}; sn.docs.forEach(d => { const v = d.data() || {}; p[d.id] = v; if (v.email) m[d.id] = { h: emailKey(v.email) }; }); S.profiles = p; S.members = m; mark('mem', sn.metadata); recompute(); }, onErr);
   } else {
     S.members = { [S.uid]: { h: emailKey(S.email) } }; S.loaded.mem = true;
-    db.doc('invites/' + emailKey(S.email)).onSnapshot(d => { if (!d.exists) { location.reload(); return; } S.invites = { [d.id]: d.data() }; mark('inv', d.metadata); recompute(); }, onErr);
+    db.doc('invites/' + emailKey(S.email)).onSnapshot(d => { if (!d.exists || !invHere(d.data())) { location.reload(); return; } S.invites = { [d.id]: d.data() }; mark('inv', d.metadata); recompute(); }, onErr);
   }
   if (S.medAdmin) {
     db.collection('medical').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.medicalEx.add(d.id); }); S.medical = r; mark('med', sn.metadata); recompute(); }, onErr);
@@ -767,7 +781,7 @@ function subscribe() {
   } else S.loaded.med = true;
 }
 async function boot() {
-  window.addEventListener('hashchange', () => render());
+  window.addEventListener('hashchange', () => { closeModal(); render(); });
   const CFG = appConfig(); if (!window.firebase || !CFG || !CFG.apiKey || /PASTE/.test(CFG.apiKey)) { S.setupNeeded = true; render(); return; }
   FB.app = firebase.initializeApp(CFG); FB.auth = firebase.auth(); FB.fs = firebase.firestore();
   try { FB.fs.settings({ ignoreUndefinedProperties: true, merge: true }); } catch (e) { }
@@ -782,6 +796,12 @@ async function boot() {
     S.db = dbShim; S.user = userShim; S.dl = downloadShim;
     FB.fs.doc('profiles/' + u.uid).set({ name: S.meName, email: S.email, at: Date.now() }, { merge: true }).catch(console.error);
     let inv = null; try { const d = await FB.fs.doc('invites/' + emailKey(S.email)).get(); inv = d.exists ? d.data() : null; } catch (e) { console.error(e); }
+    const top = S.isOwner || !!(inv && TOP_ROLES.includes(inv.role));
+    let reg = {}; try { const d = await FB.fs.doc('meta/sessions').get(); reg = d.exists ? (d.data().s || {}) : {}; } catch (e) { console.error(e); }
+    S.sessions = Object.assign({ main: { name: 'FSY Kenya 2nd 2026', at: 0 } }, reg);
+    S.mySessions = (top ? Object.keys(S.sessions) : invSessions(inv)).filter(id => S.sessions[id]).sort((a, b) => (a === 'main' ? -1 : b === 'main' ? 1 : (S.sessions[a].at || 0) - (S.sessions[b].at || 0)));
+    let pick = null; try { pick = localStorage.getItem('fsy.session.' + u.uid); } catch (e) { }
+    S.sid = S.mySessions.includes(pick) ? pick : (S.mySessions[0] || 'main');
     S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy'].includes(inv.role));
     if (!S.isOwner && !inv) { subscribeGuest(); render(); return; }
     subscribe(); render();
@@ -817,11 +837,12 @@ const ICONS = {
   access: I('<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M18 5l2 2"/>'),
   headcount: I('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><path d="m10 13 2 2 4-4"/>'),
   more: I('<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>'),
+  sessions: I('<rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>'),
   print: I('<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
-const SHORT = { headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
+const SHORT = { sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
 const NAV_ORDER = { logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
@@ -855,6 +876,7 @@ function openAccount() {
   openModal(`<div class="modal-head"><div class="acct"><span class="avatar" style="width:46px;height:46px;cursor:default">${esc(initials(S.meName))}</span><div><h2>${esc(S.meName || 'Signed in')}</h2><small class="muted">${esc(S.email || '')}</small></div></div><button class="x" data-act="close" aria-label="Close">×</button></div>
   <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
   ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
+  ${S.mySessions.length > 1 ? `<div><p class="th" style="margin-bottom:6px">Session</p><div class="sheetlist">${S.mySessions.map(id => `<button data-act="switchSession" data-v="${esc(id)}" ${id === S.sid ? 'aria-current="page"' : ''}>${ICONS.checkin}${esc(sessName(id))}${id === S.sid ? ' · open now' : ''}</button>`).join('')}</div></div>` : ''}
   <div class="sheetlist"><button data-act="signOut">${ICONS.signout}Sign out</button></div>`);
 }
 function gateView() {
@@ -1465,6 +1487,75 @@ async function hcWrite(gid, patch, submit) {
   await setDoc('headcount/' + id, next).catch(fail);
 }
 
+/* ---------- page: sessions (split and move participants) ---------- */
+PAGE_IMPL.sessions = {
+  frame() {
+    UI.split = UI.split || { dest: 'new', name: '', team: 'same', sel: new Set() };
+    return `<section class="pagehead"><div><p class="th">Sessions · registration admin & Area Seventy</p><h1>Split or reorganise</h1><p class="note">Move participants by stake, district, ward or branch into a new session or another existing one. Only participants move: staff for the new session come from its own staff upload.</p></div></section>
+    <section class="panel"><div class="panel-head"><h2>Sessions</h2></div><div id="sessList" class="sess-list"></div></section>
+    <section class="panel" id="splitPanel"></section>`;
+  },
+  update() {
+    if (!UI.sessCounts) { UI.sessCounts = {}; loadSessionCounts(); }
+    $('#sessList').innerHTML = Object.keys(S.sessions).filter(id => S.mySessions.includes(id)).map(id => { const cur = id === S.sid; const n = cur ? S.P.length : UI.sessCounts[id]; const x = S.sessions[id];
+      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div>${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}</div>`; }).join('');
+    const sp = UI.split, others = S.mySessions.filter(id => id !== S.sid);
+    const T = {}; S.P.forEach(p => { const { st, un } = areaOf(p); const x = T[st] = T[st] || { n: 0, u: {} }; x.n++; const u = x.u[un] = x.u[un] || { n: 0, inn: 0 }; u.n++; if (p.s === 'in') u.inn++; });
+    const picked = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)), pIn = picked.filter(p => p.s === 'in').length;
+    const tree = Object.keys(T).sort().map(st => { const units = Object.keys(T[st].u).sort(); const all = units.every(u => sp.sel.has(st + '|' + u)), some = units.some(u => sp.sel.has(st + '|' + u));
+      return `<div class="sp-stake"><label class="sp-row st"><input type="checkbox" data-act="spStake" data-v="${esc(st)}" ${all ? 'checked' : ''} ${!all && some ? 'data-mixed="1"' : ''}><b>${esc(st)}</b><span class="cnt">${T[st].n}</span></label>${units.map(u => `<label class="sp-row un"><input type="checkbox" data-act="spUnit" data-v="${esc(st + '|' + u)}" ${sp.sel.has(st + '|' + u) ? 'checked' : ''}><span>${esc(u)}</span><span class="cnt">${T[st].u[u].n}${T[st].u[u].inn ? ` · ${T[st].u[u].inn} in` : ''}</span></label>`).join('')}</div>`; }).join('');
+    $('#splitPanel').innerHTML = `<div class="panel-head"><h2>Move participants out of ${esc(sessName(S.sid))}</h2></div>
+      <div class="form">
+        <label>Move them to<select id="spDest" data-region="1">${opt('new', 'A new session', sp.dest === 'new')}${others.map(id => opt(id, sessName(id), sp.dest === id)).join('')}</select></label>
+        ${sp.dest === 'new' ? `<label>New session name<input id="spName" data-region="1" value="${esc(sp.name)}" placeholder="e.g. FSY Kenya 2026 · Western" autocomplete="off"></label>` : ''}
+        <div class="span2"><span class="note" style="display:block;margin-bottom:6px;font-weight:700">Staff team for ${sp.dest === 'new' ? 'the new session' : esc(sessName(sp.dest))}</span>
+          <label class="radio"><input type="radio" name="spTeam" value="same" ${sp.team === 'same' ? 'checked' : ''}><span>The same session directing couple <small class="muted">· they get access to both sessions</small></span></label>
+          <label class="radio"><input type="radio" name="spTeam" value="new" ${sp.team === 'new' ? 'checked' : ''}><span>A different staff team <small class="muted">· upload their staff file and create their accounts in that session</small></span></label></div>
+      </div>
+      <p class="th" style="margin:16px 0 6px">Choose stakes, districts, wards and branches</p>
+      <div class="sp-tree">${tree || '<p class="note">No participants in this session.</p>'}</div>
+      <div class="sp-sum"><div><b>${picked.length}</b> participants selected${pIn ? ` · <b>${pIn}</b> already checked in (their check-ins move with them)` : ''}</div>
+      <button class="btn primary" data-act="spGo" ${picked.length && (sp.dest !== 'new' || sp.name.trim()) ? '' : 'disabled'}>Move ${picked.length || ''} participants</button></div>
+      <p class="note" style="margin:8px 0 0">Moved youth leave their groups here. Press Rebalance afterwards in both sessions. Registration admins and the Area Seventy can open every session.</p>`;
+    document.querySelectorAll('[data-mixed]').forEach(el => el.indeterminate = true);
+  }
+};
+async function loadSessionCounts() {
+  for (const id of S.mySessions) { if (id === S.sid) continue; try { const sn = await FB.fs.collection(rawPath(id, 'roster')).get(); UI.sessCounts[id] = sn.docs.reduce((a, d) => a + Object.keys((d.data() || {}).p || {}).length, 0); } catch (e) { UI.sessCounts[id] = '?'; } }
+  if (currentPage() === 'sessions') render();
+}
+async function moveParticipants(list, target, opts) {
+  const src = S.sid, del = firebase.firestore.FieldValue.delete;
+  const byB = {}; list.forEach(p => (byB[bucketOf(p.id)] = byB[bucketOf(p.id)] || []).push(p.id));
+  const intake = {}; for (const u in S.intake) Object.assign(intake, (S.intake[u] || {}).p || {});
+  if (opts.isNew) await FB.fs.doc(rawPath(target, 'config/session')).set(Object.assign({}, S.config, { sessionName: opts.name, excludedStakes: [], excludedUnits: [] }));
+  // 1. copy into the destination
+  for (const b in byB) {
+    const r = {}, st = {}, md = {};
+    byB[b].forEach(id => {
+      const rec = (S.roster[b] || {})[id]; if (rec) { const x = Object.assign({}, rec); delete x.med; delete x.diet; r[id] = x; }
+      const s0 = (S.state[b] || {})[id]; if (s0) st[id] = Object.assign({}, s0, { g: null });
+      const m0 = (S.medical[b] || {})[id] || intake[id] || (rec && (rec.med || rec.diet) ? { med: rec.med || '', diet: rec.diet || '' } : null); if (m0) md[id] = { med: m0.med || '', diet: m0.diet || '' };
+    });
+    await FB.fs.doc(rawPath(target, 'roster/' + b)).set({ p: r }, { merge: true });
+    if (Object.keys(st).length) await FB.fs.doc(rawPath(target, 'state/' + b)).set({ p: st }, { merge: true });
+    if (Object.keys(md).length) await FB.fs.doc(rawPath(target, 'medical/' + b)).set({ p: md }, { merge: true });
+  }
+  // 2. remove from this session (field by field, so check-ins made meanwhile elsewhere are untouched)
+  for (const b in byB) {
+    const gone = {}; byB[b].forEach(id => gone['p.' + id] = del());
+    await FB.fs.doc(rawPath(src, 'roster/' + b)).update(gone);
+    if (S.stateEx.has(b) && byB[b].some(id => (S.state[b] || {})[id])) await FB.fs.doc(rawPath(src, 'state/' + b)).update(gone).catch(() => { });
+    if (S.medicalEx.has(b) && byB[b].some(id => (S.medical[b] || {})[id])) await FB.fs.doc(rawPath(src, 'medical/' + b)).update(gone).catch(() => { });
+  }
+  // 3. the session list, and access for the directing couple if they lead both
+  const entry = { [src]: { name: S.config.sessionName || sessName(src), at: (S.sessions[src] || {}).at || 0 } };
+  if (opts.isNew) entry[target] = { name: opts.name, at: Date.now(), by: S.meName || '', from: src };
+  await FB.fs.doc('meta/sessions').set({ s: entry }, { merge: true });
+  Object.assign(S.sessions, entry); if (!S.mySessions.includes(target)) S.mySessions.push(target);
+  if (opts.team === 'same') for (const e in S.invites) { const v = S.invites[e]; if (v.role === 'sdc' && invSessions(v).includes(src) && !invSessions(v).includes(target)) await FB.fs.doc('invites/' + e).set({ sessions: invSessions(v).concat(target) }, { merge: true }); }
+}
+
 /* ---------- page: data ---------- */
 PAGE_IMPL.data = {
   frame() {
@@ -1550,6 +1641,7 @@ PAGE_IMPL.access = {
       <label>Google email<input id="invEmail" type="email" required autocomplete="off" placeholder="name@gmail.com"></label>
       <label>Role<select id="invRole" required>${opt('', 'Choose…')}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select></label>
       <label>Staff record<select id="invStaff">${opt('', '— Link later')}${S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role])).join('')}</select></label>
+      ${S.mySessions.length > 1 ? `<div class="span2"><span class="note" style="display:block;margin-bottom:4px;font-weight:700">Sessions they can open</span><div class="flags">${S.mySessions.map(id => `<label class="chip sesschk"><input type="checkbox" class="invSessChk" value="${esc(id)}" ${id === S.sid ? 'checked' : ''}> ${esc(sessName(id))}</label>`).join('')}</div><small class="muted">Registration admins and the Area Seventy open every session.</small></div>` : ''}
       <p class="note span2" style="margin:0">Counselors and ACs must be linked to their staff record. That decides which group and company, and whose medical and dietary notes, they can see.</p>
       <div class="span2"><button class="btn primary" type="submit">Create account</button></div></form></div>
     <div class="panel"><div class="panel-head"><h2>Accounts you created</h2><span class="note" id="invCount"></span></div><div id="invList"></div></div>
@@ -1565,13 +1657,14 @@ PAGE_IMPL.access = {
       <p class="note">These limits are enforced by the database's security rules, not only by the screens. Medical and dietary notes are stored apart; counselors, ACs, coordinators and logistics only receive the notes for the youth they are allowed to see.</p></div>`;
   },
   async update() {
-    const invs = Object.entries(S.invites).sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''));
+    const invs = Object.entries(S.invites).filter(([, v]) => UI.accAll || invHere(v)).sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''));
     const claimed = {}; for (const uid in S.members) { const h = S.members[uid].h; if (h) claimed[h] = uid; }
     const roleOpts = cur => Object.keys(ROLES).filter(r => r !== 'regadmin' || r === cur || realRole() === 'regadmin').map(r => opt(r, ROLES[r], r === cur)).join('');
     const staffOpts = cur => opt('', '— Not linked', !cur) + S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role], x.id === cur)).join('');
     if (!$('#invList')) return;
+    if (!$('#accAllWrap') && can.split() && $('#invCount')) $('#invCount').insertAdjacentHTML('afterend', `<label class="inline note" id="accAllWrap" style="margin:0"><input type="checkbox" id="accAll" ${UI.accAll ? 'checked' : ''}> Show every session</label>`);
     $('#invCount').textContent = invs.length ? `${Object.keys(claimed).filter(h => S.invites[h]).length} of ${invs.length} signed in` : '';
-    $('#invList').innerHTML = invs.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Staff record</th><th>Status</th><th></th></tr></thead><tbody>${invs.map(([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !v.staffId ? ' <span class="chip warn">Link needed</span>' : ''}</td><td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No accounts yet. Create the first one above.</p>';
+    $('#invList').innerHTML = invs.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Staff record</th>${S.mySessions.length > 1 || UI.accAll ? '<th>Sessions</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${invs.map(([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !v.staffId ? ' <span class="chip warn">Link needed</span>' : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No accounts yet. Create the first one above.</p>';
     const reqIds = Object.keys(S.requests).filter(id => !S.invites[emailKey(S.requests[id].email || '')]);
     const accIds = Object.keys(S.access);
     const ps = S.user ? await S.user.profiles(uniq(reqIds.concat(accIds))) : {};
@@ -1685,6 +1778,18 @@ document.addEventListener('click', async e => {
     case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
     case 'testDel': { const tests = S.staffList.filter(s => s.test); if (!tests.length) { toast('There are no test staff.'); break; } if (!await confirmBox(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their leader. Press Rebalance afterwards to hand them to real staff.', 'Delete test staff', true)) break; const s = {}; S.staffList.filter(x => !x.test).forEach(x => s[x.id] = x); S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Test staff deleted'); break; }
     case 'stTab': UI.staffTab = v; render(); break;
+    case 'invSess': { const inv0 = S.invites[id]; if (!inv0) break; const cur = invSessions(inv0);
+      openModal(`<div class="modal-head"><div><h2>${esc(inv0.name)}</h2><small class="muted">${esc(id)} · ${esc(ROLES[inv0.role] || inv0.role)}</small></div><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note" style="margin:0">Sessions this account can open</p><div class="sheetlist">${S.mySessions.map(sid => `<label class="sess-pick"><input type="checkbox" class="pickSess" value="${esc(sid)}" ${cur.includes(sid) ? 'checked' : ''}> ${esc(sessName(sid))}</label>`).join('')}</div><button class="btn primary" data-act="invSessSave" data-id="${esc(id)}">Save</button>`); break; }
+    case 'invSessSave': { const inv0 = S.invites[id]; const mine = new Set(S.mySessions); const keepOther = invSessions(inv0).filter(x => !mine.has(x)); const picked = [...document.querySelectorAll('.pickSess:checked')].map(x => x.value); const sessions = uniq(keepOther.concat(picked)); if (!sessions.length) { toast('Choose at least one session', true); break; } await upd('invites/' + id, { sessions }, true).catch(fail); closeModal(); toast('Sessions updated'); break; }
+    case 'switchSession': { try { localStorage.setItem('fsy.session.' + S.uid, v); } catch (e) { } closeModal(); location.hash = ''; location.reload(); break; }
+    case 'spGo': { if (!can.split()) break; const sp = UI.split; const list = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)); if (!list.length) break;
+      const isNew = sp.dest === 'new', name = isNew ? clean(sp.name) : sessName(sp.dest); if (isNew && !name) { toast('Give the new session a name', true); break; }
+      const units = uniq(list.map(p => areaOf(p).un)).length;
+      if (!await confirmTyped(`Move ${list.length} participants to ${name}?`, `${list.length} youth from ${units} ward${units === 1 ? '' : 's'} and branch${units === 1 ? '' : 'es'} leave ${esc(sessName(S.sid))}, with their check-ins and medical notes. They leave their groups here. ${sp.team === 'same' ? 'The session directing couple will be able to open both sessions.' : 'Set up the staff team and accounts in the new session.'}`, 'MOVE', 'Move participants')) break;
+      const target = isNew ? 's' + rid('') : sp.dest; toast('Moving participants…');
+      try { await moveParticipants(list, target, { isNew, name, team: sp.team }); UI.split = { dest: 'new', name: '', team: 'same', sel: new Set() }; UI.sessCounts = null; render(); toast(`${list.length} participants moved to ${name}`, false, { label: 'Open', fn: () => { try { localStorage.setItem('fsy.session.' + S.uid, target); } catch (e) { } location.hash = ''; location.reload(); } }); }
+      catch (e) { fail(e); }
+      break; }
     case 'resetOrg': { if (!can.reset()) break; if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; await resetOrg(); toast('Groups and companies removed'); break; }
     case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
     case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and directing couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept but will need linking to the new staff records.', 'DELETE', 'Delete all staff')) break;
@@ -1714,6 +1819,11 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', async e => {
   const t = e.target; const act = t.dataset && t.dataset.act; const id = t.dataset && t.dataset.id, v = t.dataset && t.dataset.v;
+  if (t.id === 'accAll') { UI.accAll = t.checked; render(); return; }
+  if (t.id === 'spDest') { UI.split.dest = t.value; t.blur(); render(); return; }
+  if (t.name === 'spTeam') { UI.split.team = t.value; return; }
+  if (t.dataset && t.dataset.act === 'spUnit') { t.checked ? UI.split.sel.add(t.dataset.v) : UI.split.sel.delete(t.dataset.v); render(); return; }
+  if (t.dataset && t.dataset.act === 'spStake') { const st = t.dataset.v; S.P.filter(p => areaOf(p).st === st).forEach(p => { const k = st + '|' + areaOf(p).un; t.checked ? UI.split.sel.add(k) : UI.split.sel.delete(k); }); render(); return; }
   if (t.id === 'viewAs') { S.viewAs = t.value || null; S.viewAsStaff = null; if (S.viewAs && ['counselor', 'ac', 'coordinator'].includes(S.viewAs)) { const s = S.staffList.find(x => x.role === S.viewAs && (S.viewAs !== 'counselor' || Object.values(S.org.groups).some(g => g.counselorId === x.id)) && (S.viewAs !== 'ac' || Object.values(S.org.companies).some(c => c.acId === x.id))); S.viewAsStaff = s ? s.id : null; if (s) toast('Previewing as ' + s.name); } UI.frameKey = ''; closeModal(); render(); return; }
   if (t.id === 'ciStake') { UI.stake = t.value; UI.unit = ''; UI.limit = 40; t.blur(); render(); return; }
   if (t.id === 'ciUnit') { UI.unit = t.value; UI.limit = 40; t.blur(); render(); return; }
@@ -1731,7 +1841,7 @@ document.addEventListener('change', async e => {
     case 'areaU': { const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
     case 'impMap': { const i = +v; if (t.value) { for (const k in UI.imp.map) if (UI.imp.map[k] === t.value) delete UI.imp.map[k]; UI.imp.map[i] = t.value; } else delete UI.imp.map[i]; renderImport(); break; }
     case 'stRole': { t.blur(); await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
-    case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
+    case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
     case 'invRole': { await upd('invites/' + id, { role: t.value }, true).catch(fail); toast('Role changed'); break; }
     case 'invStaff': { await upd('invites/' + id, { staffId: t.value || null }, true).catch(fail); toast('Staff record linked'); break; }
@@ -1762,9 +1872,10 @@ document.addEventListener('submit', async e => {
     const name = titleCase(val('invName')), email = clean(val('invEmail')).toLowerCase(), r = val('invRole'), sid = val('invStaff') || null;
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !r) { toast('Enter a name, a valid email and a role', true); return; }
     const h = emailKey(email); if (S.invites[h]) { toast('There is already an account for ' + email, true); return; }
-    try { await setDoc('invites/' + h, { name, role: r, staffId: sid, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
+    const chosen = [...document.querySelectorAll('.invSessChk:checked')].map(x => x.value); const sessions = chosen.length ? chosen : [S.sid];
+    try { await setDoc('invites/' + h, { name, role: r, staffId: sid, sessions, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
   }
-  if (f.id === 'cfgForm') { await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, groupSize: Math.max(4, Math.min(20, parseInt(val('cfSize'), 10) || 10)) }); toast('Settings saved'); }
+  if (f.id === 'cfgForm') { if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, groupSize: Math.max(4, Math.min(20, parseInt(val('cfSize'), 10) || 10)) }); toast('Settings saved'); }
   if (f.id === 'edForm') {
     const id = f.dataset.id, b = bucketOf(id); const age = parseInt(val('edAge'), 10);
     const patch = { first: titleCase(val('edFirst')), last: titleCase(val('edLast')), gender: val('edGender'), bday: val('edBday'), ageCsv: isNaN(age) ? null : age, tshirt: val('edSize'), stake: clean(val('edStake')), unit: clean(val('edUnit')) }; const md = { med: val('edMed'), diet: val('edDiet') };
@@ -1774,6 +1885,7 @@ document.addEventListener('submit', async e => {
   }
 });
 let qT = null;
+document.addEventListener('input', e => { if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.dataset && t.dataset.hcreason) { const g = t.dataset.g, id = t.dataset.hcreason; clearTimeout(hcNoteT[id]); hcNoteT[id] = setTimeout(() => { const cur = hcDoc(hcDay(), g) || {}; const next = Object.assign({}, cur, { reasons: Object.assign({}, cur.reasons || {}, { [id]: t.value.slice(0, 200) }) }); S.hc[hcDay() + '_' + g] = next; setDoc('headcount/' + hcDay() + '_' + g, Object.assign(next, { by: S.uid, byName: S.meName || '', updatedAt: Date.now() })).catch(fail); }, 700); }
