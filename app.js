@@ -44,7 +44,7 @@ const NBUCKETS = 32;
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
-  regadmin: 'Registration admin', sdc: 'Session directing couple', coordinator: 'Coordinator',
+  regadmin: 'Registration admin', sdc: 'Session directing couple', seventy: 'Area Seventy', coordinator: 'Coordinator',
   ac: 'Assistant coordinator', counselor: 'Counselor', logistics: 'Logistics'
 };
 const STAFF_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics'];
@@ -589,17 +589,17 @@ function scopeCompanyIds(r, sid) { const G = Object.values(S.org.groups), C = Ob
 function inScopeFor(p, r, sid) { if (!['counselor', 'ac'].includes(r)) return true; const ids = scopeCompanyIds(r, sid); return (!!p.company && ids.includes(p.company.id)) || (r === 'counselor' && !!p.group && !!sid && p.group.counselorId === sid); }
 function seesPrivate(p) { return inScopeFor(p, role(), myStaffId()); }
 const can = {
-  admin: () => ['regadmin', 'sdc'].includes(role()),
+  admin: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
   deleteP: () => role() === 'regadmin',
-  checkin: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
-  viewAll: () => ['regadmin', 'sdc', 'logistics'].includes(role()),
+  checkin: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
+  viewAll: () => ['regadmin', 'sdc', 'seventy', 'logistics'].includes(role()),
   readOnly: () => role() === 'logistics',
-  reset: () => ['regadmin', 'sdc', 'coordinator'].includes(role()),
-  moveAny: () => ['regadmin', 'sdc', 'coordinator'].includes(role()),
+  reset: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
+  moveAny: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
   logistics: () => !!role(),
-  accounts: () => ['regadmin', 'sdc'].includes(role()),
-  headcount: () => ['regadmin', 'sdc', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
+  accounts: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
+  headcount: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
   ['checkin', 'Check-in', () => can.checkin()],
@@ -781,7 +781,7 @@ async function boot() {
     S.db = dbShim; S.user = userShim; S.dl = downloadShim;
     FB.fs.doc('profiles/' + u.uid).set({ name: S.meName, email: S.email, at: Date.now() }, { merge: true }).catch(console.error);
     let inv = null; try { const d = await FB.fs.doc('invites/' + emailKey(S.email)).get(); inv = d.exists ? d.data() : null; } catch (e) { console.error(e); }
-    S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc'].includes(inv.role));
+    S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy'].includes(inv.role));
     if (!S.isOwner && !inv) { subscribeGuest(); render(); return; }
     subscribe(); render();
   });
@@ -833,7 +833,7 @@ function renderHeader() {
   }
   const top = $('#top'); if (top) { document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px'); const sticky = getComputedStyle(top).position === 'sticky'; const tabs = document.querySelector('.tabs'); document.documentElement.style.setProperty('--stick', sticky ? (top.offsetHeight + (tabs ? tabs.offsetHeight : 0)) + 'px' : '0px'); }
 }
-const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Directing couple', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
+const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Directing couple', seventy: 'Area Seventy', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
   const cur = currentPage(); const keys = navPages();
   $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
@@ -897,7 +897,7 @@ function lockReadOnly(pg) {
 function resetPanel() {
   const nG = Object.keys(S.org.groups).length, nC = Object.keys(S.org.companies).length, nT = S.staffList.filter(x => x.test).length, nS = S.staffList.length;
   return `<section class="panel danger-zone"><div class="panel-head"><h2>Start over</h2><span class="chip bad">Can't be undone</span></div>
-    <p class="note" style="margin-top:-4px">For registration admins, the directing couple and coordinators. Check-ins, participants and headcounts already submitted are kept.</p>
+    <p class="note" style="margin-top:-4px">For registration admins, the directing couple, the Area Seventy and coordinators. Check-ins, participants and headcounts already submitted are kept.</p>
     <div class="dz-list">
       <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${nG || nC ? '' : 'disabled'}>Undo groups</button></div>
       <div class="dz"><div><b>Delete test staff</b><small class="muted">${nT} staff marked Test.</small></div><button class="btn danger" data-act="resetTest" ${nT ? '' : 'disabled'}>Delete test staff</button></div>
@@ -1401,7 +1401,7 @@ function hcScopeGroups() {
 PAGE_IMPL.headcount = {
   frame() {
     const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live' + (can.readOnly() ? ' · view only' : '');
-    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Each counselor reports their group here. Missing youth and groups that have not reported are highlighted.' : 'Every group, company and missing youth for the night, updating live as counselors report.'}</p></div>${['regadmin', 'sdc', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
+    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Each counselor reports their group here. Missing youth and groups that have not reported are highlighted.' : 'Every group, company and missing youth for the night, updating live as counselors report.'}</p></div>${['regadmin', 'sdc', 'seventy', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
     <div class="segscroll"><div class="chips" id="hcDays"></div></div>
     <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>`;
   },
@@ -1553,6 +1553,7 @@ PAGE_IMPL.access = {
     <div class="panel"><h2>What each role sees and does</h2><div class="tablewrap"><table><thead><tr><th>Role</th><th>Sees</th><th>Can</th></tr></thead><tbody>
       <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
       <tr><td>Session directing couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
+      <tr><td>Area Seventy</td><td>Whole session</td><td>The same as the session directing couple.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
       <tr><td>Assistant coordinator</td><td>Their company</td><td>Check in, move participants inside their company, logistics for their company.</td></tr>
