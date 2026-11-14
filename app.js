@@ -1,4 +1,3 @@
-
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
@@ -857,7 +856,7 @@ function openAccount() {
 function gateView() {
   const ident = `<picture><img class="identifier" src="assets/identifier-light.webp" width="380" height="410" alt="2026 youth theme identifier: Walk with Me, Moses 6:34"></picture>`;
   if (S.setupNeeded) return `<div class="gate">${ident}<h1>Finish setting up</h1><p class="note">Put your Firebase settings and owner emails in <b>config.js</b>, upload it next to index.html, then reload.</p></div>`;
-  if (S.signedOut) return `<div class="gate">${ident}<p class="tag">FSY Kenya 2nd 2026 · Check-in<button class="btn primary gbtn" data-act="signIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.6a4.8 4.8 0 0 1-2.1 3.1v2.6h3.4c2-1.8 3.1-4.5 3.1-7.5z"/><path fill="#34A853" d="M12 22c2.8 0 5.2-.9 6.9-2.5l-3.4-2.6c-.9.6-2.1 1-3.5 1-2.7 0-5-1.8-5.8-4.3H2.7v2.7A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.2 13.6a6 6 0 0 1 0-3.8V7.1H2.7a10 10 0 0 0 0 9.2z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.9.5 4 1.5l3-3A10 10 0 0 0 2.7 7.1l3.5 2.7C7 7.7 9.3 5.9 12 5.9z"/></svg>Sign in with Google</button></div>`;
+  if (S.signedOut) return `<div class="gate">${ident}<p class="tag">FSY Kenya 2nd 2026 · Check-in</p><h1>Welcome, let's get everyone checked in</h1><p class="note">Sign in with the Google account your registration admin set up for you.</p><button class="btn primary gbtn" data-act="signIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.6a4.8 4.8 0 0 1-2.1 3.1v2.6h3.4c2-1.8 3.1-4.5 3.1-7.5z"/><path fill="#34A853" d="M12 22c2.8 0 5.2-.9 6.9-2.5l-3.4-2.6c-.9.6-2.1 1-3.5 1-2.7 0-5-1.8-5.8-4.3H2.7v2.7A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.2 13.6a6 6 0 0 1 0-3.8V7.1H2.7a10 10 0 0 0 0 9.2z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.9.5 4 1.5l3-3A10 10 0 0 0 2.7 7.1l3.5 2.7C7 7.7 9.3 5.9 12 5.9z"/></svg>Sign in with Google</button></div>`;
   if (!S.uid) return `<div class="empty"><h3>Checking your sign-in…</h3>One moment.</div>`;
   if (!loadedAll() && !S.slow) return `<div class="empty"><h3>Loading the session…</h3>Participants, groups and check-ins appear here once the data connects.</div>`;
   if (!role()) {
