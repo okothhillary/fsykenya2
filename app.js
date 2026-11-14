@@ -1,5 +1,3 @@
-/* FSY Kenya 2nd 2026 Check-in. Firebase settings and owner emails live in config.js. */
-/* ---------- Firebase layer: the small database/user/download interface the app uses ---------- */
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
@@ -52,7 +50,7 @@ const NBUCKETS = 32;
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
-  regadmin: 'Registration admin', sdc: 'Session directing couple', seventy: 'Area Seventy', coordinator: 'Coordinator',
+  regadmin: 'Registration admin', sdc: 'Session directing couple', seventy: 'Area Seventy', loghead: 'Head of Logistics', coordinator: 'Coordinator',
   ac: 'Assistant coordinator', counselor: 'Counselor', logistics: 'Logistics'
 };
 const STAFF_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics'];
@@ -588,10 +586,13 @@ const S = {
 const UI = { page: null, frameKey: '', q: '', filter: 'all', stake: '', unit: '', limit: 40, logScope: 'all', staffTab: 'counselor', open: new Set(), openStakes: new Set(), band: '', imp: null, genLog: null, pending: false };
 
 /* ---------- roles ---------- */
-const TOP_ROLES = ['regadmin', 'seventy'];
+/* Roles that open every session and may split or reorganise sessions. */
+const TOP_ROLES = ['regadmin', 'seventy', 'loghead'];
 function invSessions(i) { return i && Array.isArray(i.sessions) && i.sessions.length ? i.sessions : ['main']; }
 /** Does this account belong to the session being viewed? Registration admins and the Area Seventy belong to all. */
 function invHere(i) { return !!i && (TOP_ROLES.includes(i.role) || invSessions(i).includes(S.sid)); }
+/** Registration admins hand out any role; the Area Seventy any but registration admin; a directing couple only session roles. */
+function roleAssignable(r) { const me = realRole(); if (me === 'regadmin') return true; if (me === 'seventy') return r !== 'regadmin'; return !['regadmin', 'seventy', 'loghead'].includes(r); }
 function sessName(sid) { const x = S.sessions[sid]; return (x && x.name) || (sid === 'main' ? 'FSY Kenya 2nd 2026' : 'Session'); }
 function inviteFor(uid) { const m = S.members[uid]; const i = m && m.h && S.invites[m.h] ? S.invites[m.h] : null; return invHere(i) ? i : null; }
 function accountOf(uid) { if (S.access[uid]) return S.access[uid]; const i = inviteFor(uid); return i ? { role: i.role, staffId: i.staffId || null, via: 'invite' } : null; }
@@ -604,16 +605,17 @@ function seesPrivate(p) { return inScopeFor(p, role(), myStaffId()); }
 const can = {
   admin: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
   deleteP: () => role() === 'regadmin',
-  checkin: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
-  viewAll: () => ['regadmin', 'sdc', 'seventy', 'logistics'].includes(role()),
-  readOnly: () => role() === 'logistics',
+  checkin: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
+  viewAll: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'logistics'].includes(role()),
+  readOnly: () => ['logistics', 'loghead'].includes(role()),
   reset: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveAny: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
   logistics: () => !!role(),
   accounts: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
-  split: () => TOP_ROLES.includes(realRole()),
-  headcount: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
+  // the real account must be allowed to split, and a preview of another role hides it, so previews show exactly what that role sees
+  split: () => TOP_ROLES.includes(realRole()) && TOP_ROLES.includes(role()),
+  headcount: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
   ['checkin', 'Check-in', () => can.checkin()],
@@ -802,7 +804,7 @@ async function boot() {
     S.mySessions = (top ? Object.keys(S.sessions) : invSessions(inv)).filter(id => S.sessions[id]).sort((a, b) => (a === 'main' ? -1 : b === 'main' ? 1 : (S.sessions[a].at || 0) - (S.sessions[b].at || 0)));
     let pick = null; try { pick = localStorage.getItem('fsy.session.' + u.uid); } catch (e) { }
     S.sid = S.mySessions.includes(pick) ? pick : (S.mySessions[0] || 'main');
-    S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy'].includes(inv.role));
+    S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy', 'loghead'].includes(inv.role));
     if (!S.isOwner && !inv) { subscribeGuest(); render(); return; }
     subscribe(); render();
   });
@@ -843,7 +845,7 @@ const ICONS = {
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+const NAV_ORDER = { logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -855,7 +857,7 @@ function renderHeader() {
   }
   const top = $('#top'); if (top) { document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px'); const sticky = getComputedStyle(top).position === 'sticky'; const tabs = document.querySelector('.tabs'); document.documentElement.style.setProperty('--stick', sticky ? (top.offsetHeight + (tabs ? tabs.offsetHeight : 0)) + 'px' : '0px'); }
 }
-const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Directing couple', seventy: 'Area Seventy', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
+const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Directing couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
   const cur = currentPage(); const keys = navPages();
   $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
@@ -1491,7 +1493,7 @@ async function hcWrite(gid, patch, submit) {
 PAGE_IMPL.sessions = {
   frame() {
     UI.split = UI.split || { dest: 'new', name: '', team: 'same', sel: new Set() };
-    return `<section class="pagehead"><div><p class="th">Sessions · registration admin & Area Seventy</p><h1>Split or reorganise</h1><p class="note">Move participants by stake, district, ward or branch into a new session or another existing one. Only participants move: staff for the new session come from its own staff upload.</p></div></section>
+    return `<section class="pagehead"><div><p class="th">Sessions · registration admin, Area Seventy & Head of Logistics</p><h1>Split or reorganise</h1><p class="note">Move participants by stake, district, ward or branch into a new session or another existing one. Only participants move: staff for the new session come from its own staff upload.</p></div></section>
     <section class="panel"><div class="panel-head"><h2>Sessions</h2></div><div id="sessList" class="sess-list"></div></section>
     <section class="panel" id="splitPanel"></section>`;
   },
@@ -1639,7 +1641,7 @@ PAGE_IMPL.access = {
     <div class="panel"><h2>Create an account</h2><form id="invForm" class="form">
       <label>Full name<input id="invName" required autocomplete="off"></label>
       <label>Google email<input id="invEmail" type="email" required autocomplete="off" placeholder="name@gmail.com"></label>
-      <label>Role<select id="invRole" required>${opt('', 'Choose…')}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select></label>
+      <label>Role<select id="invRole" required>${opt('', 'Choose…')}${Object.keys(ROLES).filter(r => roleAssignable(r)).map(r => opt(r, ROLES[r])).join('')}</select></label>
       <label>Staff record<select id="invStaff">${opt('', '— Link later')}${S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role])).join('')}</select></label>
       ${S.mySessions.length > 1 ? `<div class="span2"><span class="note" style="display:block;margin-bottom:4px;font-weight:700">Sessions they can open</span><div class="flags">${S.mySessions.map(id => `<label class="chip sesschk"><input type="checkbox" class="invSessChk" value="${esc(id)}" ${id === S.sid ? 'checked' : ''}> ${esc(sessName(id))}</label>`).join('')}</div><small class="muted">Registration admins and the Area Seventy open every session.</small></div>` : ''}
       <p class="note span2" style="margin:0">Counselors and ACs must be linked to their staff record. That decides which group and company, and whose medical and dietary notes, they can see.</p>
@@ -1649,7 +1651,8 @@ PAGE_IMPL.access = {
     <div class="panel"><h2>What each role sees and does</h2><div class="tablewrap"><table><thead><tr><th>Role</th><th>Sees</th><th>Can</th></tr></thead><tbody>
       <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
       <tr><td>Session directing couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
-      <tr><td>Area Seventy</td><td>Whole session</td><td>The same as the session directing couple.</td></tr>
+      <tr><td>Area Seventy</td><td>Every session</td><td>The same as the session directing couple, in every session, plus splitting and reorganising sessions.</td></tr>
+      <tr><td>Head of Logistics</td><td>Every session</td><td>Everything logistics can see and do, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
       <tr><td>Assistant coordinator</td><td>Their company</td><td>Check in, move participants inside their company, logistics for their company.</td></tr>
@@ -1659,7 +1662,7 @@ PAGE_IMPL.access = {
   async update() {
     const invs = Object.entries(S.invites).filter(([, v]) => UI.accAll || invHere(v)).sort((a, b) => (a[1].name || '').localeCompare(b[1].name || ''));
     const claimed = {}; for (const uid in S.members) { const h = S.members[uid].h; if (h) claimed[h] = uid; }
-    const roleOpts = cur => Object.keys(ROLES).filter(r => r !== 'regadmin' || r === cur || realRole() === 'regadmin').map(r => opt(r, ROLES[r], r === cur)).join('');
+    const roleOpts = cur => Object.keys(ROLES).filter(r => r === cur || roleAssignable(r)).map(r => opt(r, ROLES[r], r === cur)).join('');
     const staffOpts = cur => opt('', '— Not linked', !cur) + S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role], x.id === cur)).join('');
     if (!$('#invList')) return;
     if (!$('#accAllWrap') && can.split() && $('#invCount')) $('#invCount').insertAdjacentHTML('afterend', `<label class="inline note" id="accAllWrap" style="margin:0"><input type="checkbox" id="accAll" ${UI.accAll ? 'checked' : ''}> Show every session</label>`);
@@ -1669,7 +1672,7 @@ PAGE_IMPL.access = {
     const accIds = Object.keys(S.access);
     const ps = S.user ? await S.user.profiles(uniq(reqIds.concat(accIds))) : {};
     const nm = id => (S.requests[id] && S.requests[id].name) || (ps[id] && ps[id].name) || 'Someone';
-    const roleSel = (id, cur, act) => `<select data-act="${act}" data-id="${esc(id)}" aria-label="Role">${opt('', 'Choose role…', !cur)}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r], r === cur)).join('')}</select>`;
+    const roleSel = (id, cur, act) => `<select data-act="${act}" data-id="${esc(id)}" aria-label="Role">${opt('', 'Choose role…', !cur)}${Object.keys(ROLES).filter(r => roleAssignable(r)).map(r => opt(r, ROLES[r], r === cur)).join('')}</select>`;
     const staffSel = (id, cur) => `<select data-act="acStaff" data-id="${esc(id)}" aria-label="Linked staff record">${staffOpts(cur)}</select>`;
     $('#acReq').innerHTML = reqIds.length ? reqIds.map(id => { const r = S.requests[id]; return `<div class="panel" style="box-shadow:none;margin-bottom:8px"><b>${esc(nm(id))}</b>${r.email ? ` <small class="muted">${esc(r.email)}</small>` : ''}<br><small class="muted">${esc(fmtTime(r.at))}</small><p style="margin:6px 0">“${esc(r.note || 'No note')}”</p><div class="inline">${roleSel(id, '', 'reqRole')}<button class="btn small danger" data-act="reqDel" data-id="${esc(id)}">Dismiss</button></div></div>`; }).join('') : '<p class="note">No pending requests.</p>';
     if ($('#acList')) $('#acList').innerHTML = accIds.length ? `<div class="tablewrap"><table><thead><tr><th>Person</th><th>Role</th><th>Staff record</th><th></th></tr></thead><tbody>${accIds.map(id => { const a = S.access[id]; return `<tr><td><b>${esc(nm(id))}</b></td><td>${roleSel(id, a.role, 'acRole')}</td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(a.role) ? staffSel(id, a.staffId) : '<span class="muted">—</span>'}</td><td><button class="btn small danger" data-act="acDel" data-id="${esc(id)}">Remove</button></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="note">None. Roles given from a request show here.</p>';
@@ -1897,7 +1900,7 @@ document.addEventListener('input', e => {
   if (e.target.id === 'ciQ') { clearTimeout(qT); qT = setTimeout(() => { UI.q = e.target.value; UI.limit = 40; PAGE_IMPL.checkin.update(); if (window.matchMedia('(max-width: 899px)').matches && document.activeElement === e.target) pinSearch(); }, 120); }
   if (e.target.id === 'acSearch' && S.user) {
     const q = e.target.value;
-    S.user.search(q).then(hits => { const box = $('#acHits'); if (!box) return; box.innerHTML = hits.filter(h => !h.isMe).map(h => `<div class="inline" style="padding:4px 0"><b style="flex:1">${esc(h.name)}</b>${S.access[h.id] ? `<span class="chip">${esc(ROLES[S.access[h.id].role])}</span>` : `<select id="hitRole-${esc(h.id)}" aria-label="Role">${opt('', 'Role…')}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select><button class="btn small primary" data-act="acAdd" data-id="${esc(h.id)}">Add</button>`}</div>`).join('') || (q ? '<p class="note">No one found. People outside your workspace must open the page and send a request.</p>' : ''); });
+    S.user.search(q).then(hits => { const box = $('#acHits'); if (!box) return; box.innerHTML = hits.filter(h => !h.isMe).map(h => `<div class="inline" style="padding:4px 0"><b style="flex:1">${esc(h.name)}</b>${S.access[h.id] ? `<span class="chip">${esc(ROLES[S.access[h.id].role])}</span>` : `<select id="hitRole-${esc(h.id)}" aria-label="Role">${opt('', 'Role…')}${Object.keys(ROLES).filter(r => roleAssignable(r)).map(r => opt(r, ROLES[r])).join('')}</select><button class="btn small primary" data-act="acAdd" data-id="${esc(h.id)}">Add</button>`}</div>`).join('') || (q ? '<p class="note">No one found. People outside your workspace must open the page and send a request.</p>' : ''); });
   }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mbg')) closeModal(); if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset && e.target.dataset.act === 'toggleGrp') { e.preventDefault(); e.target.click(); } });
