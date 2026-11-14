@@ -1,17 +1,7 @@
 
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBr69YFaKKYoa2VovDJBPPTwS3mjFgu0Co",
-  authDomain: "fsykenya2.firebaseapp.com",
-  projectId: "fsykenya2",
-  storageBucket: "fsykenya2.firebasestorage.app",
-  messagingSenderId: "922718506149",
-  appId: "1:922718506149:web:26e2b68af9c2880885514c",
-  measurementId: "G-QGTBQ86NBD"
-};
-const OWNER_EMAILS = ['hillarywokoth@gmail.com', 'ryanmali001@gmail.com'];
-
-/* ---------- Firebase layer: the small database/user/download interface the app uses ---------- */
 const FB = { app: null, auth: null, fs: null, user: null };
+function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
+function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
 function fbErr(cb) { return e => { console.error(e); if (cb) cb({ code: e && e.code === 'permission-denied' ? 'invalid_argument' : 'unavailable', message: String(e && e.message) }); }; }
 function fbSnap(s) { return { id: s.id, exists: s.exists, data: () => (s.exists ? s.data() : undefined), metadata: { fromCache: s.metadata.fromCache, hasPendingWrites: s.metadata.hasPendingWrites } }; }
 function wrapWrite(p) { return p.catch(e => { throw { code: e && e.code === 'permission-denied' ? 'invalid_argument' : (e && e.code === 'resource-exhausted' ? 'quota_exceeded' : 'unavailable'), message: String(e && e.message) }; }); }
@@ -617,7 +607,7 @@ const PAGES = [
   ['checkin', 'Check-in', () => can.checkin()],
   ['tally', 'Tally', () => !!role()],
   ['companies', 'Companies & groups', () => can.checkin()],
-  ['exceptions', 'Walk-ins & exceptions', () => can.checkin()],
+  ['exceptions', 'Walk-ins & exceptions', () => can.checkin() || role() === 'logistics'],
   ['logistics', 'Logistics', () => can.logistics()],
   ['staff', 'Staff', () => can.admin()],
   ['data', 'Data & areas', () => can.admin()],
@@ -633,7 +623,13 @@ function currentPage() {
 }
 
 /* ---------- helpers ---------- */
-function toast(msg, err) { const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : ''); t.textContent = msg; $('#toast').appendChild(t); setTimeout(() => t.remove(), err ? 6000 : 2600); }
+function toast(msg, err, action) {
+  const box = $('#toast'); while (box.children.length > 1) box.firstChild.remove();
+  const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : '');
+  const sp = document.createElement('span'); sp.textContent = msg; t.appendChild(sp);
+  if (action) { const b = document.createElement('button'); b.type = 'button'; b.textContent = action.label; b.onclick = () => { t.remove(); action.fn(); }; t.appendChild(b); }
+  box.appendChild(t); setTimeout(() => t.remove(), action || err ? 6000 : 2600);
+}
 function fail(e) { console.error(e); const c = e && e.code; toast(c === 'quota_exceeded' ? 'Storage is full: delete unused records and try again.' : c === 'invalid_argument' ? 'That change was refused. Your account may not have permission to edit this artifact.' : 'Could not save. Check your connection and try again.', true); }
 function fmtTime(t) { if (!t) return ''; const d = new Date(t); const today = new Date().toDateString() === d.toDateString(); return (today ? '' : d.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ') + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function gLabel(g) { return g ? 'G' + g.num : '—'; }
@@ -771,8 +767,8 @@ function subscribe() {
 }
 async function boot() {
   window.addEventListener('hashchange', () => render());
-  if (!window.firebase || !FIREBASE_CONFIG.apiKey || /PASTE/.test(FIREBASE_CONFIG.apiKey)) { S.setupNeeded = true; render(); return; }
-  FB.app = firebase.initializeApp(FIREBASE_CONFIG); FB.auth = firebase.auth(); FB.fs = firebase.firestore();
+  const CFG = appConfig(); if (!window.firebase || !CFG || !CFG.apiKey || /PASTE/.test(CFG.apiKey)) { S.setupNeeded = true; render(); return; }
+  FB.app = firebase.initializeApp(CFG); FB.auth = firebase.auth(); FB.fs = firebase.firestore();
   try { FB.fs.settings({ ignoreUndefinedProperties: true, merge: true }); } catch (e) { }
   try { await FB.fs.enablePersistence({ synchronizeTabs: true }); } catch (e) { }
   FB.auth.getRedirectResult().catch(e => toast(signInError(e), true));
@@ -781,7 +777,7 @@ async function boot() {
     if (!u) { S.signedOut = true; UI.frameKey = ''; render(); return; }
     S.signedOut = false; FB.user = u;
     S.uid = u.uid; S.email = (u.email || '').toLowerCase(); S.meName = u.displayName || S.email;
-    S.isOwner = OWNER_EMAILS.map(x => x.trim().toLowerCase()).includes(S.email);
+    S.isOwner = ownerEmails().map(x => String(x).trim().toLowerCase()).includes(S.email);
     S.db = dbShim; S.user = userShim; S.dl = downloadShim;
     FB.fs.doc('profiles/' + u.uid).set({ name: S.meName, email: S.email, at: Date.now() }, { merge: true }).catch(console.error);
     let inv = null; try { const d = await FB.fs.doc('invites/' + emailKey(S.email)).get(); inv = d.exists ? d.data() : null; } catch (e) { console.error(e); }
@@ -808,33 +804,65 @@ async function signIn() {
 }
 
 /* ---------- shell ---------- */
+const I = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const ICONS = {
+  checkin: I('<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.6 2.6L16.5 9"/>'),
+  tally: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+  companies: I('<circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 13.6c2.7.2 4.5 2.2 4.5 5"/>'),
+  exceptions: I('<circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c0-3.6 2.9-6 6.5-6 1.4 0 2.6.3 3.6.9"/><path d="M18 14v6M15 17h6"/>'),
+  logistics: I('<path d="M9 4h6v3H9z"/><path d="M8 5.5H6a1 1 0 0 0-1 1V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1h-2"/><path d="M12 11v6M9 14h6"/>'),
+  staff: I('<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M7.5 18c.6-2.3 2.4-3.5 4.5-3.5s3.9 1.2 4.5 3.5"/>'),
+  data: I('<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>'),
+  access: I('<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M18 5l2 2"/>'),
+  more: I('<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>'),
+  search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
+};
+const SHORT = { checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
+const NAV_ORDER = { logistics: ['logistics', 'exceptions', 'tally', 'companies'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
+function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
   $('#sessName').textContent = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
-  if (!S.uid) { $('#who').innerHTML = ''; return; }
-  const r = role();
-  const live = loadedAll() ? 'live' : S.slow ? 'slow' : '';
-  let h = `<span class="dot ${live}" title="${live === 'live' ? 'Live' : 'Syncing'}"></span><span class="muted">${live === 'live' ? 'Live' : S.slow ? 'Still connecting' : 'Syncing'}</span>`;
-  if (r) h += `<span class="chip band">${esc(ROLES[r])}</span>`;
-  if (S.meName) h += `<span class="nm">${esc(S.meName)}</span>`;
-  if (S.uid) h += `<button class="btn small" data-act="signOut">Sign out</button>`;
-  if (realRole() === 'regadmin') {
-    h += `<select id="viewAs" aria-label="Preview as role" style="padding:5px 8px;font-size:.82rem">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select>`;
+  if (!S.uid) { $('#who').innerHTML = ''; } else {
+    const r = role();
+    const live = loadedAll() ? 'live' : S.slow ? 'slow' : '';
+    $('#who').innerHTML = `<span class="dot ${live}" title="${live === 'live' ? 'Live' : 'Syncing'}"></span><span class="livelabel">${live === 'live' ? 'Live' : S.slow ? 'Still connecting' : 'Syncing'}</span>${r ? `<span class="rolechip${S.viewAs ? ' preview' : ''}">${esc(S.viewAs ? 'Preview: ' + SHORT_ROLE[r] : SHORT_ROLE[r])}</span>` : ''}<button class="avatar" data-act="acct" aria-label="Your account">${esc(initials(S.meName))}</button>`;
   }
-  const wa = document.activeElement; if (!(wa && wa.id === 'viewAs')) $('#who').innerHTML = h;
   const top = $('#top'); if (top) { document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px'); const sticky = getComputedStyle(top).position === 'sticky'; const tabs = document.querySelector('.tabs'); document.documentElement.style.setProperty('--stick', sticky ? (top.offsetHeight + (tabs ? tabs.offsetHeight : 0)) + 'px' : '0px'); }
 }
+const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Directing couple', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
-  const cur = currentPage();
-  $('#nav').innerHTML = allowedPages().map(([k, l]) => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(l)}</button>`).join('');
+  const cur = currentPage(); const keys = navPages();
+  $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
+  const bn = $('#bnav');
+  if (!keys.length || gateView()) { bn.hidden = true; return; }
+  const main = keys.length <= 5 ? keys : keys.slice(0, 4), rest = keys.length <= 5 ? [] : keys.slice(4);
+  bn.hidden = false;
+  bn.innerHTML = main.map(k => `<button data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}><span class="ic">${ICONS[k]}</span>${SHORT[k]}</button>`).join('')
+    + (rest.length ? `<button data-act="moreNav" ${rest.includes(cur) ? 'aria-current="page"' : ''}><span class="ic">${ICONS.more}</span>${rest.includes(cur) ? SHORT[cur] : 'More'}</button>` : '');
+}
+function openMore() {
+  const keys = navPages(); const rest = keys.length <= 5 ? [] : keys.slice(4); const cur = currentPage();
+  openModal(`<div class="modal-head"><h2>More</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+  <div class="sheetlist">${rest.map(k => `<button data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${ICONS[k]}${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('')}</div>`);
+}
+function openAccount() {
+  const r = realRole();
+  openModal(`<div class="modal-head"><div class="acct"><span class="avatar" style="width:46px;height:46px;cursor:default">${esc(initials(S.meName))}</span><div><h2>${esc(S.meName || 'Signed in')}</h2><small class="muted">${esc(S.email || '')}</small></div></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+  <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
+  ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
+  <div class="sheetlist"><button data-act="signOut">${ICONS.signout}Sign out</button></div>`);
 }
 function gateView() {
-  if (S.setupNeeded) return `<div class="gate"><h1>Finish setting up</h1><p class="note">Paste your Firebase settings into the top of <b>app.js</b> (FIREBASE_CONFIG and OWNER_EMAILS), then reload. The README walks through it.</p></div>`;
-  if (S.signedOut) return `<div class="gate"><p class="th">FSY Kenya 2nd 2026</p><h1>Sign in to check in youth</h1><p class="note">Use the Google account your registration admin set up for you.</p><button class="btn primary" data-act="signIn">Sign in with Google</button></div>`;
+  const ident = `<picture><img class="identifier" src="assets/identifier-light.webp" width="380" height="410" alt="2026 youth theme identifier: Walk with Me, Moses 6:34"></picture>`;
+  if (S.setupNeeded) return `<div class="gate">${ident}<h1>Finish setting up</h1><p class="note">Put your Firebase settings and owner emails in <b>config.js</b>, upload it next to index.html, then reload.</p></div>`;
+  if (S.signedOut) return `<div class="gate">${ident}<p class="tag">FSY Kenya 2nd 2026 · Check-in</p><h1>Welcome, let's get everyone checked in</h1><p class="note">Sign in with the Google account your registration admin set up for you.</p><button class="btn primary gbtn" data-act="signIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.6a4.8 4.8 0 0 1-2.1 3.1v2.6h3.4c2-1.8 3.1-4.5 3.1-7.5z"/><path fill="#34A853" d="M12 22c2.8 0 5.2-.9 6.9-2.5l-3.4-2.6c-.9.6-2.1 1-3.5 1-2.7 0-5-1.8-5.8-4.3H2.7v2.7A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.2 13.6a6 6 0 0 1 0-3.8V7.1H2.7a10 10 0 0 0 0 9.2z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.9.5 4 1.5l3-3A10 10 0 0 0 2.7 7.1l3.5 2.7C7 7.7 9.3 5.9 12 5.9z"/></svg>Sign in with Google</button></div>`;
   if (!S.uid) return `<div class="empty"><h3>Checking your sign-in…</h3>One moment.</div>`;
   if (!loadedAll() && !S.slow) return `<div class="empty"><h3>Loading the session…</h3>Participants, groups and check-ins appear here once the data connects.</div>`;
   if (!role()) {
     const mine = S.requests[S.uid];
-    return `<div class="gate"><h1>No account for you yet</h1>
+    return `<div class="gate">${ident}<h1>No account for you yet</h1>
       <p class="note">${S.email ? `You are signed in as <b>${esc(S.email)}</b>. No account has been set up for this email. If the registration admin used a different email, sign out and sign in with that one.` : ''}</p>
       ${mine ? `<div class="callout info">Request sent ${esc(fmtTime(mine.at))}. You will get access once the registration admin approves it. This page updates by itself.</div>` : ''}
       <div class="form" style="width:100%;text-align:left"><label class="span2">Your name and role at FSY<input id="reqNote" placeholder="e.g. Brian Otieno, counselor" value="${esc(mine ? mine.note : '')}"></label></div>
@@ -885,11 +913,11 @@ PAGE_IMPL.checkin = {
     const r = role();
     const mineLabel = r === 'counselor' ? 'My group' : (r === 'ac' || r === 'coordinator') ? 'My companies' : null;
     const segs = [['all', 'Everyone'], ['arrive', 'Not arrived'], ['in', 'Checked in'], ['out', 'Checked out']].concat(mineLabel ? [['mine', mineLabel]] : []);
-    return `<section class="ci-head"><h1>Check-in</h1><div class="ministats" id="ciK"></div></section>
+    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
     <div id="ciAnchor"></div>
     <div class="searchbar" id="ciBar">
-      <div class="searchrow"><input type="search" id="ciQ" placeholder="Type a name, unit or G12…" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
-      <div class="segscroll"><div class="seg" role="group" aria-label="Filter by status">${segs.map(([v, l]) => `<button data-act="ciF" data-v="${v}" aria-pressed="${UI.filter === v}">${l}</button>`).join('')}</div></div>
+      <div class="searchrow">${ICONS.search}<input type="search" id="ciQ" placeholder="Type a name, unit or G12…" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
+      <div class="segscroll"><div class="chips" role="group" aria-label="Filter by status">${segs.map(([v, l]) => `<button data-act="ciF" data-v="${v}" aria-pressed="${UI.filter === v}">${l}</button>`).join('')}</div></div>
     </div>
     <details class="morefilters" id="ciMoreF"><summary>Stake and ward filter <span id="ciFN"></span></summary><div class="inline" id="ciSel" style="margin-top:8px"></div></details>
     <div id="ciList" class="cards"></div><div class="more" id="ciMore"></div>`;
@@ -898,7 +926,10 @@ PAGE_IMPL.checkin = {
     const P = S.P;
     const exp = P.filter(p => p.elig && p.src !== 'walkin').length;
     const inn = P.filter(p => p.s === 'in').length, out = P.filter(p => p.s === 'out').length, wk = P.filter(p => p.src === 'walkin' && p.s).length;
-    $('#ciK').innerHTML = `<span class="hot"><b>${inn}</b> in</span><span><b>${exp}</b> expected</span><span><b>${pct(P.filter(p => p.elig && p.src !== 'walkin' && p.s).length, exp)}%</b> arrived</span><span><b>${wk}</b> walk-ins</span><span><b>${out}</b> out</span>`;
+    const arrived = P.filter(p => p.elig && p.src !== 'walkin' && p.s).length;
+    $('#ciNum').textContent = inn; $('#ciOf').textContent = `checked in · ${exp} expected`;
+    $('#ciProg').style.width = pct(arrived, exp) + '%';
+    $('#ciK').innerHTML = `<span class="hstat y"><b>${pct(arrived, exp)}%</b> arrived</span><span class="hstat"><b>${exp - arrived}</b> not here yet</span><span class="hstat"><b>${wk}</b> walk-ins</span><span class="hstat"><b>${out}</b> checked out</span>`;
     $('#ciFN').textContent = UI.unit ? '· ' + UI.unit : UI.stake ? '· ' + UI.stake : '';
     const stakes = uniq(P.map(p => p.stake).filter(Boolean)).sort();
     const units = uniq(P.filter(p => !UI.stake || p.stake === UI.stake).map(p => p.unit).filter(Boolean)).sort();
@@ -925,7 +956,7 @@ function pCard(p) {
   const st = p.s === 'in' ? `<span class="pill in">In ${esc(fmtTime(p.ti))}</span>` : p.s === 'out' ? `<span class="pill out">Out ${esc(fmtTime(p.to))}</span>` : '<span class="pill none">Not arrived</span>';
   const issues = !seesPrivate(p) ? '' : (p.medIssue ? '<span class="chip warn">Medical</span>' : '') + (p.dietIssue ? '<span class="chip warn">Diet</span>' : '');
   const ck = can.checkin();
-  const acts = !ck ? '' : p.s === 'in' ? `<button class="btn" data-act="ciUndo" data-id="${esc(p.id)}">Undo check-in</button><button class="btn" data-act="ciOut" data-id="${esc(p.id)}">Check out</button>` : p.s === 'out' ? `<button class="btn primary" data-act="ciIn" data-id="${esc(p.id)}">Check in again</button>` : `<button class="btn primary" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`;
+  const acts = !ck ? '' : p.s === 'in' ? `<button class="btn" data-act="ciUndo" data-id="${esc(p.id)}">Undo</button><button class="btn" data-act="ciOut" data-id="${esc(p.id)}">Check out</button>` : p.s === 'out' ? `<button class="btn go" data-act="ciIn" data-id="${esc(p.id)}">Check in again</button>` : `<button class="btn go" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`;
   const tee = p.tshirt ? esc(SIZE_LABEL[p.tshirt] || p.tshirt) : `<span class="est">${esc(SIZE_LABEL[(S.tee && S.tee.perPerson[p.id]) || ''] || 'Not given')}</span> <small class="muted">est.</small>`;
   return `<article class="pcard st-${p.s || 'none'}">
     <div class="pc-top"><div style="min-width:0"><h3>${esc(p.name)}</h3><div class="sub"><span class="chip">${p.age != null ? p.age + ' yrs' : 'Age ?'}</span>${chipG(p.gender)}${chipBand(p.band)}${issues}</div></div>${st}</div>
@@ -1017,35 +1048,61 @@ function grpBlock(g, mem) {
    ${adm ? `<div><button class="btn small danger" data-act="delGrp" data-id="${g.id}">Remove group</button></div>` : ''}</div>` : ''}</div>`;
 }
 
+/* ---------- tally by stake and unit (used on several pages) ---------- */
+function areaTally(items, cols, setName) {
+  const T = {};
+  items.forEach(it => { const st = it.stake || '(No stake given)', un = it.unit || '(No ward or branch given)'; const s = T[st] = T[st] || { t: {}, u: {} }; const u = s.u[un] = s.u[un] || {}; s.t[it.key] = (s.t[it.key] || 0) + 1; u[it.key] = (u[it.key] || 0) + 1; });
+  if (!Object.keys(T).length) return '<p class="note">Nothing to count yet.</p>';
+  const open = UI[setName] || (UI[setName] = new Set());
+  const sum = o => cols.reduce((a, [k]) => a + (o[k] || 0), 0); const tot = {};
+  let h = `<div class="tablewrap"><table><thead><tr><th>Stake · ward or branch</th>${cols.map(([, l]) => `<th class="n">${esc(l)}</th>`).join('')}<th class="n">Total</th></tr></thead><tbody>`;
+  for (const st of Object.keys(T).sort()) {
+    const x = T[st]; cols.forEach(([k]) => tot[k] = (tot[k] || 0) + (x.t[k] || 0)); const isOpen = open.has(st);
+    h += `<tr class="click" data-act="toggleArea" data-set="${setName}" data-v="${esc(st)}"><td><b>${isOpen ? '▾' : '▸'} ${esc(st)}</b> <small class="muted">${Object.keys(x.u).length} unit${Object.keys(x.u).length === 1 ? '' : 's'}</small></td>${cols.map(([k]) => `<td class="n">${x.t[k] || ''}</td>`).join('')}<td class="n"><b>${sum(x.t)}</b></td></tr>`;
+    if (isOpen) for (const un of Object.keys(x.u).sort()) { const u = x.u[un]; h += `<tr class="sub"><td>${esc(un)}</td>${cols.map(([k]) => `<td class="n">${u[k] || ''}</td>`).join('')}<td class="n">${sum(u)}</td></tr>`; }
+  }
+  return h + `<tr class="total"><td>All stakes</td>${cols.map(([k]) => `<td class="n">${tot[k] || 0}</td>`).join('')}<td class="n">${sum(tot)}</td></tr></tbody></table></div><p class="note" style="margin:6px 0 0">Tap a stake to see its wards and branches.</p>`;
+}
+
 /* ---------- page: exceptions ---------- */
 PAGE_IMPL.exceptions = {
   frame() {
     const stakes = uniq(S.P.map(p => p.stake).filter(Boolean)).sort(), units = uniq(S.P.map(p => p.unit).filter(Boolean)).sort();
-    return `<section class="pagehead"><div><h1>Walk-ins & exceptions</h1><p class="note" style="margin:4px 0 0">Youth who came without registering, and anyone checked in who is not on the approved list for this session. Assign them to a group here.</p></div>${can.admin() ? '<button class="btn primary" data-act="rebalance">Place everyone waiting into groups</button>' : ''}</section>
+    const ck = can.checkin();
+    return `<section class="pagehead"><div><p class="th">Walk-ins & exceptions</p><h1>Everyone outside the plan</h1><p class="note">Youth who came without registering, and anyone checked in who is not on the approved list. ${ck ? 'Place them in a group here.' : ''}</p></div>${can.admin() ? '<button class="btn primary" data-act="rebalance">Place everyone waiting into groups</button>' : ''}</section>
+    <div id="exK" class="kpis"></div>
     <div id="exLog"></div>
-    <details class="panel" ${S.P.some(p => p.src === 'walkin') ? '' : 'open'}><summary><h2 style="display:inline">Add a walk-in</h2></summary>
+    ${ck ? `<details class="panel" ${S.P.some(p => p.src === 'walkin') ? '' : 'open'}><summary><h2 style="display:inline">Add a walk-in</h2></summary>
     <form id="wkForm" class="form" style="margin-top:12px">
-      <label>First name<input id="wkFirst" required></label><label>Last name<input id="wkLast" required></label>
+      <label>First name<input id="wkFirst" required autocomplete="off"></label><label>Last name<input id="wkLast" required autocomplete="off"></label>
       <label>Gender<select id="wkGender" required>${opt('', 'Choose…')}${opt('F', 'Female')}${opt('M', 'Male')}</select></label>
       <label>Birthday<input id="wkBday" type="date"></label><label>Age (if no birthday)<input id="wkAge" type="number" min="10" max="30" inputmode="numeric"></label>
-      <label>Stake / district<input id="wkStake" list="dlStakes"></label><label>Ward / branch<input id="wkUnit" list="dlUnits"></label>
+      <label>Stake / district<input id="wkStake" list="dlStakes" autocomplete="off"></label><label>Ward / branch<input id="wkUnit" list="dlUnits" autocomplete="off"></label>
       <label>T-shirt size<select id="wkSize">${opt('', 'Not given')}${SIZES.map(s => opt(s, SIZE_LABEL[s])).join('')}</select></label>
       <label>Phone<input id="wkPhone" inputmode="tel"></label><label>Parent / guardian<input id="wkC1"></label><label>Guardian phone<input id="wkC1p" inputmode="tel"></label>
       <label class="span2">Medical information<input id="wkMed" placeholder="Leave blank if none"></label><label class="span2">Dietary information<input id="wkDiet" placeholder="Leave blank if none"></label>
       <label class="inline" style="flex-direction:row;color:var(--ink)"><input type="checkbox" id="wkIn" checked> Check in now</label>
-      <div class="span2"><button class="btn primary" type="submit">Add walk-in</button></div>
-    </form><datalist id="dlStakes">${stakes.map(s => `<option value="${esc(s)}">`).join('')}</datalist><datalist id="dlUnits">${units.map(s => `<option value="${esc(s)}">`).join('')}</datalist></details>
-    <div id="exList" style="display:flex;flex-direction:column;gap:16px"></div>`;
+      <div class="span2"><button class="btn go" type="submit" style="width:100%">Add walk-in</button></div>
+    </form><datalist id="dlStakes">${stakes.map(s => `<option value="${esc(s)}">`).join('')}</datalist><datalist id="dlUnits">${units.map(s => `<option value="${esc(s)}">`).join('')}</datalist></details>` : ''}
+    <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="exCsv">Export CSV</button></div><div id="exTally"></div></section>
+    <div id="exList" style="display:flex;flex-direction:column;gap:14px"></div>`;
   },
-  update() {
-    $('#exLog').innerHTML = UI.genLog ? `<div class="log"><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
+  lists() {
     const P = S.P;
-    const sec = (title, note, list, empty) => `<div class="panel"><div class="panel-head"><h2>${esc(title)} <span class="chip">${list.length}</span></h2></div>${note ? `<p class="note" style="margin-top:-6px">${note}</p>` : ''}${list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Why</th><th>Unit · stake</th><th>Status</th><th>Group</th>${can.admin() ? '<th></th>' : ''}</tr></thead><tbody>${list.map(exRow).join('')}</tbody></table></div>` : `<p class="note">${empty}</p>`}</div>`;
     const walk = P.filter(p => p.src === 'walkin');
     const off = P.filter(p => p.src !== 'walkin' && p.s && (p.flags.includes('area') || p.flags.includes('status') || p.flags.includes('pending') || p.ov === 'exc'));
     const nog = P.filter(p => p.s === 'in' && !p.g && p.src !== 'walkin' && !off.includes(p));
+    return { walk, off, nog };
+  },
+  update() {
+    $('#exLog').innerHTML = UI.genLog ? `<div class="log"><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
+    const { walk, off, nog } = this.lists();
+    $('#exK').innerHTML = `<div class="kpi"><span>Walk-ins</span><b>${walk.length}</b><small>${walk.filter(p => p.s === 'in').length} checked in</small></div><div class="kpi"><span>Not on the approved list</span><b>${off.length}</b><small>but checked in</small></div><div class="kpi"><span>Checked in, no group</span><b>${nog.length}</b><small>need placing</small></div>`;
+    const items = walk.map(p => ({ stake: p.stake, unit: p.unit, key: 'walk' })).concat(off.map(p => ({ stake: p.stake, unit: p.unit, key: 'off' })), nog.map(p => ({ stake: p.stake, unit: p.unit, key: 'nog' })));
+    $('#exTally').innerHTML = areaTally(items, [['walk', 'Walk-ins'], ['off', 'Not approved'], ['nog', 'No group']], 'openEx');
+    const sec = (title, note, list, empty) => `<section class="panel"><div class="panel-head"><h2>${esc(title)} <span class="chip">${list.length}</span></h2></div>${note ? `<p class="note" style="margin-top:-6px">${note}</p>` : ''}${list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Why</th><th>Unit · stake</th><th>Status</th><th>Group</th>${can.admin() ? '<th></th>' : ''}</tr></thead><tbody>${list.map(exRow).join('')}</tbody></table></div>` : `<p class="note">${empty}</p>`}</section>`;
     $('#exList').innerHTML = sec('Walk-ins', 'Added at the desk. They count in the tally and can be placed in groups like anyone else.', walk, 'No walk-ins yet.')
-      + sec('Checked in but not on the approved list', 'From an excluded stake or unit, cancelled, or still waiting for approval. Include them to let the generator place them in a group.', off, 'Nobody from outside the approved list has checked in.')
+      + sec('Checked in but not on the approved list', 'From an excluded stake or unit, cancelled, or still waiting for approval. An admin can include them so the generator places them in a group.', off, 'Nobody from outside the approved list has checked in.')
       + sec('Checked in without a group', '', nog, 'Everyone checked in has a group.');
   }
 };
@@ -1116,27 +1173,43 @@ function teeBlock(L, H) {
 /* ---------- page: staff ---------- */
 PAGE_IMPL.staff = {
   frame() {
-    return `<section class="pagehead"><div><h1>Staff</h1><p class="note" style="margin:4px 0 0">Counselors, assistant coordinators, coordinators and the session directing couple. Upload them from a spreadsheet on the Data & areas tab, or add them here. Counselors aged 19–22 are matched to 13–15 groups first, 23 and over to 16–18.</p></div></section>
-    <div class="grid2"><div class="panel"><h2>Add a staff member</h2><form id="stForm" class="form">
-      <label class="span2">Full name<input id="stName" required></label>
-      <label>Role<select id="stRole">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === UI.staffTab)).join('')}</select></label>
-      <label>Gender<select id="stGender" required>${opt('', 'Choose…')}${opt('F', 'Female')}${opt('M', 'Male')}</select></label>
-      <label>Age<input id="stAge" type="number" min="16" max="90" inputmode="numeric"></label><label>Phone<input id="stPhone" inputmode="tel"></label>
-      <label>T-shirt size<select id="stSize">${opt('', 'Not given')}${SIZES.map(s => opt(s, SIZE_LABEL[s])).join('')}</select></label>
-      <div class="span2"><button class="btn primary" type="submit">Add</button></div></form></div>
-    <div class="panel"><h2>Test staff</h2><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a directing couple so you can try the company generator. Delete them when the real list is uploaded, then press Rebalance or Regenerate.</p>
-      <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></div></div>
-    <div class="seg" role="group" aria-label="Role" id="stTabs"></div><div id="stList"></div>`;
+    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 13–15 groups first, 23 and over to 16–18. Upload a spreadsheet on the Data tab or add people one at a time.</p></div><button class="btn primary" data-act="stAdd">+ Add staff member</button></section>
+    <div id="stK" class="kpis"></div>
+    <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
+    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stList"></div></section>
+    <details class="panel"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a directing couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
+      <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></details>`;
   },
   update() {
     const cnt = r => S.staffList.filter(s => s.role === r).length;
+    const PL = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Directing couple', logistics: 'Logistics' };
+    $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
+    $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics' })[r]]), 'openStaff');
     $('#stTabs').innerHTML = STAFF_ROLES.map(r => `<button data-act="stTab" data-v="${r}" aria-pressed="${UI.staffTab === r}">${esc(ROLES[r])} · ${cnt(r)}</button>`).join('');
     const list = S.staffList.filter(s => s.role === UI.staffTab);
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
-    const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return C.filter(c => c.coordId === s.id).map(c => c.num).join(', ') ? 'Companies ' + C.filter(c => c.coordId === s.id).map(c => c.num).sort((a, b) => a - b).join(', ') : '—'; return '—'; };
-    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><b>${esc(s.name)}</b> ${s.test ? '<span class="chip info">Test</span>' : ''}<br><small class="muted">${esc(s.unit || '')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3>Add them with the form, upload a spreadsheet on the Data & areas tab, or generate test staff.</div>`;
+    const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') { const ns = C.filter(c => c.coordId === s.id).map(c => c.num).sort((a, b) => a - b); return ns.length ? 'Companies ' + ns.join(', ') : '—'; } return '—'; };
+    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}<br><small class="muted">${esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
   }
 };
+function openStaffForm(id) {
+  const s = id ? S.staffMap[id] : null;
+  const stakes = uniq(S.P.map(p => p.stake).concat(S.staffList.map(x => x.stake)).filter(Boolean)).sort();
+  const units = uniq(S.P.map(p => p.unit).concat(S.staffList.map(x => x.unit)).filter(Boolean)).sort();
+  openModal(`<div class="modal-head"><h2>${s ? 'Edit ' + esc(s.name) : 'Add a staff member'}</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+  <form id="stForm" class="form" data-id="${s ? esc(s.id) : ''}">
+    <label class="span2">Full name<input id="stName" required value="${esc(s ? s.name : '')}" autocomplete="off"></label>
+    <label>Role<select id="stRole">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === (s ? s.role : UI.staffTab))).join('')}</select></label>
+    <label>Gender<select id="stGender" required>${opt('', 'Choose…', !(s && s.gender))}${opt('F', 'Female', s && s.gender === 'F')}${opt('M', 'Male', s && s.gender === 'M')}</select></label>
+    <label>Age<input id="stAge" type="number" min="16" max="90" inputmode="numeric" value="${esc(s ? (staffAge(s, S.config) ?? '') : '')}"></label>
+    <label>Phone<input id="stPhone" inputmode="tel" value="${esc(s ? s.phone || '' : '')}"></label>
+    <label>Stake / district<input id="stStake" list="dlStStakes" value="${esc(s ? s.stake || '' : '')}" autocomplete="off"></label>
+    <label>Ward / branch<input id="stUnit" list="dlStUnits" value="${esc(s ? s.unit || '' : '')}" autocomplete="off"></label>
+    <label>T-shirt size<select id="stSize">${opt('', 'Not given', !(s && s.tshirt))}${SIZES.map(z => opt(z, SIZE_LABEL[z], s && s.tshirt === z)).join('')}</select></label>
+    <div class="span2"><button class="btn primary" type="submit" style="width:100%">${s ? 'Save changes' : 'Add staff member'}</button></div>
+  </form><datalist id="dlStStakes">${stakes.map(x => `<option value="${esc(x)}">`).join('')}</datalist><datalist id="dlStUnits">${units.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`);
+  setTimeout(() => { const n = $('#stName'); if (n && !s) n.focus(); }, 60);
+}
 
 /* ---------- page: data ---------- */
 PAGE_IMPL.data = {
@@ -1308,17 +1381,25 @@ document.addEventListener('click', async e => {
   if (t.tagName === 'A') e.preventDefault();
   const now = Date.now();
   switch (act) {
-    case 'nav': location.hash = v; break;
+    case 'nav': closeModal(); location.hash = v; break;
+    case 'home': location.hash = ''; render(); break;
+    case 'moreNav': openMore(); break;
+    case 'acct': openAccount(); break;
+    case 'toggleArea': { const set = UI[t.dataset.set] || (UI[t.dataset.set] = new Set()); set.has(v) ? set.delete(v) : set.add(v); render(); break; }
     case 'close': closeModal(); break;
     case 'request': { const note = ($('#reqNote') || {}).value || ''; try { await S.db.doc('requests/' + S.uid).set({ at: now, note: note.slice(0, 200), email: S.email, name: S.meName }); toast('Request sent'); UI.frameKey = ''; } catch (err) { toast('Could not send the request. Try again.', true); } break; }
     case 'signIn': await signIn(); break;
-    case 'signOut': await FB.auth.signOut(); break;
+    case 'signOut': closeModal(); await FB.auth.signOut(); break;
     case 'ciF': UI.filter = v; UI.limit = 40; UI.frameKey = ''; render(); break;
     case 'ciClear': { const q = $('#ciQ'); q.value = ''; UI.q = ''; UI.limit = 40; PAGE_IMPL.checkin.update(); q.focus(); break; }
     case 'ciMore': UI.limit += 60; render(); break;
-    case 'ciIn': { const p = S.P.find(x => x.id === id); setState(id, { s: 'in', ti: now, by: S.uid }); toast((p ? p.first : '') + ' checked in' + (p && p.group ? ' · G' + p.group.num : '')); break; }
-    case 'ciUndo': setState(id, { s: '', ti: null, by: S.uid }); toast('Check-in undone'); break;
-    case 'ciOut': setState(id, { s: 'out', to: now, by: S.uid }); toast('Checked out'); break;
+    case 'ciIn': case 'ciUndo': case 'ciOut': {
+      const p = S.P.find(x => x.id === id); if (!p) break; const prev = { s: p.s || '', ti: p.ti || null, to: p.to || null, by: p.by || null };
+      const patch = act === 'ciIn' ? { s: 'in', ti: now, by: S.uid } : act === 'ciOut' ? { s: 'out', to: now, by: S.uid } : { s: '', ti: null, by: S.uid };
+      setState(id, patch);
+      const msg = act === 'ciIn' ? `${p.first} checked in${p.group ? ' · G' + p.group.num : ''}` : act === 'ciOut' ? `${p.first} checked out` : `${p.first}'s check-in undone`;
+      toast(msg, false, { label: 'Undo', fn: () => { setState(id, prev); toast('Undone'); } });
+      break; }
     case 'detail': openDetail(id); break;
     case 'toggleStake': UI.openStakes.has(v) ? UI.openStakes.delete(v) : UI.openStakes.add(v); render(); break;
     case 'toggleGrp': if (e.target.closest('select')) return; UI.open.has(id) ? UI.open.delete(id) : UI.open.add(id); render(); break;
@@ -1341,6 +1422,10 @@ document.addEventListener('click', async e => {
     case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
     case 'testDel': { const tests = S.staffList.filter(s => s.test); if (!tests.length) { toast('There are no test staff.'); break; } if (!await confirmBox(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their leader. Press Rebalance afterwards to hand them to real staff.', 'Delete test staff', true)) break; const s = {}; S.staffList.filter(x => !x.test).forEach(x => s[x.id] = x); S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Test staff deleted'); break; }
     case 'stTab': UI.staffTab = v; render(); break;
+    case 'stAdd': openStaffForm(null); break;
+    case 'stEdit': openStaffForm(id); break;
+    case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'T-shirt']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.tshirt || ''])); exportCSV('fsy-staff.csv', rows); break; }
+    case 'exCsv': { const L = PAGE_IMPL.exceptions.lists(); const rows = [['Type', 'Name', 'Age', 'Gender', 'Ward/branch', 'Stake', 'Status', 'Group']]; [['Walk-in', L.walk], ['Not on approved list', L.off], ['Checked in, no group', L.nog]].forEach(([t, list]) => list.forEach(p => rows.push([t, p.name, p.age ?? '', p.gender, p.unit, p.stake, p.s || 'not arrived', p.group ? 'G' + p.group.num : '']))); exportCSV('fsy-walkins-exceptions.csv', rows); break; }
     case 'stDel': { const st = S.staffMap[id]; if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
     case 'impGo': await doImport(); break;
     case 'impCancel': UI.imp = null; renderImport(); const f = $('#impFile'); if (f) f.value = ''; break;
@@ -1352,7 +1437,7 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('change', async e => {
   const t = e.target; const act = t.dataset && t.dataset.act; const id = t.dataset && t.dataset.id, v = t.dataset && t.dataset.v;
-  if (t.id === 'viewAs') { S.viewAs = t.value || null; S.viewAsStaff = null; if (S.viewAs && ['counselor', 'ac', 'coordinator'].includes(S.viewAs)) { const s = S.staffList.find(x => x.role === S.viewAs && (S.viewAs !== 'counselor' || Object.values(S.org.groups).some(g => g.counselorId === x.id)) && (S.viewAs !== 'ac' || Object.values(S.org.companies).some(c => c.acId === x.id))); S.viewAsStaff = s ? s.id : null; if (s) toast('Previewing as ' + s.name); } UI.frameKey = ''; render(); return; }
+  if (t.id === 'viewAs') { S.viewAs = t.value || null; S.viewAsStaff = null; if (S.viewAs && ['counselor', 'ac', 'coordinator'].includes(S.viewAs)) { const s = S.staffList.find(x => x.role === S.viewAs && (S.viewAs !== 'counselor' || Object.values(S.org.groups).some(g => g.counselorId === x.id)) && (S.viewAs !== 'ac' || Object.values(S.org.companies).some(c => c.acId === x.id))); S.viewAsStaff = s ? s.id : null; if (s) toast('Previewing as ' + s.name); } UI.frameKey = ''; closeModal(); render(); return; }
   if (t.id === 'ciStake') { UI.stake = t.value; UI.unit = ''; UI.limit = 40; t.blur(); render(); return; }
   if (t.id === 'ciUnit') { UI.unit = t.value; UI.limit = 40; t.blur(); render(); return; }
   if (t.id === 'impFile') { if (t.files[0]) readFile(t.files[0]).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }); return; }
@@ -1392,9 +1477,9 @@ document.addEventListener('submit', async e => {
   }
   if (f.id === 'stForm') {
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
-    const age = parseInt(val('stAge'), 10);
-    await saveStaffRec({ id: rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: '', role: val('stRole'), phone: val('stPhone'), tshirt: val('stSize'), unit: '', stake: '' });
-    UI.staffTab = val('stRole'); f.reset(); toast(name + ' added');
+    const age = parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
+    const rec = Object.assign({}, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: val('stRole'), phone: val('stPhone'), tshirt: val('stSize'), stake: clean(val('stStake')), unit: clean(val('stUnit')) });
+    await saveStaffRec(rec); UI.staffTab = rec.role; closeModal(); toast(sid ? 'Saved' : name + ' added');
   }
   if (f.id === 'invForm') {
     const name = titleCase(val('invName')), email = clean(val('invEmail')).toLowerCase(), r = val('invRole'), sid = val('invStaff') || null;
@@ -1413,10 +1498,10 @@ document.addEventListener('submit', async e => {
 });
 let qT = null;
 function pinSearch() { const a = $('#ciAnchor'); if (!a) return; const stick = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stick')) || 0; const y = a.getBoundingClientRect().top + window.scrollY - stick; if (Math.abs(window.scrollY - y) > 4) window.scrollTo({ top: y, behavior: 'smooth' }); }
-document.addEventListener('focusin', e => { if (e.target.id === 'ciQ' && window.matchMedia('(max-width: 700px)').matches) setTimeout(pinSearch, 250); });
+document.addEventListener('focusin', e => { if (e.target.id === 'ciQ' && window.matchMedia('(max-width: 899px)').matches) setTimeout(pinSearch, 250); });
 document.addEventListener('keydown', e => { if (e.target.id === 'ciQ' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
 document.addEventListener('input', e => {
-  if (e.target.id === 'ciQ') { clearTimeout(qT); qT = setTimeout(() => { UI.q = e.target.value; UI.limit = 40; PAGE_IMPL.checkin.update(); if (window.matchMedia('(max-width: 700px)').matches && document.activeElement === e.target) pinSearch(); }, 120); }
+  if (e.target.id === 'ciQ') { clearTimeout(qT); qT = setTimeout(() => { UI.q = e.target.value; UI.limit = 40; PAGE_IMPL.checkin.update(); if (window.matchMedia('(max-width: 899px)').matches && document.activeElement === e.target) pinSearch(); }, 120); }
   if (e.target.id === 'acSearch' && S.user) {
     const q = e.target.value;
     S.user.search(q).then(hits => { const box = $('#acHits'); if (!box) return; box.innerHTML = hits.filter(h => !h.isMe).map(h => `<div class="inline" style="padding:4px 0"><b style="flex:1">${esc(h.name)}</b>${S.access[h.id] ? `<span class="chip">${esc(ROLES[S.access[h.id].role])}</span>` : `<select id="hitRole-${esc(h.id)}" aria-label="Role">${opt('', 'Role…')}${Object.keys(ROLES).filter(r => r !== 'regadmin' || realRole() === 'regadmin').map(r => opt(r, ROLES[r])).join('')}</select><button class="btn small primary" data-act="acAdd" data-id="${esc(h.id)}">Add</button>`}</div>`).join('') || (q ? '<p class="note">No one found. People outside your workspace must open the page and send a request.</p>' : ''); });
