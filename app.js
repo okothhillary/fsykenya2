@@ -884,7 +884,7 @@ function render() {
   const page = PAGE_IMPL[pg];
   if (UI.frameKey !== key) { $('#main').innerHTML = page.frame(); UI.frameKey = key; window.scrollTo(0, 0); }
   page.update();
-  if (can.readOnly()) lockReadOnly(pg);
+  if (can.readOnly()) lockReadOnly(pg); else if (pg === 'headcount' && hcViewOnly()) lockReadOnly(pg);
 }
 
 function lockReadOnly(pg) {
@@ -1372,6 +1372,9 @@ function openStaffForm(id) {
 }
 
 /* ---------- page: headcount (nightly, Dec 7–11) ---------- */
+/** Who each role reports the headcount to. The directing couple, Area Seventy and logistics only view. */
+function hcChain() { const r = role(); return r === 'counselor' ? 'your AC' : r === 'ac' ? 'your coordinator' : r === 'coordinator' ? 'the session directing couple' : ''; }
+function hcViewOnly() { return can.readOnly() || ['sdc', 'seventy'].includes(role()); }
 const DAYNAME = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function isoUTC(d) { return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
 /** Tonight's date in Kenya time. Reports made after midnight but before 6 am count for the night before. */
@@ -1400,8 +1403,8 @@ function hcScopeGroups() {
 }
 PAGE_IMPL.headcount = {
   frame() {
-    const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live' + (can.readOnly() ? ' · view only' : '');
-    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Each counselor reports their group here. Missing youth and groups that have not reported are highlighted.' : 'Every group, company and missing youth for the night, updating live as counselors report.'}</p></div>${['regadmin', 'sdc', 'seventy', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
+    const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live' + (hcViewOnly() ? ' · view only' : '');
+    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Your counselors report their groups here. Check your groups, then submit any group yourself to your coordinator if needed. Missing youth and groups that have not reported are highlighted.' : r === 'coordinator' ? 'Every company, live as counselors and ACs report. Check the night, then report to the session directing couple.' : 'Every group, company and missing youth for the night, updating live as counselors, ACs and coordinators report.'}</p></div>${['regadmin', 'sdc', 'seventy', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
     <div class="segscroll"><div class="chips" id="hcDays"></div></div>
     <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>`;
   },
@@ -1431,12 +1434,12 @@ function hcForm(x, day) {
     <div class="hc-count"><div><b class="${x.missing.length ? 'bad' : ''}">${x.present.length}</b><span> of ${x.expected} present</span></div><div class="hstats">${x.missing.length ? `<span class="chip bad">${x.missing.length} missing</span>` : ''}${x.unmarked.length ? `<span class="chip warn">${x.unmarked.length} not marked</span>` : ''}${!x.missing.length && !x.unmarked.length && x.expected ? '<span class="chip good">Everyone accounted for</span>' : ''}</div></div>
     ${x.expected ? `${x.unmarked.length ? `<button class="btn adm-hc" data-act="hcAll" data-g="${g.id}">Mark everyone else present</button>` : ''}<div class="hc-list">${rows}</div>` : '<p class="note">No one in this group is checked in, so there is nobody to count.</p>'}
     ${nc.length ? `<p class="note" style="margin:0">Not counted tonight: ${nc.map(p => esc(p.first) + (p.s === 'out' ? ' (checked out)' : ' (never arrived)')).join(', ')}.</p>` : ''}
-    <label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">Note for your AC (optional)</span><textarea data-hcnote="${g.id}" rows="2" placeholder="Anything they should know">${esc(d.note || '')}</textarea></label>
-    <button class="btn go hc-submit adm-hc" data-act="hcSubmit" data-g="${g.id}" ${!x.expected || x.unmarked.length ? 'disabled' : ''}>${x.submitted ? 'Update headcount' : 'Submit headcount'}${x.unmarked.length ? ` · mark ${x.unmarked.length} more` : ''}</button>
+    <label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">${hcChain() ? 'Note for ' + hcChain() : 'Note'} (optional)</span><textarea data-hcnote="${g.id}" rows="2" placeholder="Anything they should know">${esc(d.note || '')}</textarea></label>
+    <button class="btn go hc-submit adm-hc" data-act="hcSubmit" data-g="${g.id}" ${!x.expected || x.unmarked.length ? 'disabled' : ''}>${x.submitted ? 'Update headcount' : hcChain() ? 'Submit to ' + hcChain() : 'Save headcount'}${x.unmarked.length ? ` · mark ${x.unmarked.length} more` : ''}</button>
   </section>`;
 }
 function hcOverview(groups, day) {
-  const r = role(); const xs = groups.map(g => hcGroup(g, day)).filter(x => x.expected || x.doc);
+  const r = role(); const all = groups.map(g => hcGroup(g, day)); const xs = all.filter(x => x.expected || x.doc);
   const reported = xs.filter(x => x.submitted), late = xs.filter(x => !x.submitted);
   const pres = reported.reduce((a, x) => a + x.present.length, 0), exp = reported.reduce((a, x) => a + x.expected, 0), allIn = xs.reduce((a, x) => a + (x.submitted ? x.expected : S.P.filter(p => p.g === x.g.id && p.s === 'in').length), 0);
   const missing = xs.flatMap(x => x.missing.map(p => ({ p, x }))).concat(xs.filter(x => x.submitted).flatMap(x => x.unmarked.map(p => ({ p, x, unmarked: true }))));
@@ -1444,10 +1447,10 @@ function hcOverview(groups, day) {
   let h = `<div class="kpis"><div class="kpi"><span>Groups reported</span><b>${reported.length} / ${xs.length}</b></div><div class="kpi"><span>Present</span><b>${pres} / ${exp}</b><small>in groups that reported · ${allIn} checked in</small></div><div class="kpi" style="${missing.length ? 'background:var(--bad);color:#fff' : ''}"><span>Missing</span><b>${missing.length}</b></div><div class="kpi"><span>Not reported yet</span><b>${late.length}</b></div></div>`;
   h += `<section class="panel hc-alert ${missing.length ? 'on' : ''}"><div class="panel-head"><h2>Missing youth</h2><span class="chip ${missing.length ? 'bad' : 'good'}">${missing.length}</span></div>${missing.length ? `<div class="hc-miss">${missing.map(({ p, x, unmarked }) => { const c = x.g.companyId && S.org.companies[x.g.companyId]; const why = unmarked ? 'Not marked when submitted' : ((x.doc && x.doc.reasons && x.doc.reasons[p.id]) || 'No reason given'); return `<button class="hc-mi" data-act="hcOpen" data-g="${x.g.id}"><b>${esc(p.name)}</b><span>G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${c ? ' · Company ' + c.num : ''}</span><span class="why">${esc(why)}</span><small class="muted">${esc(p.age ?? '?')} yrs · ${esc(p.unit)}${x.doc && x.doc.at ? ' · reported ' + esc(fmtTime(x.doc.at)) + ' by ' + esc(x.doc.byName || '') : ''}</small></button>`; }).join('')}</div>` : '<p class="note">Nobody has been reported missing for this night.</p>'}</section>`;
   h += `<section class="panel hc-alert ${late.length ? 'warn' : ''}"><div class="panel-head"><h2>Groups that haven't reported</h2><span class="chip ${late.length ? 'warn' : 'good'}">${late.length}</span></div>${late.length ? `<div class="flags">${late.map(x => `<button class="chip warn" data-act="hcOpen" data-g="${x.g.id}" style="cursor:pointer;padding:6px 11px">G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${x.doc ? ' · started' : ''}</button>`).join('')}</div>` : '<p class="note">Every group has reported.</p>'}</section>`;
-  h += `<div class="companies">${comps.map(c => { const cx = xs.filter(x => x.g.companyId === c.id), cr = cx.filter(x => x.submitted); const cp = cr.reduce((a, x) => a + x.present.length, 0), ce = cr.reduce((a, x) => a + x.expected, 0), cIn = S.P.filter(p => p.company && p.company.id === c.id && p.s === 'in').length, cm = cx.reduce((a, x) => a + x.missing.length, 0); const allDone = cx.length && cr.length === cx.length;
+  h += `<div class="companies">${comps.map(c => { const cxAll = all.filter(x => x.g.companyId === c.id), cx = cxAll.filter(x => x.expected || x.doc), cr = cx.filter(x => x.submitted); const cp = cr.reduce((a, x) => a + x.present.length, 0), ce = cr.reduce((a, x) => a + x.expected, 0), cIn = S.P.filter(p => p.company && p.company.id === c.id && p.s === 'in').length, cm = cx.reduce((a, x) => a + x.missing.length, 0); const allDone = cx.length && cr.length === cx.length;
     return `<section class="company"><div class="co-head"><div class="co-title"><h2>Company ${c.num}</h2><div class="inline">${cm ? `<span class="chip bad">${cm} missing</span>` : ''}${cx.length ? `<span class="chip ${allDone ? 'good' : 'warn'}">${cr.length}/${cx.length} reported</span>` : '<span class="chip">Nobody checked in</span>'}</div></div>
       <div class="co-meta"><span class="muted">AC</span><span>${esc(sName(c.acId) || '—')}</span><span class="muted">Present</span><span class="num"><b>${cp}</b> of ${ce} in reported groups · ${cIn} checked in${allDone && ce !== cIn ? ' <span class="chip warn">totals differ from check-in</span>' : ''}</span></div></div>
-      ${cx.map(x => `<div class="grp"><div class="grp-row" data-act="hcOpen" data-g="${x.g.id}" role="button" tabindex="0"><span class="gnum">G${x.g.num}</span>${chipG(x.g.gender)}<span class="cn">${esc(sName(x.g.counselorId) || 'No counselor')}</span>${x.submitted ? `<span class="num">${x.present.length}/${x.expected}</span>${x.missing.length ? `<span class="chip bad">${x.missing.length} missing</span>` : '<span class="chip good">✓</span>'}` : `<span class="chip ${x.doc ? 'warn' : 'bad'}">${x.doc ? 'Started' : 'Not reported'}</span>`}<span class="muted">›</span></div></div>`).join('')}</section>`; }).join('')}</div>`;
+      ${cxAll.map(x => `<div class="grp"><div class="grp-row" data-act="hcOpen" data-g="${x.g.id}" role="button" tabindex="0"><span class="gnum">G${x.g.num}</span>${chipG(x.g.gender)}<span class="cn">${esc(sName(x.g.counselorId) || 'No counselor')}</span>${x.submitted ? `<span class="num">${x.present.length}/${x.expected}</span>${x.missing.length ? `<span class="chip bad">${x.missing.length} missing</span>` : '<span class="chip good">✓</span>'}` : !x.expected && !x.doc ? '<span class="chip">Nobody checked in</span>' : `<span class="chip ${x.doc ? 'warn' : 'bad'}">${x.doc ? 'Started' : 'Not reported'}</span>`}<span class="muted">›</span></div></div>`).join('')}</section>`; }).join('')}</div>`;
   return h;
 }
 let hcNoteT = {};
@@ -1691,9 +1694,9 @@ document.addEventListener('click', async e => {
     case 'hcDay': UI.hcDay = v; render(); break;
     case 'hcOpen': UI.hcGroup = t.dataset.g; render(); window.scrollTo(0, 0); break;
     case 'hcBack': UI.hcGroup = null; render(); break;
-    case 'hcMark': { if (can.readOnly()) break; const g = t.dataset.g; const cur = ((hcDoc(hcDay(), g) || {}).marks || {})[id]; await hcWrite(g, { marks: { [id]: cur === v ? null : v } }); break; }
-    case 'hcAll': { if (can.readOnly()) break; const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
-    case 'hcSubmit': { if (can.readOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}. Sent to your AC.`); break; }
+    case 'hcMark': { if (hcViewOnly()) break; const g = t.dataset.g; const cur = ((hcDoc(hcDay(), g) || {}).marks || {})[id]; await hcWrite(g, { marks: { [id]: cur === v ? null : v } }); break; }
+    case 'hcAll': { if (hcViewOnly()) break; const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
+    case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
     case 'stEdit': if (can.admin()) openStaffForm(id); break;
