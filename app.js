@@ -819,6 +819,7 @@ const ICONS = {
   access: I('<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M18 5l2 2"/>'),
   headcount: I('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><path d="m10 13 2 2 4-4"/>'),
   more: I('<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>'),
+  print: I('<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
@@ -920,11 +921,11 @@ PAGE_IMPL.checkin = {
     return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
     <div id="ciAnchor"></div>
     <div class="searchbar" id="ciBar">
-      <div class="searchrow">${ICONS.search}<input type="search" id="ciQ" placeholder="Type a name, unit or G12…" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
+      <div class="searchrow">${ICONS.search}<input type="search" id="ciQ" placeholder="Search name, unit or G12" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
       <div class="segscroll"><div class="chips" role="group" aria-label="Filter by status">${segs.map(([v, l]) => `<button data-act="ciF" data-v="${v}" aria-pressed="${UI.filter === v}">${l}</button>`).join('')}</div></div>
     </div>
-    <details class="morefilters" id="ciMoreF"><summary>Stake and ward filter <span id="ciFN"></span></summary><div class="inline" id="ciSel" style="margin-top:8px"></div></details>
-    <div id="ciList" class="cards"></div><div class="more" id="ciMore"></div>`;
+    <div id="ciSelHead"></div>
+    <div id="ciList"></div><div class="more" id="ciMore"></div>`;
   },
   update() {
     const P = S.P;
@@ -934,28 +935,150 @@ PAGE_IMPL.checkin = {
     $('#ciNum').textContent = inn; $('#ciOf').textContent = `checked in · ${exp} expected`;
     $('#ciProg').style.width = pct(arrived, exp) + '%';
     $('#ciK').innerHTML = `<span class="hstat y"><b>${pct(arrived, exp)}%</b> arrived</span><span class="hstat"><b>${exp - arrived}</b> not here yet</span><span class="hstat"><b>${wk}</b> walk-ins</span><span class="hstat"><b>${out}</b> checked out</span>`;
-    $('#ciFN').textContent = UI.unit ? '· ' + UI.unit : UI.stake ? '· ' + UI.stake : '';
-    const stakes = uniq(P.map(p => p.stake).filter(Boolean)).sort();
-    const units = uniq(P.filter(p => !UI.stake || p.stake === UI.stake).map(p => p.unit).filter(Boolean)).sort();
-    $('#ciSel').innerHTML = `<select id="ciStake" aria-label="Stake">${opt('', 'All stakes', !UI.stake)}${stakes.map(s => opt(s, s, s === UI.stake)).join('')}</select><select id="ciUnit" aria-label="Ward or branch">${opt('', 'All wards & branches', !UI.unit)}${units.map(s => opt(s, s, s === UI.unit)).join('')}</select>`;
     const toks = UI.q.toLowerCase().split(/\s+/).filter(Boolean);
+    const browsing = !toks.length && !UI.stake && UI.filter === 'all';
+    // ----- selection header (a stake or a unit is open) -----
+    if (UI.stake) {
+      const inSel = P.filter(p => (p.inc || p.s) && areaOf(p).st === UI.stake && (!UI.unit || areaOf(p).un === UI.unit));
+      const units = uniq(P.filter(p => (p.inc || p.s) && areaOf(p).st === UI.stake).map(p => areaOf(p).un)).sort();
+      $('#ciSelHead').innerHTML = `<section class="panel ci-sel"><div class="ci-sel-top"><button class="btn small" data-act="ciBack">‹ All stakes</button><button class="btn primary" data-act="ciPrint" data-stake="${esc(UI.stake)}" data-unit="${esc(UI.unit)}">${ICONS.print}Print check-in form</button></div>
+        <div><p class="th">${UI.unit ? esc(UI.stake) : 'Stake / district'}</p><h2>${esc(UI.unit || UI.stake)}</h2><small class="muted">${inSel.length} participants · ${inSel.filter(p => p.s === 'in').length} checked in${UI.unit ? '' : ' · ' + units.length + ' wards and branches'}</small></div>
+        ${units.length > 1 ? `<div class="segscroll"><div class="chips">${['', ...units].map(u => `<button data-act="ciPick" data-stake="${esc(UI.stake)}" data-unit="${esc(u)}" aria-pressed="${(UI.unit || '') === u}">${u ? esc(u) : 'All units'}</button>`).join('')}</div></div>` : ''}</section>`;
+    } else $('#ciSelHead').innerHTML = '';
+    if (browsing) {
+      $('#ciCount').textContent = ''; $('#ciMore').innerHTML = '';
+      $('#ciList').innerHTML = P.length ? areaBrowser() : `<div class="empty"><h3>No participants yet</h3>${can.admin() ? 'Upload the FSY portal export on the Data & areas tab to start.' : 'The registration admin has not uploaded participants yet.'}</div>`;
+      return;
+    }
     let list = P.filter(p => {
       if (UI.filter === 'arrive' && p.s) return false;
       if (UI.filter === 'in' && p.s !== 'in') return false;
       if (UI.filter === 'out' && p.s !== 'out') return false;
       if (UI.filter === 'mine' && !inMine(p)) return false;
-      if (UI.stake && p.stake !== UI.stake) return false;
-      if (UI.unit && p.unit !== UI.unit) return false;
+      if (UI.stake && areaOf(p).st !== UI.stake) return false;
+      if (UI.unit && areaOf(p).un !== UI.unit) return false;
+      if (UI.stake && !toks.length && !(p.inc || p.s)) return false;
       if (toks.length) { const hay = (p.name + ' ' + (p.pref || '') + ' ' + p.unit + ' ' + p.stake + ' ' + p.id + ' ' + (p.group ? 'g' + p.group.num : '') + ' ' + (p.phone || '')).toLowerCase(); return toks.every(t => hay.includes(t)); }
       return true;
     });
     if (UI.filter === 'arrive' && !toks.length) list = list.filter(p => p.elig);
-    const shown = list.slice(0, UI.limit);
-    $('#ciCount').textContent = toks.length || UI.filter !== 'all' || UI.stake ? list.length + (list.length === 1 ? ' match' : ' matches') : '';
-    $('#ciList').innerHTML = shown.length ? shown.map(pCard).join('') : `<div class="empty" style="grid-column:1/-1"><h3>${P.length ? 'No one matches' : 'No participants yet'}</h3>${P.length ? 'Try fewer letters, or switch the filter to Everyone. Someone who is not on the list can be added as a walk-in.' : (can.admin() ? 'Upload the FSY portal export on the Data & areas tab to start.' : 'The registration admin has not uploaded participants yet.')}</div>`;
-    $('#ciMore').innerHTML = list.length > UI.limit ? `<button class="btn" data-act="ciMore">Show more (${list.length - UI.limit} left)</button>` : (list.length ? `<span class="muted">${list.length} shown</span>` : '');
+    const lim = UI.stake ? 400 : UI.limit, shown = list.slice(0, lim);
+    $('#ciCount').textContent = toks.length ? list.length + (list.length === 1 ? ' match' : ' matches') : '';
+    $('#ciList').innerHTML = shown.length ? `<div class="cards">${shown.map(pCard).join('')}</div>` : `<div class="empty"><h3>No one matches</h3>Try fewer letters, or switch the filter to Everyone. Someone who is not on the list can be added as a walk-in.</div>`;
+    $('#ciMore').innerHTML = list.length > lim ? `<button class="btn" data-act="ciMore">Show more (${list.length - lim} left)</button>` : '';
   }
 };
+const NO_STAKE = '(No stake given)', NO_UNIT = '(No ward or branch given)';
+function areaOf(p) { return { st: p.stake || NO_STAKE, un: p.unit || NO_UNIT }; }
+function areaBrowser() {
+  const T = {};
+  S.P.filter(p => p.inc || p.s).forEach(p => { const { st, un } = areaOf(p); const x = T[st] = T[st] || { n: 0, inn: 0, u: {} }; const u = x.u[un] = x.u[un] || { n: 0, inn: 0 }; x.n++; u.n++; if (p.s === 'in') { x.inn++; u.inn++; } });
+  const open = UI.ciOpen || (UI.ciOpen = new Set());
+  const row = (kind, name, v, st, un, sub) => `<div class="ar ${kind}${v.n && v.inn >= v.n ? ' done' : ''}">
+      <button class="ar-name" data-act="${kind === 'st' ? 'ciToggle' : 'ciPick'}" data-stake="${esc(st)}" data-unit="${esc(un || '')}">${kind === 'st' ? `<span class="caret">${open.has(st) ? '▾' : '▸'}</span>` : ''}<span class="ar-t"><b>${esc(name)}</b>${sub ? `<small>${sub}</small>` : ''}<span class="bar"><i style="width:${pct(v.inn, v.n)}%"></i></span></span></button>
+      <span class="ar-num"><b>${v.inn}</b>/${v.n}</span>
+      <button class="ar-print" data-act="ciPrint" data-stake="${esc(st)}" data-unit="${esc(un || '')}" aria-label="Print check-in form for ${esc(name)}" title="Print check-in form">${ICONS.print}</button></div>`;
+  let h = `<section class="panel ci-areas"><div class="panel-head"><h2>Stakes & districts</h2><small class="muted">Checked in / registered</small></div><div class="area-list">`;
+  for (const st of Object.keys(T).sort()) {
+    const x = T[st]; const nu = Object.keys(x.u).length;
+    h += row('st', st, x, st, '', `${nu} ward${nu === 1 ? '' : 's'} and branch${nu === 1 ? '' : 'es'}`);
+    if (open.has(st)) {
+      h += `<button class="ar-all" data-act="ciPick" data-stake="${esc(st)}" data-unit="">See everyone in ${esc(st)} (${x.n}) ›</button>`;
+      for (const un of Object.keys(x.u).sort()) h += row('un', un, x.u[un], st, un, '');
+    }
+  }
+  return h + `</div><p class="note" style="margin:10px 0 0">Tap a stake to see its wards and branches, then a unit to check its youth in. Use search above to find anyone by name.</p></section>`;
+}
+function ciRow(p, showUnit) {
+  const ck = can.checkin();
+  const tee = p.tshirt ? esc(p.tshirt) : esc(((S.tee && S.tee.perPerson[p.id]) || '?')) + ' est.';
+  const act = !ck ? '' : p.s === 'in' ? `<span class="pill in">In ${esc(fmtTime(p.ti))}</span><button class="btn small" data-act="ciUndo" data-id="${esc(p.id)}">Undo</button>`
+    : p.s === 'out' ? `<span class="pill out">Out</span><button class="btn small go" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`
+    : `<button class="btn go" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`;
+  const issues = seesPrivate(p) ? (p.medIssue ? ' <span class="chip warn">Med</span>' : '') + (p.dietIssue ? ' <span class="chip warn">Diet</span>' : '') : '';
+  return `<div class="crow st-${p.s || 'none'}"><button class="crow-name" data-act="detail" data-id="${esc(p.id)}"><b>${esc(p.name)}</b>${issues}<small>${p.age ?? '?'} yrs · ${p.gender === 'F' ? 'Female' : p.gender === 'M' ? 'Male' : '?'} · ${p.group ? 'G' + p.group.num + (p.company ? ' · Co ' + p.company.num : '') : 'No group yet'} · Size ${tee}</small>${showUnit ? `<small>${esc(p.unit || '—')} · ${esc(p.stake || '—')}</small>` : ''}${p.flags.some(f => ['walkin', 'area', 'status', 'pending'].includes(f)) ? `<span class="flags">${flagChips(p, ['walkin', 'area', 'status', 'pending'])}</span>` : ''}</button><div class="crow-act">${act}</div></div>`;
+}
+
+/* ---------- printable check-in form (PDF) ---------- */
+function loadScript(src) { return new Promise((res, rej) => { const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = rej; document.head.appendChild(el); }); }
+async function loadPdfLib() {
+  if (window.PDFLib) return window.PDFLib;
+  try { await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js'); } catch (e) { await loadScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js'); }
+  return window.PDFLib;
+}
+async function logoPngBytes() {
+  const img = new Image(); img.src = 'assets/mark-light.webp'; await img.decode();
+  const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext('2d').drawImage(img, 0, 0);
+  const blob = await new Promise(r => c.toBlob(r, 'image/png')); return new Uint8Array(await blob.arrayBuffer());
+}
+function pdfSafe(t) { return String(t == null ? '' : t).normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[‘’`]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/[^\x20-\x7E\xA0-\xFF]/g, ''); }
+async function printForm(stake, unit) {
+  const people = S.P.filter(p => (p.inc || p.s) && areaOf(p).st === stake && (!unit || areaOf(p).un === unit));
+  if (!people.length) { toast('There is nobody to print for this selection.', true); return; }
+  toast('Preparing the check-in form…');
+  let L; try { L = await loadPdfLib(); } catch (e) { toast('Could not load the PDF tool. Check your connection and try again.', true); return; }
+  const { PDFDocument, StandardFonts, rgb } = L;
+  const C = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+  const doc = await PDFDocument.create();
+  const sess = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
+  doc.setTitle(pdfSafe(`${sess} check-in form - ${unit || stake}`)); doc.setAuthor(pdfSafe(sess)); doc.setCreator('FSY Check-in');
+  const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let logo = null; try { logo = await doc.embedPng(await logoPngBytes()); } catch (e) { console.warn('logo', e); }
+  const W = 595.28, H = 841.89, M = 36, ROW = 21;
+  const fit = (t, f, size, max) => { t = pdfSafe(t); if (f.widthOfTextAtSize(t, size) <= max) return t; while (t.length > 1 && f.widthOfTextAtSize(t + '...', size) > max) t = t.slice(0, -1); return t + '...'; };
+  const COLS = { num: M + 4, name: M + 34, age: M + 340, gender: M + 388, box: W - M - 70 };
+  const printed = new Date().toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const byUnit = {}; people.forEach(p => (byUnit[areaOf(p).un] = byUnit[areaOf(p).un] || []).push(p));
+  const unitNames = Object.keys(byUnit).sort();
+  const pages = [];
+  const startPage = (un, n, cont) => {
+    const pg = doc.addPage([W, H]); pages.push(pg);
+    const bandH = 84, top = H - M;
+    pg.drawRectangle({ x: M, y: top - bandH, width: W - 2 * M, height: bandH, color: C('#f6faf4') });
+    pg.drawRectangle({ x: M, y: top - bandH - 4, width: W - 2 * M, height: 4, color: C('#fcb449') });
+    let tx = M + 16;
+    if (logo) { const s = 62; pg.drawImage(logo, { x: M + 10, y: top - bandH + (bandH - s) / 2, width: s, height: s }); tx = M + 84; }
+    pg.drawText(pdfSafe(`${sess.toUpperCase()}  -  CHECK-IN FORM`), { x: tx, y: top - 22, size: 8, font: bold, color: C('#007da5') });
+    pg.drawText(fit(un + (cont ? ' (continued)' : ''), bold, 19, W - M - tx - 120), { x: tx, y: top - 46, size: 19, font: bold, color: C('#002846') });
+    pg.drawText(fit(stake, font, 11.5, W - M - tx - 120), { x: tx, y: top - 64, size: 11.5, font, color: C('#005175') });
+    const rt = `${n} participant${n === 1 ? '' : 's'}`; pg.drawText(rt, { x: W - M - 14 - bold.widthOfTextAtSize(rt, 11), y: top - 46, size: 11, font: bold, color: C('#002846') });
+    const pr = pdfSafe('Printed ' + printed); pg.drawText(pr, { x: W - M - 14 - font.widthOfTextAtSize(pr, 8), y: top - 62, size: 8, font, color: C('#4f6f84') });
+    let y = top - bandH - 30;
+    pg.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 22, color: C('#005175') });
+    const hd = (t, x) => pg.drawText(t, { x, y: y + 1, size: 9, font: bold, color: C('#ffffff') });
+    hd('#', COLS.num); hd('NAME', COLS.name); hd('AGE', COLS.age); hd('GENDER', COLS.gender); hd('CHECKED IN', COLS.box - 8);
+    return { pg, y: y - 6 - ROW };
+  };
+  for (const un of unitNames) {
+    const list = byUnit[un].slice().sort((a, b) => a.name.localeCompare(b.name));
+    let { pg, y } = startPage(un, list.length, false);
+    list.forEach((p, i) => {
+      if (y < M + 70) ({ pg, y } = startPage(un, list.length, true));
+      if (i % 2 === 1) pg.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: ROW, color: C('#f6faf4') });
+      pg.drawLine({ start: { x: M, y: y - 6 }, end: { x: W - M, y: y - 6 }, thickness: 0.5, color: C('#d2e5ee') });
+      pg.drawText(String(i + 1), { x: COLS.num + 14 - font.widthOfTextAtSize(String(i + 1), 9.5), y, size: 9.5, font, color: C('#4f6f84') });
+      pg.drawText(fit(p.name, bold, 10.5, COLS.age - COLS.name - 10), { x: COLS.name, y, size: 10.5, font: bold, color: C('#002846') });
+      pg.drawText(p.age != null ? String(p.age) : '-', { x: COLS.age, y, size: 10, font, color: C('#002846') });
+      pg.drawText(p.gender === 'F' ? 'Female' : p.gender === 'M' ? 'Male' : '-', { x: COLS.gender, y, size: 10, font, color: C('#002846') });
+      pg.drawRectangle({ x: COLS.box + 12, y: y - 2, width: 12, height: 12, borderColor: C('#005175'), borderWidth: 1.2, color: C('#ffffff') });
+      y -= ROW;
+    });
+    if (y < M + 70) ({ pg, y } = startPage(un, list.length, true));
+    y -= 18;
+    pg.drawText(pdfSafe(`Checked in: ________ of ${list.length}`), { x: M + 4, y, size: 10.5, font: bold, color: C('#002846') });
+    pg.drawText('Checked by: ______________________________', { x: M + 230, y, size: 10.5, font, color: C('#002846') });
+  }
+  pages.forEach((pg, i) => {
+    const t = pdfSafe(`${sess}  -  ${unit || stake}`), pn = `Page ${i + 1} of ${pages.length}`;
+    pg.drawLine({ start: { x: M, y: M + 14 }, end: { x: W - M, y: M + 14 }, thickness: 0.5, color: C('#cfe3ec') });
+    pg.drawText(fit(t, font, 8, W - 2 * M - 80), { x: M, y: M, size: 8, font, color: C('#4f6f84') });
+    pg.drawText(pn, { x: W - M - font.widthOfTextAtSize(pn, 8), y: M, size: 8, font, color: C('#4f6f84') });
+  });
+  const bytes = await doc.save();
+  const name = pdfSafe(`Check-in form - ${unit ? unit + ' - ' : ''}${stake}.pdf`).replace(/[\\/:*?"<>|]+/g, '');
+  await S.dl.save({ filename: name, data: new Blob([bytes], { type: 'application/pdf' }) });
+  toast(`Check-in form ready: ${people.length} participants${unitNames.length > 1 ? ' in ' + unitNames.length + ' units' : ''}`);
+}
 function pCard(p) {
   const st = p.s === 'in' ? `<span class="pill in">In ${esc(fmtTime(p.ti))}</span>` : p.s === 'out' ? `<span class="pill out">Out ${esc(fmtTime(p.to))}</span>` : '<span class="pill none">Not arrived</span>';
   const issues = !seesPrivate(p) ? '' : (p.medIssue ? '<span class="chip warn">Medical</span>' : '') + (p.dietIssue ? '<span class="chip warn">Diet</span>' : '');
@@ -1437,6 +1560,7 @@ function openDetail(id) {
   openModal(`<div class="modal-head"><div><h2>${esc(p.name)}</h2><div class="sub">${chipG(p.gender)}${chipBand(p.band)}<span class="chip">${p.age ?? '?'} yrs</span>${flagChips(p)}</div></div><button class="x" data-act="close" aria-label="Close">×</button></div>
   <dl class="pc-grid">${row('Preferred name', p.pref)}${row('Birthday', p.bday)}${row('Group', p.group ? 'G' + p.group.num + ' · ' + (p.counselor ? p.counselor.name : 'No counselor') : 'Not assigned')}${row('Company', p.company ? 'Company ' + p.company.num + ' · AC ' + (sName(p.company.acId) || '—') : '')}${row('T-shirt', SIZE_LABEL[p.tshirt] || p.tshirt || 'Not given')}${row('Ward / branch', p.unit)}${row('Stake / district', p.stake)}${row('Status', (p.status || '').replace(/_/g, ' ').toLowerCase())}${prow('Phone', p.phone)}${prow('Email', p.email)}${prow('Contact 1', [p.c1n, p.c1p, p.c1e].filter(Boolean).join(' · '))}${prow('Contact 2', [p.c2n, p.c2p, p.c2e].filter(Boolean).join(' · '))}${prow("Bishop / branch president", [p.bishopN, p.bishopE].filter(Boolean).join(' · '))}${row('Checked in', fmtTime(p.ti))}${row('Checked out', fmtTime(p.to))}${row('Registration ID', p.id)}</dl>
   ${priv ? '' : '<p class="note" style="margin:0">Medical, dietary and contact details are only shown for youth in your company.</p>'}<dl class="pc-grid" ${priv ? '' : 'hidden'}><div class="wide"><dt>Medical${adm ? ' (as entered)' : ''}</dt><dd>${esc(p.med || '—')} ${p.medIssue ? '<span class="chip warn">Counted</span>' : ''}</dd></div><div class="wide"><dt>Dietary${adm ? ' (as entered)' : ''}</dt><dd>${esc(p.diet || '—')} ${p.dietIssue ? '<span class="chip warn">Counted</span>' : ''}</dd></div></dl>
+  ${can.checkin() ? `<div class="btnrow">${p.s === 'in' ? `<button class="btn" data-act="ciUndo" data-id="${esc(p.id)}">Undo check-in</button><button class="btn" data-act="ciOut" data-id="${esc(p.id)}">Check out</button>` : `<button class="btn go" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`}</div>` : ''}
   ${adm ? `<details><summary><b>Edit record</b></summary><form id="edForm" class="form" data-id="${esc(p.id)}" style="margin-top:10px">
     <label>First name<input id="edFirst" value="${esc(p.first)}"></label><label>Last name<input id="edLast" value="${esc(p.last)}"></label>
     <label>Gender<select id="edGender">${opt('', 'Unknown', !p.gender)}${opt('F', 'Female', p.gender === 'F')}${opt('M', 'Male', p.gender === 'M')}</select></label>
@@ -1487,9 +1611,14 @@ document.addEventListener('click', async e => {
     case 'signIn': await signIn(); break;
     case 'signOut': closeModal(); await FB.auth.signOut(); break;
     case 'ciF': UI.filter = v; UI.limit = 40; UI.frameKey = ''; render(); break;
+    case 'ciToggle': { const o = UI.ciOpen || (UI.ciOpen = new Set()); const st = t.dataset.stake; o.has(st) ? o.delete(st) : o.add(st); render(); break; }
+    case 'ciPick': UI.stake = t.dataset.stake; UI.unit = t.dataset.unit || ''; UI.limit = 40; render(); pinSearch(); break;
+    case 'ciBack': UI.stake = ''; UI.unit = ''; render(); break;
+    case 'ciPrint': printForm(t.dataset.stake, t.dataset.unit || '').catch(err => { console.error(err); toast('Could not make the PDF. Try again.', true); }); break;
     case 'ciClear': { const q = $('#ciQ'); q.value = ''; UI.q = ''; UI.limit = 40; PAGE_IMPL.checkin.update(); q.focus(); break; }
     case 'ciMore': UI.limit += 60; render(); break;
     case 'ciIn': case 'ciUndo': case 'ciOut': {
+      if ($('#mbg')) closeModal();
       const p = S.P.find(x => x.id === id); if (!p) break; const prev = { s: p.s || '', ti: p.ti || null, to: p.to || null, by: p.by || null };
       const patch = act === 'ciIn' ? { s: 'in', ti: now, by: S.uid } : act === 'ciOut' ? { s: 'out', to: now, by: S.uid } : { s: '', ti: null, by: S.uid };
       setState(id, patch);
