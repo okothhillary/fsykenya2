@@ -1,3 +1,4 @@
+/*firebase*/
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
