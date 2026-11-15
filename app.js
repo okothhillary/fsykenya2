@@ -4,7 +4,7 @@ function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
 /* Each session keeps its own participants, check-ins, groups, staff, headcounts and medical notes.
    The first session ("main") lives at the top level; sessions made by splitting live under sessions/<id>/.
    Accounts, profiles, requests and the session list are shared by all sessions. */
-const SCOPED = new Set(['roster', 'state', 'staff', 'org', 'config', 'headcount', 'medical', 'share', 'intake']);
+const SCOPED = new Set(['roster', 'state', 'staff', 'org', 'config', 'headcount', 'medical', 'share', 'intake', 'reports']);
 function rawPath(sid, p) { return !sid || sid === 'main' ? p : `sessions/${sid}/${p}`; }
 function scoped(p) { return SCOPED.has(String(p).split('/')[0]) ? rawPath(S.sid, p) : p; }
 function fbErr(cb) { return e => { console.error(e); if (cb) cb({ code: e && e.code === 'permission-denied' ? 'invalid_argument' : 'unavailable', message: String(e && e.message) }); }; }
@@ -47,14 +47,15 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-15d · request emails';
+const APP_VERSION = '2026-11-15e · wellness coordinators';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
   regadmin: 'Registration admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Head of Logistics', coordinator: 'Coordinator',
-  ac: 'Assistant coordinator', counselor: 'Counselor', logistics: 'Logistics'
+  ac: 'Assistant coordinator', counselor: 'Counselor', logistics: 'Logistics', wellness: 'Wellness coordinator'
 };
-const STAFF_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics'];
+const STAFF_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics', 'wellness'];
+const ROLE_PLURAL = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics', wellness: 'Wellness coordinators' };
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
 const SIZE_LABEL = { XS: 'Extra small', S: 'Small', M: 'Medium', L: 'Large', XL: 'XL', XXL: 'XXL', '3XL': '3XL', '': 'Not given' };
 const DEFAULT_CONFIG = { sessionName: 'FSY Kenya 2nd 2026', sessionStart: '', hcStart: '2026-12-07', hcEnd: '2026-12-11', groupSize: 10, excludedStakes: [], excludedUnits: [], excludedStatuses: ['CANCELLED'] };
@@ -92,6 +93,7 @@ function normType(t) {
   if (/COORD/.test(t)) return 'coordinator';
   if (/DIRECT|^SDC$/.test(t)) return 'sdc';
   if (/LOGIST/.test(t)) return 'logistics';
+  if (/WELL|HEALTH|NURSE|MEDIC|FIRST ?AID/.test(t)) return 'wellness';
   if (/PARTIC|YOUTH/.test(t)) return 'participant';
   return '';
 }
@@ -900,7 +902,7 @@ const S = {
   access: {}, accessEx: false, requests: {}, loaded: {},
   P: [], staffList: [], staffMap: {}, viewAs: null, viewAsStaff: null, names: {},
   hc: {}, hcLoaded: false, sid: 'main', sessions: {}, mySessions: [],
-  medAdmin: false, email: null, medical: {}, medicalEx: new Set(), intake: {}, share: null, shares: {}, invites: {}, members: {}, inviteEmails: {}, claimTried: false
+  medAdmin: false, medRead: false, reports: {}, email: null, medical: {}, medicalEx: new Set(), intake: {}, share: null, shares: {}, invites: {}, members: {}, inviteEmails: {}, claimTried: false
 };
 const UI = { page: null, frameKey: '', q: '', filter: 'all', stake: '', unit: '', limit: 40, logScope: 'all', staffTab: 'counselor', open: new Set(), openStakes: new Set(), band: '', imp: null, genLog: null, pending: false };
 
@@ -931,14 +933,17 @@ const can = {
   reset: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveAny: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
-  logistics: () => !!role(),
+  logistics: () => !!role() && role() !== 'wellness',
+  wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness'].includes(role()),
+  report: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'wellness'].includes(role()),
   accounts: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
   // the real account must be allowed to split, and a preview of another role hides it, so previews show exactly what that role sees
   split: () => TOP_ROLES.includes(realRole()) && TOP_ROLES.includes(role()),
   headcount: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
-  ['checkin', 'Check-in', () => can.checkin()],
+  ['wellness', 'Wellness', () => can.wellness()],
+  ['checkin', 'Check-in', () => can.checkin() || role() === 'wellness'],
   ['tally', 'Tally', () => !!role()],
   ['companies', 'Companies & groups', () => can.checkin()],
   ['exceptions', 'Walk-ins & exceptions', () => can.checkin() || role() === 'logistics'],
@@ -955,7 +960,7 @@ function currentPage() {
   const h = (location.hash || '').slice(1);
   if (ok.includes(h)) return h;
   if (lgHash() && ok.includes('logistics')) return 'logistics';
-  return role() === 'logistics' ? 'logistics' : ok[0] || null;
+  return role() === 'logistics' ? 'logistics' : role() === 'wellness' ? 'wellness' : (ok.filter(k => k !== 'wellness')[0] || ok[0] || null);
 }
 
 /* ---------- helpers ---------- */
@@ -988,6 +993,13 @@ function confirmBox(title, body, okLabel, danger) {
   return new Promise(res => {
     openModal(`<div class="modal-head"><h2>${esc(title)}</h2></div><p class="note" style="margin:0">${body}</p><div class="btnrow"><button class="btn ${danger ? 'danger' : 'primary'}" id="cfOk">${esc(okLabel)}</button><button class="btn" id="cfNo">Cancel</button></div>`);
     $('#cfOk').onclick = () => { closeModal(); res(true); }; $('#cfNo').onclick = () => { closeModal(); res(false); };
+  });
+}
+function askText(title, label) {
+  return new Promise(res => {
+    openModal(`<div class="modal-head"><h2>${esc(title)}</h2></div><label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:6px">${esc(label)}</span><textarea id="atText" rows="3" maxlength="400" style="width:100%"></textarea></label><div class="btnrow"><button class="btn primary" id="cfOk">Save</button><button class="btn" id="cfNo">Cancel</button></div>`);
+    setTimeout(() => { const t = $('#atText'); if (t) t.focus(); }, 50);
+    $('#cfOk').onclick = () => { const v = clean(($('#atText') || {}).value); closeModal(); res(v); }; $('#cfNo').onclick = () => { closeModal(); res(null); };
   });
 }
 function openModal(html) { $('#modalRoot').innerHTML = `<div class="modal-bg" id="mbg"><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`; $('#mbg').addEventListener('click', e => { if (e.target.id === 'mbg') closeModal(); }); }
@@ -1039,13 +1051,13 @@ function loadedAll() { return ['roster', 'state', 'staff', 'org', 'config', 'acc
    only gets a copy of the notes for the youth in their own scope (share/<their id>). */
 function mergeMedical() {
   const src = {};
-  if (S.medAdmin) for (const b in S.medical) for (const id in S.medical[b]) src[id] = S.medical[b][id];
+  if (S.medRead) for (const b in S.medical) for (const id in S.medical[b]) src[id] = S.medical[b][id];
   for (const u in S.intake) { const p = (S.intake[u] || {}).p || {}; for (const id in p) src[id] = Object.assign({}, src[id] || {}, p[id]); }
   if (S.share && S.share.p) for (const id in S.share.p) src[id] = Object.assign({ f: 1 }, S.share.p[id]);
   const out = {};
   for (const b in S.roster) { const m = S.roster[b]; const o = out[b] = {}; for (const id in m) { const r = m[id]; if (!r) continue; const x = src[id];
     if (x) o[id] = Object.assign({}, r, { med: x.med || '', diet: x.diet || '', medF: x.f && x.med ? 1 : 0, dietF: x.f && x.diet ? 1 : 0 });
-    else o[id] = S.medAdmin ? r : Object.assign({}, r, { med: '', diet: '' }); } }
+    else o[id] = S.medRead ? r : Object.assign({}, r, { med: '', diet: '' }); } }
   return out;
 }
 async function autoClaim() { return;
@@ -1067,7 +1079,7 @@ async function runAdminSync() {
   // 3. each person's copy of the medical and dietary notes they are allowed to see
   const uids = uniq(Object.keys(S.access).concat(Object.keys(S.members)));
   for (const uid of uids) {
-    const a = accountOf(uid); if (!a || a.role === 'regadmin') continue;
+    const a = accountOf(uid); if (!a || a.role === 'regadmin' || a.role === 'wellness') continue;
     const p = {}; S.P.forEach(x => { if ((x.medIssue || x.dietIssue) && inScopeFor(x, a.role, a.staffId)) p[x.id] = { med: x.medIssue || '', diet: x.dietIssue || '' }; });
     const h = fnv(JSON.stringify(p)).toString(36); if (S.shares[uid] === h) continue; S.shares[uid] = h;
     await setDoc('share/' + uid, { p, h });
@@ -1076,7 +1088,7 @@ async function runAdminSync() {
   // 4. logistics and Session Directing Couple accounts count as staff in this session (they rarely appear in the staff upload)
   await syncAccountStaff();
 }
-const ACCOUNT_STAFF_ROLES = ['logistics', 'sdc'];
+const ACCOUNT_STAFF_ROLES = ['logistics', 'sdc', 'wellness'];
 async function syncAccountStaff() {
   if (!S.loaded.inv || !S.loaded.staff) return;
   const norm = x => String(x || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -1120,10 +1132,16 @@ function subscribe() {
     db.collection('medical').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.medicalEx.add(d.id); }); S.medical = r; mark('med', sn.metadata); recompute(); }, onErr);
     db.collection('intake').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.intake = r; recompute(); }, onErr);
     db.collection('share').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = (d.data() || {}).h || ''); S.shares = r; }, onErr);
+  } else if (S.medRead) {
+    db.collection('medical').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); }); S.medical = r; mark('med', sn.metadata); recompute(); }, onErr);
+    db.collection('intake').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.intake = r; recompute(); }, onErr);
   } else if (S.uid) {
     db.doc('share/' + S.uid).onSnapshot(d => { S.share = d.exists ? d.data() : null; mark('med', d.metadata); recompute(); }, onErr);
     db.doc('intake/' + S.uid).onSnapshot(d => { S.intake = d.exists ? { [S.uid]: d.data() } : {}; S.intakeEx = d.exists; recompute(); }, onErr);
   } else S.loaded.med = true;
+  // health concerns reported by counselors: wellness coordinators and admins see all, others their own
+  if (S.medRead) db.collection('reports').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = (d.data() || {}).r || {}); S.reports = r; recompute(); }, onErr);
+  else if (S.uid) db.doc('reports/' + S.uid).onSnapshot(d => { S.reports = d.exists ? { [S.uid]: (d.data() || {}).r || {} } : {}; S.reportsEx = d.exists; recompute(); }, () => { });
 }
 async function boot() {
   window.addEventListener('hashchange', () => { closeModal(); render(); });
@@ -1148,6 +1166,7 @@ async function boot() {
     let pick = null; try { pick = localStorage.getItem('fsy.session.' + u.uid); } catch (e) { }
     S.sid = S.mySessions.includes(pick) ? pick : (S.mySessions[0] || 'main');
     S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy', 'loghead'].includes(inv.role));
+    S.medRead = S.medAdmin || !!(inv && inv.role === 'wellness');
     if (!S.isOwner && !inv) { subscribeGuest(); render(); return; }
     subscribe(); render();
   });
@@ -1176,6 +1195,7 @@ const ICONS = {
   tally: I('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
   companies: I('<circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 13.6c2.7.2 4.5 2.2 4.5 5"/>'),
   exceptions: I('<circle cx="10" cy="8" r="3.5"/><path d="M3.5 20c0-3.6 2.9-6 6.5-6 1.4 0 2.6.3 3.6.9"/><path d="M18 14v6M15 17h6"/>'),
+  wellness: I('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M12 10v5M9.5 12.5h5"/>'),
   logistics: I('<path d="M9 4h6v3H9z"/><path d="M8 5.5H6a1 1 0 0 0-1 1V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1h-2"/><path d="M12 11v6M9 14h6"/>'),
   staff: I('<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M7.5 18c.6-2.3 2.4-3.5 4.5-3.5s3.9 1.2 4.5 3.5"/>'),
   data: I('<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>'),
@@ -1187,8 +1207,8 @@ const ICONS = {
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
-const SHORT = { sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+const SHORT = { wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
+const NAV_ORDER = { wellness: ['wellness', 'checkin', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -1200,7 +1220,7 @@ function renderHeader() {
   }
   const top = $('#top'); if (top) { document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px'); const sticky = getComputedStyle(top).position === 'sticky'; const tabs = document.querySelector('.tabs'); document.documentElement.style.setProperty('--stick', sticky ? (top.offsetHeight + (tabs ? tabs.offsetHeight : 0)) + 'px' : '0px'); }
 }
-const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
+const SHORT_ROLE = { wellness: 'Wellness', regadmin: 'Reg admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
   const cur = currentPage(); const keys = navPages();
   $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
@@ -1491,7 +1511,7 @@ async function printStaffList(role, onlyStake) {
   const C = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
   const doc = await PDFDocument.create();
   const sess = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
-  const PLR = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics' }[role] || ROLES[role];
+  const PLR = ROLE_PLURAL[role] || ROLES[role];
   doc.setTitle(pdfSafe(`${sess} - ${PLR} - ${onlyStake || 'all stakes and districts'}`)); doc.setAuthor(pdfSafe(sess)); doc.setCreator('FSY Check-in');
   const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
   let logo = null; try { logo = await doc.embedPng(await logoPngBytes()); } catch (e) { console.warn('logo', e); }
@@ -1571,7 +1591,7 @@ function pCard(p) {
       <div><span class="k">Size</span><span>${tee}</span></div>
     </div>
     ${(p.flags.length || p.ov) && flagChips(p, ['walkin', 'area', 'status', 'pending', 'gender', 'age', 'agerange']) ? `<div class="flags">${flagChips(p, ['walkin', 'area', 'status', 'pending', 'gender', 'age', 'agerange'])}</div>` : ''}
-    <div class="pc-actions">${acts}<button class="btn" data-act="detail" data-id="${esc(p.id)}" style="flex:0 0 auto">Details</button></div></article>`;
+    ${repChip(p)}<div class="pc-actions">${acts}${can.report() && seesPrivate(p) ? `<button class="btn" data-act="repNew" data-id="${esc(p.id)}" style="flex:0 0 auto" title="Report a health concern">Health</button>` : ''}<button class="btn" data-act="detail" data-id="${esc(p.id)}" style="flex:0 0 auto">Details</button></div></article>`;
 }
 
 /* ---------- page: tally ---------- */
@@ -1586,7 +1606,7 @@ PAGE_IMPL.tally = {
     const gc = (list, g) => list.filter(x => x.gender === g).length;
     const yp = P.filter(p => exp(p) || (p.src === 'walkin' && p.s));
     const rowsAll = [['Participants expected', P.filter(exp)], ['Walk-ins checked in', P.filter(p => p.src === 'walkin' && p.s)]].map(([l, L]) => [l, gc(L, 'F'), gc(L, 'M'), L.length])
-      .concat(STAFF_ROLES.map(r => { const L = ST.filter(x => x.role === r); return [({ counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics' })[r], gc(L, 'F'), gc(L, 'M'), L.length]; }));
+      .concat(STAFF_ROLES.map(r => { const L = ST.filter(x => x.role === r); return [ROLE_PLURAL[r], gc(L, 'F'), gc(L, 'M'), L.length]; }));
     const stN = ST.length, allN = yp.length + stN;
     $('#tAll').innerHTML = `<div class="tablewrap"><table><thead><tr><th></th><th class="n">Women</th><th class="n">Men</th><th class="n">Total</th></tr></thead><tbody>${rowsAll.map(([l, f, m, t], i) => `<tr${i === 2 ? ' class="divide"' : ''}><td>${esc(l)}</td><td class="n">${f}</td><td class="n">${m}</td><td class="n"><b>${t}</b></td></tr>`).join('')}
       <tr class="subtot"><td><b>Youth</b></td><td class="n">${gc(yp, 'F')}</td><td class="n">${gc(yp, 'M')}</td><td class="n"><b>${yp.length}</b></td></tr><tr class="subtot"><td><b>Staff</b></td><td class="n">${gc(ST, 'F')}</td><td class="n">${gc(ST, 'M')}</td><td class="n"><b>${stN}</b></td></tr>
@@ -1843,6 +1863,76 @@ function notifyRequest(note) {
   fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body }).catch(() => { });
 }
 
+/* ---------- health concerns (reported by counselors, followed up by wellness coordinators) ---------- */
+const REP_KINDS = [['medical', 'Medical'], ['dietary', 'Dietary'], ['injury', 'Injury or illness'], ['emotional', 'Emotional wellbeing'], ['other', 'Other']];
+const repKind = k => (REP_KINDS.find(x => x[0] === k) || [k, k])[1];
+function allReports() { const out = []; for (const u in S.reports || {}) for (const id in S.reports[u] || {}) { const r = S.reports[u][id]; if (r) out.push(Object.assign({ id, owner: u }, r)); } return out.sort((a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1) || (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0) || b.at - a.at); }
+function repChip(p) { const open = allReports().filter(r => r.pid === p.id && r.status === 'open'); return open.length ? `<div class="flags"><span class="chip bad">${open.length} open health concern${open.length > 1 ? 's' : ''}</span></div>` : ''; }
+function repHistory(p) {
+  const list = allReports().filter(r => r.pid === p.id);
+  return `<div class="rep-hist"><div class="panel-head" style="margin:0 0 6px"><b>Health concerns</b>${can.report() ? `<button class="btn small" data-act="repNew" data-id="${esc(p.id)}">+ Report a concern</button>` : ''}</div>${list.length ? list.map(repCard).join('') : '<p class="note" style="margin:0">None reported.</p>'}</div>`;
+}
+function repCard(r) {
+  const p = S.P.find(x => x.id === r.pid); const w = can.wellness();
+  return `<div class="rep ${r.status === 'open' ? 'open' : 'done'}${r.urgent && r.status === 'open' ? ' urgent' : ''}">
+    <div class="rep-top">${r.urgent ? '<span class="chip bad">Urgent</span>' : ''}<span class="chip">${esc(repKind(r.kind))}</span>${r.status === 'open' ? '<span class="chip warn">Open</span>' : '<span class="chip good">Resolved</span>'}<small class="muted">${esc(fmtWhen(r.at))} · ${esc(r.byName || '')}</small></div>
+    ${w ? `<div class="rep-who"><a href="#" data-act="detail" data-id="${esc(r.pid)}"><b>${esc(p ? p.name : r.pname || 'Participant')}</b></a> <small class="muted">${p ? `${p.age ?? '?'} yrs · ${p.gender === 'F' ? 'YW' : p.gender === 'M' ? 'YM' : '?'} · ${p.group ? 'G' + p.group.num + (p.counselor ? ' (' + esc(p.counselor.name) + ')' : '') + (p.company ? ' · Co ' + p.company.num : '') : 'no group'} · ${p.s === 'in' ? 'checked in' : p.s === 'out' ? 'checked out' : 'not arrived'}` : ''}</small></div>` : ''}
+    <p class="rep-text">${esc(r.text)}</p>
+    ${r.resNote || r.status !== 'open' ? `<p class="rep-res"><b>${r.status === 'open' ? 'Follow-up' : 'Resolved'}${r.resByName ? ' by ' + esc(r.resByName) : ''}${r.resAt ? ' · ' + esc(fmtWhen(r.resAt)) : ''}:</b> ${esc(r.resNote || '—')}</p>` : ''}
+    ${w ? `<div class="btnrow">${r.status === 'open' ? `<button class="btn small primary" data-act="repResolve" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Mark resolved</button><button class="btn small" data-act="repNote" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Add follow-up</button>` : `<button class="btn small" data-act="repReopen" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Reopen</button>`}</div>` : ''}</div>`;
+}
+function fmtWhen(t) { if (!t) return ''; const d = new Date(t); return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+function openReportForm(pid) {
+  const p = S.P.find(x => x.id === pid); if (!p) return;
+  openModal(`<div class="modal-head"><div><h2>Report a health concern</h2><div class="sub"><b>${esc(p.name)}</b> ${chipG(p.gender)}${chipBand(p.band)}</div></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+  <form id="repForm" class="form" data-id="${esc(p.id)}">
+    <label class="span2">What kind of concern?<select id="repKind">${REP_KINDS.map(([k, l]) => opt(k, l)).join('')}</select></label>
+    <label class="span2">What happened, or what should the wellness team know?<textarea id="repText" rows="4" maxlength="600" required placeholder="For example: headache since lunch, has not taken medicine; cannot eat beans"></textarea></label>
+    <label class="span2 chkrow"><input type="checkbox" id="repUrgent"> Urgent: needs attention now</label>
+    <p class="note span2" style="margin:0">Only the wellness coordinators and the session leaders see this. In an emergency, also call the wellness team straight away.</p>
+    <div class="span2"><button class="btn primary" type="submit" style="width:100%">Send to the wellness team</button></div></form>`);
+  setTimeout(() => { const t = $('#repText'); if (t) t.focus(); }, 60);
+}
+async function saveReport(form) {
+  const p = S.P.find(x => x.id === form.dataset.id); const text = clean(($('#repText') || {}).value); if (!p || !text) { toast('Describe the concern first', true); return; }
+  const id = rid('r'); const rec = { pid: p.id, pname: p.name, kind: ($('#repKind') || {}).value || 'other', text: text.slice(0, 600), urgent: !!($('#repUrgent') || {}).checked, at: Date.now(), by: S.uid, byName: S.meName || S.email, status: 'open' };
+  const mine = Object.assign({}, (S.reports || {})[S.uid] || {}, { [id]: rec }); S.reports = Object.assign({}, S.reports, { [S.uid]: mine });
+  closeModal(); recompute(true);
+  try { await S.db.doc('reports/' + S.uid).set({ r: { [id]: rec } }, { merge: true }); toast('Sent to the wellness team'); } catch (e) { fail(e); }
+}
+async function updateReport(owner, id, patch) {
+  const cur = ((S.reports || {})[owner] || {})[id]; if (!cur) return;
+  S.reports = Object.assign({}, S.reports, { [owner]: Object.assign({}, S.reports[owner], { [id]: Object.assign({}, cur, patch) }) }); recompute(true);
+  try { await S.db.doc('reports/' + owner).set({ r: { [id]: patch } }, { merge: true }); } catch (e) { fail(e); }
+}
+
+/* ---------- page: wellness ---------- */
+PAGE_IMPL.wellness = {
+  frame() {
+    return `<section class="pagehead"><div><p class="th">Wellness · whole session</p><h1>Health and wellbeing</h1><p class="note" style="margin:4px 0 0">Concerns reported by counselors, and every medical and dietary note for youth and staff. Notes such as "none" or "N/A" are left out.</p></div><div class="btnrow"><button class="btn" data-act="wlCsv">Export CSV</button></div></section>
+    <div id="wlK" class="kpis"></div>
+    <section class="panel" id="wl-rep"><div class="panel-head"><h2>Reported concerns</h2><div class="chips" id="wlRepTabs"></div></div><div id="wlRep"></div></section>
+    <section class="panel" id="wl-youth"><div class="panel-head"><h2>Youth: medical and dietary</h2><div class="chips" id="wlYTabs"></div></div><input id="wlQ" type="search" placeholder="Search by name, unit or note" autocomplete="off" value="${esc(UI.wlQ || '')}" style="width:100%;margin-bottom:10px"><div id="wlYouth"></div></section>
+    <section class="panel" id="wl-staff"><div class="panel-head"><h2>Staff: medical and dietary</h2></div><div id="wlStaff"></div></section>`;
+  },
+  update() {
+    const R = allReports(), open = R.filter(r => r.status === 'open');
+    const Y = registered().filter(p => p.medIssue || p.dietIssue);
+    const ST = S.staffList.filter(x => !x.test && (x.diet || x.med));
+    $('#wlK').innerHTML = `<a class="kpi hero" href="#wl-rep" style="text-decoration:none"><span>Open concerns</span><b>${open.length}</b></a><div class="kpi"><span>Urgent and open</span><b>${open.filter(r => r.urgent).length}</b></div><div class="kpi"><span>Youth with medical notes</span><b>${Y.filter(p => p.medIssue).length}</b></div><div class="kpi"><span>Youth with dietary needs</span><b>${Y.filter(p => p.dietIssue).length}</b></div><div class="kpi"><span>Staff with notes</span><b>${ST.length}</b></div>`;
+    const rt = UI.wlRep || 'open';
+    $('#wlRepTabs').innerHTML = [['open', `Open · ${open.length}`], ['done', `Resolved · ${R.length - open.length}`], ['all', `All · ${R.length}`]].map(([v, l]) => `<button data-act="wlRep" data-v="${v}" aria-pressed="${rt === v}">${l}</button>`).join('');
+    const shown = R.filter(r => rt === 'all' || (rt === 'open' ? r.status === 'open' : r.status !== 'open'));
+    $('#wlRep').innerHTML = shown.length ? `<div class="rep-list">${shown.map(repCard).join('')}</div>` : `<p class="note">${rt === 'open' ? 'No open concerns. Counselors report them from a participant\'s card or details.' : 'Nothing here yet.'}</p>`;
+    const yt = UI.wlY || 'all', q = (UI.wlQ || '').toLowerCase().trim();
+    $('#wlYTabs').innerHTML = [['all', `All · ${Y.length}`], ['med', `Medical · ${Y.filter(p => p.medIssue).length}`], ['diet', `Dietary · ${Y.filter(p => p.dietIssue).length}`], ['in', `Checked in · ${Y.filter(p => p.s === 'in').length}`]].map(([v, l]) => `<button data-act="wlY" data-v="${v}" aria-pressed="${yt === v}">${l}</button>`).join('');
+    const yl = Y.filter(p => (yt === 'all' || (yt === 'med' && p.medIssue) || (yt === 'diet' && p.dietIssue) || (yt === 'in' && p.s === 'in')) && (!q || [p.name, p.unit, p.stake, p.medIssue, p.dietIssue].join(' ').toLowerCase().includes(q)))
+      .sort((a, b) => (a.group ? a.group.num : 9999) - (b.group ? b.group.num : 9999) || a.name.localeCompare(b.name));
+    $('#wlYouth').innerHTML = yl.length ? `<div class="tablewrap"><table class="wl-t"><thead><tr><th>Participant</th><th>Medical</th><th>Dietary</th><th>Group</th></tr></thead><tbody>${yl.slice(0, UI.wlMore ? 9999 : 150).map(p => `<tr><td><a href="#" data-act="detail" data-id="${esc(p.id)}"><b>${esc(p.name)}</b></a><br><small class="muted">${p.age ?? '?'} yrs · ${p.gender === 'F' ? 'YW' : p.gender === 'M' ? 'YM' : '?'} · ${p.s === 'in' ? 'checked in' : p.s === 'out' ? 'checked out' : 'not arrived'}<br>${esc(p.unit || '')}${p.stake ? ' · ' + esc(p.stake) : ''}</small></td><td data-l="Medical" class="${p.medIssue ? '' : 'nil'}">${p.medIssue ? esc(p.medIssue) + `<div class="flags">${cats(p.medIssue, MED_CATS).map(c => `<span class="chip">${esc(c)}</span>`).join('')}</div>` : '<span class="muted">—</span>'}</td><td data-l="Dietary" class="${p.dietIssue ? '' : 'nil'}">${p.dietIssue ? esc(p.dietIssue) + `<div class="flags">${cats(p.dietIssue, DIET_CATS).map(c => `<span class="chip">${esc(c)}</span>`).join('')}</div>` : '<span class="muted">—</span>'}</td><td data-l="Group">${p.group ? `<b>G${p.group.num}</b>${p.company ? ' · Co ' + p.company.num : ''}<br><small class="muted">${esc(p.counselor ? p.counselor.name : 'No counselor')}</small>` : '<span class="muted">Not in a group</span>'}</td></tr>`).join('')}</tbody></table></div>${yl.length > 150 && !UI.wlMore ? `<button class="btn small" data-act="wlMore" style="margin-top:8px">Show all ${yl.length}</button>` : ''}` : `<p class="note">${S.P.length ? 'Nobody matches.' : 'Participants appear here once they are uploaded.'}</p>`;
+    $('#wlStaff').innerHTML = ST.length ? `<div class="tablewrap"><table class="wl-t"><thead><tr><th>Staff member</th><th>Medical</th><th>Dietary</th><th>Phone</th></tr></thead><tbody>${ST.sort((a, b) => a.name.localeCompare(b.name)).map(x => `<tr><td><b>${esc(x.name)}</b><br><small class="muted">${esc(ROLES[x.role] || x.role)}${x.unit ? ' · ' + esc(x.unit) : ''}</small></td><td data-l="Medical" class="${x.med ? '' : 'nil'}">${x.med ? esc(x.med) : '<span class="muted">—</span>'}</td><td data-l="Dietary" class="${x.diet ? '' : 'nil'}">${x.diet ? esc(x.diet) : '<span class="muted">—</span>'}</td><td data-l="Phone" class="${x.phone ? '' : 'nil'}">${esc(x.phone || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No staff have medical or dietary notes. Staff notes come from the staff sign-up form (food allergies) or the staff record.</p>';
+  }
+};
+
 /* ---------- page: staff ---------- */
 PAGE_IMPL.staff = {
   frame() {
@@ -1860,9 +1950,9 @@ PAGE_IMPL.staff = {
   },
   update() {
     const cnt = r => S.staffList.filter(s => s.role === r).length;
-    const PL = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics' };
+    const PL = ROLE_PLURAL;
     $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
-    $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics' })[r]]), 'openStaff');
+    $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics', wellness: 'Wellness' })[r]]), 'openStaff');
     $('#stTabs').innerHTML = STAFF_ROLES.map(r => `<button data-act="stTab" data-v="${r}" aria-pressed="${UI.staffTab === r}">${esc(ROLES[r])} · ${cnt(r)}</button>`).join('');
     const list = S.staffList.filter(s => s.role === UI.staffTab);
     const byArea = UI.staffView === 'area';
@@ -2245,6 +2335,7 @@ PAGE_IMPL.access = {
       <tr><td>Area Seventy</td><td>Every session</td><td>The same as the Session Directing Couple, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Head of Logistics</td><td>Every session</td><td>Everything logistics can see and do, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
+      <tr><td>Wellness coordinator</td><td>Whole session</td><td>Sees the Wellness page: every medical and dietary note for youth and staff, and the health concerns counselors report. Can view check-in and the tally, but checks nobody in and has no group.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
       <tr><td>Assistant coordinator</td><td>Their company</td><td>Check in, move participants inside their company, logistics for their company.</td></tr>
       <tr><td>Counselor</td><td>Their group and company</td><td>Check in, undo and check out, add walk-ins, logistics for their company.</td></tr></tbody></table></div>
@@ -2285,6 +2376,7 @@ function openDetail(id) {
   openModal(`<div class="modal-head"><div><h2>${esc(p.name)}</h2><div class="sub">${chipG(p.gender)}${chipBand(p.band)}<span class="chip">${p.age ?? '?'} yrs</span>${flagChips(p)}</div></div><button class="x" data-act="close" aria-label="Close">×</button></div>
   <dl class="pc-grid">${row('Preferred name', p.pref)}${row('Birthday', p.bday)}${row('Group', p.group ? 'G' + p.group.num + ' · ' + (p.counselor ? p.counselor.name : 'No counselor') : 'Not assigned')}${row('Company', p.company ? 'Company ' + p.company.num + ' · AC ' + (sName(p.company.acId) || '—') : '')}${row('T-shirt', SIZE_LABEL[p.tshirt] || p.tshirt || 'Not given')}${row('Ward / branch', p.unit)}${row('Stake / district', p.stake)}${row('Status', (p.status || '').replace(/_/g, ' ').toLowerCase())}${prow('Phone', p.phone)}${prow('Email', p.email)}${prow('Contact 1', [p.c1n, p.c1p, p.c1e].filter(Boolean).join(' · '))}${prow('Contact 2', [p.c2n, p.c2p, p.c2e].filter(Boolean).join(' · '))}${prow("Bishop / branch president", [p.bishopN, p.bishopE].filter(Boolean).join(' · '))}${row('Checked in', fmtTime(p.ti))}${row('Checked out', fmtTime(p.to))}${row('Registration ID', p.id)}</dl>
   ${priv ? '' : '<p class="note" style="margin:0">Medical, dietary and contact details are only shown for youth in your company.</p>'}<dl class="pc-grid" ${priv ? '' : 'hidden'}><div class="wide"><dt>Medical${adm ? ' (as entered)' : ''}</dt><dd>${esc(p.med || '—')} ${p.medIssue ? '<span class="chip warn">Counted</span>' : ''}</dd></div><div class="wide"><dt>Dietary${adm ? ' (as entered)' : ''}</dt><dd>${esc(p.diet || '—')} ${p.dietIssue ? '<span class="chip warn">Counted</span>' : ''}</dd></div></dl>
+  ${priv ? repHistory(p) : ''}
   ${can.checkin() ? `<div class="btnrow">${p.s === 'in' ? `<button class="btn" data-act="ciUndo" data-id="${esc(p.id)}">Undo check-in</button><button class="btn" data-act="ciOut" data-id="${esc(p.id)}">Check out</button>` : `<button class="btn go" data-act="ciIn" data-id="${esc(p.id)}">Check in</button>`}</div>` : ''}
   ${adm ? `<details><summary><b>Edit record</b></summary><form id="edForm" class="form" data-id="${esc(p.id)}" style="margin-top:10px">
     <label>First name<input id="edFirst" value="${esc(p.first)}"></label><label>Last name<input id="edLast" value="${esc(p.last)}"></label>
@@ -2411,6 +2503,14 @@ document.addEventListener('click', async e => {
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
     case 'stView': UI.staffView = v; render(); break;
+    case 'repNew': closeModal(); openReportForm(id); break;
+    case 'repResolve': { const note = await askText('Mark as resolved', 'What was done? (optional)'); if (note === null) break; await updateReport(id, v, { status: 'resolved', resNote: note, resAt: Date.now(), resBy: S.uid, resByName: S.meName || S.email }); toast('Marked resolved'); break; }
+    case 'repNote': { const note = await askText('Add a follow-up', 'Follow-up note'); if (!note) break; await updateReport(id, v, { resNote: note, resAt: Date.now(), resBy: S.uid, resByName: S.meName || S.email }); toast('Saved'); break; }
+    case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
+    case 'wlRep': UI.wlRep = v; render(); break;
+    case 'wlY': UI.wlY = v; UI.wlMore = false; render(); break;
+    case 'wlMore': UI.wlMore = true; render(); break;
+    case 'wlCsv': { const rows = [['Who', 'Name', 'Role or group', 'Unit', 'Stake', 'Medical', 'Dietary', 'Checked in']]; registered().filter(p => p.medIssue || p.dietIssue).forEach(p => rows.push(['Youth', p.name, p.group ? 'G' + p.group.num : '', p.unit, p.stake, p.medIssue || '', p.dietIssue || '', p.s === 'in' ? 'yes' : ''])); S.staffList.filter(x => !x.test && (x.med || x.diet)).forEach(x => rows.push(['Staff', x.name, ROLES[x.role] || x.role, x.unit || '', x.stake || '', x.med || '', x.diet || '', ''])); rows.push([]); rows.push(['Concern', 'Participant', 'Kind', 'Urgent', 'Status', 'Reported', 'By', 'Details', 'Follow-up']); allReports().forEach(r => rows.push(['', r.pname || '', repKind(r.kind), r.urgent ? 'yes' : '', r.status, fmtWhen(r.at), r.byName || '', r.text, r.resNote || ''])); exportCSV('fsy-wellness.csv', rows); break; }
     case 'stPdf': printStaffList(UI.staffTab, v || ''); break;
     case 'sfGo': await sfImport(); break;
     case 'sfCancel': { UI.sf = null; const f = $('#sfFile'); if (f) f.value = ''; renderSf(); break; }
@@ -2478,6 +2578,7 @@ document.addEventListener('submit', async e => {
       if (md.med || md.diet) { if (S.medAdmin) { const mx = S.medicalEx.has(b); S.medicalEx.add(b); await upd('medical/' + b, { p: { [id]: md } }, mx); } else { const ix = !!S.intakeEx; S.intakeEx = true; await upd('intake/' + S.uid, { p: { [id]: md } }, ix); } }
       if ($('#wkIn').checked) await setState(id, { s: 'in', ti: Date.now(), by: S.uid }); else recompute(true); f.reset(); toast(first + ' added as a walk-in'); } catch (err) { fail(err); }
   }
+  if (f.id === 'repForm') { await saveReport(f); return; }
   if (f.id === 'stForm') {
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
     const age = parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
@@ -2504,6 +2605,7 @@ let qT = null;
 document.addEventListener('input', e => { if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'wlQ') { UI.wlQ = t.value; clearTimeout(UI.wlT); UI.wlT = setTimeout(() => { PAGE_IMPL.wellness.update(); }, 200); return; }
   if (t.dataset && t.dataset.hcreason) { const g = t.dataset.g, id = t.dataset.hcreason; clearTimeout(hcNoteT[id]); hcNoteT[id] = setTimeout(() => { const cur = hcDoc(hcDay(), g) || {}; const next = Object.assign({}, cur, { reasons: Object.assign({}, cur.reasons || {}, { [id]: t.value.slice(0, 200) }) }); S.hc[hcDay() + '_' + g] = next; setDoc('headcount/' + hcDay() + '_' + g, Object.assign(next, { by: S.uid, byName: S.meName || '', updatedAt: Date.now() })).catch(fail); }, 700); }
 });
 function pinSearch() { const a = $('#ciAnchor'); if (!a) return; const stick = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--stick')) || 0; const y = a.getBoundingClientRect().top + window.scrollY - stick; if (Math.abs(window.scrollY - y) > 4) window.scrollTo({ top: y, behavior: 'smooth' }); }
