@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-15f · check-in first, wellness lists fold';
+const APP_VERSION = '2026-11-15g · coordinators manage groups';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -933,6 +933,8 @@ const can = {
   reset: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveAny: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
+  // regenerate, rebalance, add or remove companies and groups, change who leads them
+  orgEdit: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   logistics: () => !!role() && role() !== 'wellness',
   wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness'].includes(role()),
   report: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'wellness'].includes(role()),
@@ -1647,7 +1649,7 @@ function checksList(w) {
 /* ---------- page: companies ---------- */
 PAGE_IMPL.companies = {
   frame() {
-    const adm = can.admin();
+    const adm = can.orgEdit();
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${esc(S.config.groupSize || 10)} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
     <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
@@ -1656,7 +1658,7 @@ PAGE_IMPL.companies = {
     ${can.reset() ? resetPanel() : ''}`;
   },
   update() {
-    const G = S.org.groups, C = S.org.companies, adm = can.admin();
+    const G = S.org.groups, C = S.org.companies, adm = can.orgEdit();
     $('#coLog').innerHTML = UI.genLog ? `<div class="log"><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
     const by = r => S.staffList.filter(s => s.role === r);
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
@@ -1687,7 +1689,7 @@ PAGE_IMPL.companies = {
   }
 };
 function grpBlock(g, mem) {
-  const adm = can.admin(), open = UI.open.has(g.id), size = +S.config.groupSize || 10;
+  const adm = can.orgEdit(), open = UI.open.has(g.id), size = +S.config.groupSize || 10;
   const cn = g.counselorId && S.staffMap[g.counselorId];
   const counsSel = adm ? `<select data-act="grpCoun" data-id="${g.id}" aria-label="Counselor for G${g.num}">${opt('', '— No counselor')}${S.staffList.filter(s => s.role === 'counselor' && (s.gender === g.gender || s.id === g.counselorId)).map(s => { const other = Object.values(S.org.groups).find(x => x.counselorId === s.id && x.id !== g.id); const a = staffAge(s, S.config); return opt(s.id, `${s.name}${a != null ? ' (' + a + ')' : ''}${other ? ' · G' + other.num : ''}${cPref(s, g.band, S.config) === 2 ? ' · other age pref' : ''}`, s.id === g.counselorId); }).join('')}</select>` : '';
   const coSel = adm ? `<select data-act="grpCo" data-id="${g.id}" aria-label="Company for G${g.num}">${opt('', '— No company')}${Object.values(S.org.companies).sort((a, b) => a.num - b.num).map(c => opt(c.id, `Company ${c.num} · ${BANDS[c.band]}${c.band !== g.band ? ' ⚠' : ''}`, c.id === g.companyId)).join('')}</select>` : '';
@@ -2337,7 +2339,7 @@ PAGE_IMPL.access = {
       <tr><td>Session Directing Couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
       <tr><td>Area Seventy</td><td>Every session</td><td>The same as the Session Directing Couple, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Head of Logistics</td><td>Every session</td><td>Everything logistics can see and do, in every session, plus splitting and reorganising sessions.</td></tr>
-      <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
+      <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, rebalance or regenerate groups and companies, add or remove companies, choose counselors and ACs, manage staff, logistics for everyone.</td></tr>
       <tr><td>Wellness coordinator</td><td>Whole session</td><td>Sees the Wellness page: every medical and dietary note for youth and staff, and the health concerns counselors report. Can view check-in and the tally, but checks nobody in and has no group.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
       <tr><td>Assistant coordinator</td><td>Their company</td><td>Check in, move participants inside their company, logistics for their company.</td></tr>
