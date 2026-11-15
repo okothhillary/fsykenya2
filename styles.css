@@ -534,3 +534,17 @@ tr.subtot td{background:var(--surface2);border-top:2px solid var(--line2)}
   .wl-t td.nil{display:none}
   .wl-t td[data-l]::before{content:attr(data-l);display:block;font-size:.7rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:6px}
 }
+
+/* foldable panels (wellness lists) */
+details.fold > summary{display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none}
+details.fold > summary::-webkit-details-marker{display:none}
+details.fold > summary h2{margin:0}
+details.fold > summary::after{content:'Show';margin-left:auto;font-size:.82rem;font-weight:800;color:var(--blue25);border:1.5px solid var(--line2);border-radius:999px;padding:5px 12px}
+details.fold[open] > summary::after{content:'Hide'}
+details.fold[open] > summary{margin-bottom:12px}
+.wl-tabs{flex-wrap:wrap;margin-bottom:10px}
+.kpi-btn{text-align:left;font:inherit;cursor:pointer;border:0}
+.kpi-btn small{display:block;margin-top:4px;font-size:.75rem;font-weight:700;opacity:.8}
+.kpi-btn:focus-visible{outline:3px solid var(--blue25);outline-offset:2px}
+details.fold>summary::before{display:none}
+details.fold{scroll-margin-top:96px}

@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-15e · wellness coordinators';
+const APP_VERSION = '2026-11-15f · check-in first, wellness lists fold';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -942,7 +942,6 @@ const can = {
   headcount: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
-  ['wellness', 'Wellness', () => can.wellness()],
   ['checkin', 'Check-in', () => can.checkin() || role() === 'wellness'],
   ['tally', 'Tally', () => !!role()],
   ['companies', 'Companies & groups', () => can.checkin()],
@@ -950,6 +949,7 @@ const PAGES = [
   ['logistics', 'Logistics', () => can.logistics()],
   ['headcount', 'Headcount', () => can.headcount()],
   ['staff', 'Staff', () => can.admin() || can.viewAll() || role() === 'coordinator'],
+  ['wellness', 'Wellness', () => can.wellness()],
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()],
   ['sessions', 'Sessions', () => can.split()]
@@ -960,7 +960,7 @@ function currentPage() {
   const h = (location.hash || '').slice(1);
   if (ok.includes(h)) return h;
   if (lgHash() && ok.includes('logistics')) return 'logistics';
-  return role() === 'logistics' ? 'logistics' : role() === 'wellness' ? 'wellness' : (ok.filter(k => k !== 'wellness')[0] || ok[0] || null);
+  return ok.includes('checkin') ? 'checkin' : ok[0] || null;
 }
 
 /* ---------- helpers ---------- */
@@ -1208,7 +1208,7 @@ const ICONS = {
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { wellness: ['wellness', 'checkin', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -1907,22 +1907,25 @@ async function updateReport(owner, id, patch) {
 }
 
 /* ---------- page: wellness ---------- */
+function wlOpen(id) { const o = UI.wlOpenSet || {}; return id in o ? o[id] : id === 'wl-rep'; }
 PAGE_IMPL.wellness = {
   frame() {
     return `<section class="pagehead"><div><p class="th">Wellness · whole session</p><h1>Health and wellbeing</h1><p class="note" style="margin:4px 0 0">Concerns reported by counselors, and every medical and dietary note for youth and staff. Notes such as "none" or "N/A" are left out.</p></div><div class="btnrow"><button class="btn" data-act="wlCsv">Export CSV</button></div></section>
     <div id="wlK" class="kpis"></div>
-    <section class="panel" id="wl-rep"><div class="panel-head"><h2>Reported concerns</h2><div class="chips" id="wlRepTabs"></div></div><div id="wlRep"></div></section>
-    <section class="panel" id="wl-youth"><div class="panel-head"><h2>Youth: medical and dietary</h2><div class="chips" id="wlYTabs"></div></div><input id="wlQ" type="search" placeholder="Search by name, unit or note" autocomplete="off" value="${esc(UI.wlQ || '')}" style="width:100%;margin-bottom:10px"><div id="wlYouth"></div></section>
-    <section class="panel" id="wl-staff"><div class="panel-head"><h2>Staff: medical and dietary</h2></div><div id="wlStaff"></div></section>`;
+    ${[['wl-rep', 'Reported concerns', 'wlRepN', `<div class="chips wl-tabs" id="wlRepTabs"></div><div id="wlRep"></div>`],
+      ['wl-youth', 'Youth: medical and dietary', 'wlYN', `<div class="chips wl-tabs" id="wlYTabs"></div><input id="wlQ" type="search" placeholder="Search by name, unit or note" autocomplete="off" value="${esc(UI.wlQ || '')}" style="width:100%;margin-bottom:10px"><div id="wlYouth"></div>`],
+      ['wl-staff', 'Staff: medical and dietary', 'wlSN', `<div id="wlStaff"></div>`]].map(([id, t, n, body]) => `<details class="panel fold" id="${id}" ${wlOpen(id) ? 'open' : ''}><summary><h2>${t}</h2><span class="chip" id="${n}"></span></summary><div class="fold-body">${body}</div></details>`).join('')}`;
   },
   update() {
     const R = allReports(), open = R.filter(r => r.status === 'open');
     const Y = registered().filter(p => p.medIssue || p.dietIssue);
     const ST = S.staffList.filter(x => !x.test && (x.diet || x.med));
-    $('#wlK').innerHTML = `<a class="kpi hero" href="#wl-rep" style="text-decoration:none"><span>Open concerns</span><b>${open.length}</b></a><div class="kpi"><span>Urgent and open</span><b>${open.filter(r => r.urgent).length}</b></div><div class="kpi"><span>Youth with medical notes</span><b>${Y.filter(p => p.medIssue).length}</b></div><div class="kpi"><span>Youth with dietary needs</span><b>${Y.filter(p => p.dietIssue).length}</b></div><div class="kpi"><span>Staff with notes</span><b>${ST.length}</b></div>`;
+    const kb = (v, cls, l, n) => `<button class="kpi kpi-btn ${cls}" data-act="wlGo" data-v="${v}"><span>${l}</span><b>${n}</b><small>Show list ›</small></button>`;
+    $('#wlK').innerHTML = kb('open', 'hero', 'Open concerns', open.length) + kb('urgent', '', 'Urgent and open', open.filter(r => r.urgent).length) + kb('med', '', 'Youth with medical notes', Y.filter(p => p.medIssue).length) + kb('diet', '', 'Youth with dietary needs', Y.filter(p => p.dietIssue).length) + kb('staff', '', 'Staff with notes', ST.length);
+    $('#wlRepN').textContent = `${open.length} open`; $('#wlYN').textContent = Y.length; $('#wlSN').textContent = ST.length;
     const rt = UI.wlRep || 'open';
-    $('#wlRepTabs').innerHTML = [['open', `Open · ${open.length}`], ['done', `Resolved · ${R.length - open.length}`], ['all', `All · ${R.length}`]].map(([v, l]) => `<button data-act="wlRep" data-v="${v}" aria-pressed="${rt === v}">${l}</button>`).join('');
-    const shown = R.filter(r => rt === 'all' || (rt === 'open' ? r.status === 'open' : r.status !== 'open'));
+    $('#wlRepTabs').innerHTML = [['open', `Open · ${open.length}`], ['urgent', `Urgent · ${open.filter(r => r.urgent).length}`], ['done', `Resolved · ${R.length - open.length}`], ['all', `All · ${R.length}`]].map(([v, l]) => `<button data-act="wlRep" data-v="${v}" aria-pressed="${rt === v}">${l}</button>`).join('');
+    const shown = R.filter(r => rt === 'all' || (rt === 'urgent' ? r.status === 'open' && r.urgent : rt === 'open' ? r.status === 'open' : r.status !== 'open'));
     $('#wlRep').innerHTML = shown.length ? `<div class="rep-list">${shown.map(repCard).join('')}</div>` : `<p class="note">${rt === 'open' ? 'No open concerns. Counselors report them from a participant\'s card or details.' : 'Nothing here yet.'}</p>`;
     const yt = UI.wlY || 'all', q = (UI.wlQ || '').toLowerCase().trim();
     $('#wlYTabs').innerHTML = [['all', `All · ${Y.length}`], ['med', `Medical · ${Y.filter(p => p.medIssue).length}`], ['diet', `Dietary · ${Y.filter(p => p.dietIssue).length}`], ['in', `Checked in · ${Y.filter(p => p.s === 'in').length}`]].map(([v, l]) => `<button data-act="wlY" data-v="${v}" aria-pressed="${yt === v}">${l}</button>`).join('');
@@ -2508,6 +2511,7 @@ document.addEventListener('click', async e => {
     case 'repNote': { const note = await askText('Add a follow-up', 'Follow-up note'); if (!note) break; await updateReport(id, v, { resNote: note, resAt: Date.now(), resBy: S.uid, resByName: S.meName || S.email }); toast('Saved'); break; }
     case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
     case 'wlRep': UI.wlRep = v; render(); break;
+    case 'wlGo': { const map = { open: ['wl-rep', () => UI.wlRep = 'open'], urgent: ['wl-rep', () => UI.wlRep = 'urgent'], med: ['wl-youth', () => { UI.wlY = 'med'; UI.wlMore = false; }], diet: ['wl-youth', () => { UI.wlY = 'diet'; UI.wlMore = false; }], staff: ['wl-staff', () => { }] }[v]; if (!map) break; map[1](); UI.wlOpenSet = Object.assign(UI.wlOpenSet || {}, { [map[0]]: true }); render(); const d = document.getElementById(map[0]); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } break; }
     case 'wlY': UI.wlY = v; UI.wlMore = false; render(); break;
     case 'wlMore': UI.wlMore = true; render(); break;
     case 'wlCsv': { const rows = [['Who', 'Name', 'Role or group', 'Unit', 'Stake', 'Medical', 'Dietary', 'Checked in']]; registered().filter(p => p.medIssue || p.dietIssue).forEach(p => rows.push(['Youth', p.name, p.group ? 'G' + p.group.num : '', p.unit, p.stake, p.medIssue || '', p.dietIssue || '', p.s === 'in' ? 'yes' : ''])); S.staffList.filter(x => !x.test && (x.med || x.diet)).forEach(x => rows.push(['Staff', x.name, ROLES[x.role] || x.role, x.unit || '', x.stake || '', x.med || '', x.diet || '', ''])); rows.push([]); rows.push(['Concern', 'Participant', 'Kind', 'Urgent', 'Status', 'Reported', 'By', 'Details', 'Follow-up']); allReports().forEach(r => rows.push(['', r.pname || '', repKind(r.kind), r.urgent ? 'yes' : '', r.status, fmtWhen(r.at), r.byName || '', r.text, r.resNote || ''])); exportCSV('fsy-wellness.csv', rows); break; }
@@ -2623,3 +2627,4 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mbg'))
 
 boot();
 document.addEventListener('toggle', e => { if (e.target && e.target.id === 'coChecks') UI.checksOpen = e.target.open; }, true);
+document.addEventListener('toggle', e => { const t = e.target; if (t && t.classList && t.classList.contains('fold') && /^wl-/.test(t.id)) UI.wlOpenSet = Object.assign(UI.wlOpenSet || {}, { [t.id]: t.open }); }, true);
