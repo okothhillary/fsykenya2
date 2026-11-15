@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-15b · groups follow counselors';
+const APP_VERSION = '2026-11-15c · checks, totals, staff T-shirts';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1576,12 +1576,21 @@ function pCard(p) {
 
 /* ---------- page: tally ---------- */
 PAGE_IMPL.tally = {
-  frame() { return `<section class="pagehead"><div><h1>Tally</h1><p class="note" style="margin:4px 0 0">Live counts for the session, each stake and each ward or branch. Tap a stake to see its units.</p></div><button class="btn" data-act="tallyCsv">Export CSV</button></section><div id="tK" class="kpis"></div><div class="grid2"><div class="panel"><h2>By age group and gender</h2><div id="tBG"></div></div><div class="panel"><h2>By company</h2><div id="tCo"></div></div></div><div class="panel"><h2>By stake, ward and branch</h2><div id="tSt"></div></div>`; },
+  frame() { return `<section class="pagehead"><div><h1>Tally</h1><p class="note" style="margin:4px 0 0">Live counts for the session, each stake and each ward or branch. Tap a stake to see its units.</p></div><button class="btn" data-act="tallyCsv">Export CSV</button></section><div id="tK" class="kpis"></div><div class="panel"><div class="panel-head"><h2>Everyone at the session</h2></div><div id="tAll"></div></div><div class="grid2"><div class="panel"><h2>By age group and gender</h2><div id="tBG"></div></div><div class="panel"><h2>By company</h2><div id="tCo"></div></div></div><div class="panel"><h2>By stake, ward and branch</h2><div id="tSt"></div></div>`; },
   update() {
     const P = S.P;
     const exp = p => p.elig && p.src !== 'walkin';
     const T = { exp: P.filter(exp).length, inn: P.filter(p => p.s === 'in').length, out: P.filter(p => p.s === 'out').length, arrived: P.filter(p => exp(p) && p.s).length, wk: P.filter(p => p.src === 'walkin' && p.s).length, exc: P.filter(p => !p.inc && p.s).length };
-    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
+    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin' && p.s)).length + S.staffList.filter(x => !x.test).length}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
+    const ST = S.staffList.filter(x => !x.test);
+    const gc = (list, g) => list.filter(x => x.gender === g).length;
+    const yp = P.filter(p => exp(p) || (p.src === 'walkin' && p.s));
+    const rowsAll = [['Participants expected', P.filter(exp)], ['Walk-ins checked in', P.filter(p => p.src === 'walkin' && p.s)]].map(([l, L]) => [l, gc(L, 'F'), gc(L, 'M'), L.length])
+      .concat(STAFF_ROLES.map(r => { const L = ST.filter(x => x.role === r); return [({ counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics' })[r], gc(L, 'F'), gc(L, 'M'), L.length]; }));
+    const stN = ST.length, allN = yp.length + stN;
+    $('#tAll').innerHTML = `<div class="tablewrap"><table><thead><tr><th></th><th class="n">Women</th><th class="n">Men</th><th class="n">Total</th></tr></thead><tbody>${rowsAll.map(([l, f, m, t], i) => `<tr${i === 2 ? ' class="divide"' : ''}><td>${esc(l)}</td><td class="n">${f}</td><td class="n">${m}</td><td class="n"><b>${t}</b></td></tr>`).join('')}
+      <tr class="subtot"><td><b>Youth</b></td><td class="n">${gc(yp, 'F')}</td><td class="n">${gc(yp, 'M')}</td><td class="n"><b>${yp.length}</b></td></tr><tr class="subtot"><td><b>Staff</b></td><td class="n">${gc(ST, 'F')}</td><td class="n">${gc(ST, 'M')}</td><td class="n"><b>${stN}</b></td></tr>
+      <tr class="total"><td>Everyone</td><td class="n">${gc(yp, 'F') + gc(ST, 'F')}</td><td class="n">${gc(yp, 'M') + gc(ST, 'M')}</td><td class="n">${allN}</td></tr></tbody></table></div><p class="note">Youth expected plus walk-ins, and every staff member on the Staff page (test staff left out). ${ST.filter(x => !x.gender).length ? `${ST.filter(x => !x.gender).length} staff with no gender are only in the totals.` : ''}</p>`;
     let bg = '<div class="tablewrap"><table><thead><tr><th></th><th class="n">Young women</th><th class="n">Young men</th><th class="n">Total</th></tr></thead><tbody>';
     for (const b of ['Y', 'O']) { const c = g => { const e = P.filter(p => exp(p) && p.band === b && (!g || p.gender === g)).length, i = P.filter(p => p.s === 'in' && p.band === b && (!g || p.gender === g)).length; return `<td class="n">${i} / ${e}</td>`; }; bg += `<tr><td>${BANDS[b]}</td>${c('F')}${c('M')}${c('')}</tr>`; }
     bg += `</tbody></table></div><p class="note">Checked in / expected.</p>`; $('#tBG').innerHTML = bg;
@@ -1601,13 +1610,27 @@ PAGE_IMPL.tally = {
   }
 };
 
+/* Repeated checks (one line per group) fold into a single line that opens to show them. */
+const CHECK_KINDS = [[/^Group \d+ has \d+ participants/, n => `${n} groups are over the group size`], [/^Group \d+ has no counselor/, n => `${n} groups have no counselor`], [/^Group \d+ is not in a company/, n => `${n} groups are not in a company`], [/^Company \d+ has no assistant/, n => `${n} companies have no assistant coordinator`], [/^Company \d+ does not have both/, n => `${n} companies do not have both young men and young women`]];
+function checksList(w) {
+  const li = ([lv, t]) => `<li><span class="chip ${lv}">${lv === 'bad' ? 'Fix' : 'Check'}</span><span>${esc(t)}</span></li>`;
+  const out = [], kinds = {};
+  w.forEach(x => { const k = CHECK_KINDS.findIndex(([re]) => re.test(x[1])); if (k < 0) out.push(['one', x]); else { if (!kinds[k]) { kinds[k] = []; out.push(['many', k]); } kinds[k].push(x); } });
+  return `<ul class="warnlist">${out.map(([t, x]) => {
+    if (t === 'one') return li(x);
+    const list = kinds[x]; if (list.length < 3) return list.map(li).join('');
+    const lv = list.some(y => y[0] === 'bad') ? 'bad' : 'warn';
+    return `<li class="wgroup"><details><summary><span class="chip ${lv}">${lv === 'bad' ? 'Fix' : 'Check'}</span><span>${esc(CHECK_KINDS[x][1](list.length))}</span></summary><ul class="warnlist sub">${list.map(li).join('')}</ul></details></li>`;
+  }).join('')}</ul>`;
+}
+
 /* ---------- page: companies ---------- */
 PAGE_IMPL.companies = {
   frame() {
     const adm = can.admin();
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${esc(S.config.groupSize || 10)} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
     <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
-    <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><div class="panel"><div class="panel-head"><h2>Checks</h2></div><div id="coWarn"></div></div></div>
+    <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
     <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '13–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div></div>
     <div id="coGrid" class="companies"></div>
     ${can.reset() ? resetPanel() : ''}`;
@@ -1622,7 +1645,8 @@ PAGE_IMPL.companies = {
       <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Assistant coordinators</div><div class="tier"><div class="node"><b class="num">${acs.length}</b><small class="muted">${Object.keys(C).length} companies · ${acs.filter(a => !acUsed.has(a.id)).length} spare</small></div><div class="node"><b class="num">${by('counselor').length}</b><small class="muted">counselors · ${Object.keys(G).length} groups</small></div></div></div>`;
     const w = validate(S.P, S.org, S.staffMap, S.config);
-    $('#coWarn').innerHTML = !Object.keys(G).length ? `<p class="note">No groups yet. ${adm ? 'Upload participants, add counselors and assistant coordinators on the Staff tab (or generate test staff), then press Regenerate all.' : 'The registration admin will generate them.'}</p>` : w.length ? `<ul class="warnlist">${w.slice(0, UI.allWarn ? 999 : 8).map(([lv, t]) => `<li><span class="chip ${lv}">${lv === 'bad' ? 'Fix' : 'Check'}</span><span>${esc(t)}</span></li>`).join('')}</ul>${w.length > 8 && !UI.allWarn ? `<button class="btn small" data-act="allWarn" style="margin-top:8px">Show all ${w.length}</button>` : ''}` : '<p><span class="chip good">All good</span> Every group and company follows the rules.</p>';
+    $('#coWarnSum').innerHTML = Object.keys(G).length ? (w.length ? `${w.filter(x => x[0] === 'bad').length ? `<span class="chip bad">${w.filter(x => x[0] === 'bad').length} to fix</span>` : ''}${w.filter(x => x[0] !== 'bad').length ? `<span class="chip warn">${w.filter(x => x[0] !== 'bad').length} to check</span>` : ''}` : '<span class="chip good">All good</span>') : '';
+    $('#coWarn').innerHTML = !Object.keys(G).length ? `<p class="note">No groups yet. ${adm ? 'Upload participants, add counselors and assistant coordinators on the Staff tab (or generate test staff), then press Regenerate all.' : 'The registration admin will generate them.'}</p>` : w.length ? checksList(w) : '<p><span class="chip good">All good</span> Every group and company follows the rules.</p>';
     const mem = {}; for (const id in G) mem[id] = []; S.P.forEach(p => { if (p.g && mem[p.g]) mem[p.g].push(p); });
     let comps = Object.values(C).sort((a, b) => a.num - b.num);
     const lim = ['counselor', 'ac'].includes(role()); if (lim) { const ids = scopeCompanyIds(role(), myStaffId()); comps = comps.filter(c => ids.includes(c.id)); }
@@ -1727,7 +1751,8 @@ PAGE_IMPL.logistics = {
   <div id="lgK" class="kpis"></div>
   <section class="panel" id="sec-med"><div class="panel-head"><h2>Medical</h2><button class="btn small" data-act="lgCsv" data-v="med">Export CSV</button></div><div id="lgMed"></div></section>
   <section class="panel" id="sec-diet"><div class="panel-head"><h2>Dietary</h2><button class="btn small" data-act="lgCsv" data-v="diet">Export CSV</button></div><div id="lgDiet"></div></section>
-  <section class="panel" id="sec-tee"><div class="panel-head"><h2>T-shirts</h2><div class="btnrow"><button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button></div></div><div id="lgSize"></div></section>`; },
+  <section class="panel" id="sec-tee"><div class="panel-head"><h2>T-shirts</h2><div class="btnrow"><button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button></div></div><div id="lgSize"></div></section>
+  ${['counselor', 'ac'].includes(role()) ? '' : `<section class="panel" id="sec-steee"><div class="panel-head"><h2>Staff T-shirts</h2><button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button></div><div id="lgStaffSize"></div></section>`}`; },
   scope() { return (UI.logScope === 'in' ? S.P.filter(p => p.s === 'in') : registered()).filter(seesPrivate); },
   update() {
     const L = this.scope(), H = lgHash();
@@ -1749,6 +1774,7 @@ PAGE_IMPL.logistics = {
     $('#lgMed').innerHTML = block(med, 'medIssue', MED_CATS, 'mo', 'med');
     $('#lgDiet').innerHTML = block(diet, 'dietIssue', DIET_CATS, 'do', 'diet');
     $('#lgSize').innerHTML = teeBlock(L, H);
+    if ($('#lgStaffSize')) $('#lgStaffSize').innerHTML = staffTeeBlock(L);
     if (H && UI.lgLast !== H) { const el = document.getElementById(H.startsWith('tee') ? 'tee-list' : H.split('-')[0] + '-list'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     UI.lgLast = H;
   }
@@ -1772,6 +1798,40 @@ function teeBlock(L, H) {
     const label = sel === 'blank' ? 'Everyone with a blank size' : CELL_NAME(sel[0] === 'x' ? null : sel[0].toUpperCase(), sel[1] === 'x' ? '' : sel[1].toUpperCase()) + ' with a blank size';
     h += `<div class="filterbar" id="tee-list"><b>${esc(label)} · ${list.length}</b><a href="#logistics" class="btn small">Hide list</a></div><div class="tablewrap"><table><thead><tr><th>Participant</th><th class="n">Age</th><th>Estimated size</th><th>Unit</th><th>Contact</th>${can.admin() ? '<th></th>' : ''}</tr></thead><tbody>${list.map(p => `<tr><td><a href="#" data-act="detail" data-id="${esc(p.id)}"><b>${esc(p.name)}</b></a> ${chipG(p.gender)}</td><td class="n">${p.age ?? '?'}</td><td class="est"><b>${esc(SIZE_LABEL[R.perPerson[p.id]] || R.perPerson[p.id])}</b></td><td>${esc(p.unit)}<br><small class="muted">${esc(p.stake)}</small></td><td>${esc(p.c1n || '')}<br><small class="muted">${esc(p.c1p || p.phone || '')}</small></td>${can.admin() ? `<td><button class="btn small" data-act="setTee" data-v="${esc(R.perPerson[p.id])}" data-id="${esc(p.id)}">Use this size</button></td>` : ''}</tr>`).join('')}</tbody></table></div>`;
   } else h += `<p style="margin:10px 0 0"><a href="#tee-blank">See everyone with a blank size (${R.blankN})</a></p>`;
+  return h;
+}
+
+/** Staff sizes. Blanks get a size in the proportions of staff of the same gender who gave one. */
+function staffTee() {
+  const ST = S.staffList.filter(x => !x.test);
+  const est = {}, perPerson = {};
+  for (const g of ['F', 'M', '']) {
+    const known = ST.filter(x => x.tshirt && (g ? x.gender === g : true)), blanks = ST.filter(x => !x.tshirt && (x.gender || '') === g);
+    if (!blanks.length) continue;
+    const w = {}; (known.length ? known : ST.filter(x => x.tshirt)).forEach(x => w[x.tshirt] = (w[x.tshirt] || 0) + 1);
+    const alloc = largestRemainder(Object.keys(w).length ? w : { L: 1 }, blanks.length);
+    const bag = []; Object.keys(alloc).sort((a, b) => sizeRank(a) - sizeRank(b)).forEach(k => { for (let i = 0; i < alloc[k]; i++) bag.push(k); });
+    blanks.sort((a, b) => a.name.localeCompare(b.name)).forEach((x, i) => { perPerson[x.id] = bag[i]; est[bag[i]] = (est[bag[i]] || 0) + 1; });
+  }
+  return { ST, est, perPerson };
+}
+function staffTeeBlock(L) {
+  const { ST, est, perPerson } = staffTee();
+  if (!ST.length) return '<p class="note">Staff sizes appear here once staff are added on the Staff page.</p>';
+  const R = teeRedistribute(L);
+  const giv = {}; ST.forEach(x => { if (x.tshirt) giv[x.tshirt] = (giv[x.tshirt] || 0) + 1; });
+  const sizes = sizesIn(giv, est, R.totals);
+  const g = (s, gen) => ST.filter(x => x.tshirt === s && x.gender === gen).length;
+  let h = `<p class="th" style="margin:0 0 6px">Staff sizes</p><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Women given</th><th class="n">Men given</th><th class="n">Given</th><th class="n">Blanks, estimated</th><th class="n">Staff to order</th></tr></thead><tbody>`;
+  let tg = 0, te = 0;
+  for (const s of sizes) { const a = giv[s] || 0, b = est[s] || 0; if (!a && !b) continue; tg += a; te += b; h += `<tr><td><b>${esc(SIZE_LABEL[s] || s)}</b></td><td class="n">${g(s, 'F')}</td><td class="n">${g(s, 'M')}</td><td class="n">${a}</td><td class="n est">+${b}</td><td class="n"><b>${a + b}</b></td></tr>`; }
+  h += `<tr><td><b>All</b></td><td class="n">${ST.filter(x => x.tshirt && x.gender === 'F').length}</td><td class="n">${ST.filter(x => x.tshirt && x.gender === 'M').length}</td><td class="n">${tg}</td><td class="n est">+${te}</td><td class="n"><b>${tg + te}</b></td></tr></tbody></table></div>`;
+  const blanks = ST.filter(x => !x.tshirt);
+  h += `<p class="note">${blanks.length ? `${blanks.length} staff gave no size (${blanks.slice(0, 6).map(x => esc(x.name)).join(', ')}${blanks.length > 6 ? ' and ' + (blanks.length - 6) + ' more' : ''}). Each blank is estimated from staff of the same gender who did give a size.` : 'Every staff member gave a size.'} Test staff are left out.</p>`;
+  h += `<p class="th" style="margin:18px 0 6px">Full order: youth and staff</p><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Youth</th><th class="n">Staff</th><th class="n">Total to order</th></tr></thead><tbody>`;
+  let ty = 0, ts = 0;
+  for (const s of sizes) { const y = R.totals[s] ? R.totals[s].given + R.totals[s].est : 0, st = (giv[s] || 0) + (est[s] || 0); if (!y && !st) continue; ty += y; ts += st; h += `<tr><td><b>${esc(SIZE_LABEL[s] || s)}</b></td><td class="n">${y}</td><td class="n">${st}</td><td class="n"><b>${y + st}</b></td></tr>`; }
+  h += `<tr class="total"><td>All</td><td class="n">${ty}</td><td class="n">${ts}</td><td class="n">${ty + ts}</td></tr></tbody></table></div><p class="note">Youth follow the "${UI.logScope === 'in' ? 'Checked in now' : 'Everyone registered'}" choice at the top of the page.</p>`;
   return h;
 }
 
@@ -2295,7 +2355,10 @@ document.addEventListener('click', async e => {
     case 'rosterCsv': { const rows = [['Company', 'Age group', 'AC', 'Group', 'Counselor', 'Participant', 'Gender', 'Age', 'Ward/branch', 'Stake', 'T-shirt', 'Status']]; S.P.filter(p => p.group).sort((a, b) => (a.company ? a.company.num : 999) - (b.company ? b.company.num : 999) || a.group.num - b.group.num || a.name.localeCompare(b.name)).forEach(p => rows.push([p.company ? p.company.num : '', BANDS[p.group.band], p.company ? sName(p.company.acId) : '', 'G' + p.group.num, p.counselor ? p.counselor.name : '', p.name, p.gender, p.age, p.unit, p.stake, p.tshirt, p.s || 'not arrived'])); exportCSV('fsy-rosters.csv', rows); break; }
     case 'tallyCsv': { const rows = [['Stake', 'Ward/branch', 'Expected', 'Checked in', 'Checked out']]; const m = {}; S.P.forEach(p => { const k = p.stake + '|' + p.unit; const x = m[k] = m[k] || [p.stake, p.unit, 0, 0, 0]; if (p.elig && p.src !== 'walkin') x[2]++; if (p.s === 'in') x[3]++; if (p.s === 'out') x[4]++; }); Object.values(m).sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])).forEach(r => rows.push(r)); exportCSV('fsy-tally.csv', rows); break; }
     case 'logScope': UI.logScope = v; UI.frameKey = ''; render(); break;
-    case 'lgCsv': { const L = PAGE_IMPL.logistics.scope(); let rows; if (v === 'size') { const R = teeRedistribute(L); rows = [['Size', 'Given', 'Blanks estimated', 'To order']]; sizesIn(R.totals).forEach(s => rows.push([SIZE_LABEL[s] || s, R.totals[s].given, R.totals[s].est, R.totals[s].given + R.totals[s].est])); } else if (v === 'blank') { const R = teeRedistribute(L); rows = [['Name', 'Age', 'Gender', 'Age group', 'Estimated size', 'Ward/branch', 'Stake', 'Contact', 'Contact phone']]; L.filter(p => !p.tshirt).forEach(p => rows.push([p.name, p.age, p.gender, p.band ? BANDS[p.band] : '', R.perPerson[p.id], p.unit, p.stake, p.c1n, p.c1p])); } else { const f = v === 'med' ? 'medIssue' : 'dietIssue', C = v === 'med' ? MED_CATS : DIET_CATS; rows = [['Name', 'Age', 'Gender', 'Note', 'Categories', 'Group', 'Counselor', 'Company', 'Ward/branch', 'Stake', 'Status', 'Contact', 'Contact phone']]; L.filter(p => p[f]).forEach(p => rows.push([p.name, p.age, p.gender, p[f], cats(p[f], C).join('; '), p.group ? 'G' + p.group.num : '', p.counselor ? p.counselor.name : '', p.company ? p.company.num : '', p.unit, p.stake, p.s || 'not arrived', p.c1n, p.c1p])); } exportCSV(`fsy-${({ med: 'medical', diet: 'dietary', size: 'tshirt-order', blank: 'tshirt-blanks' })[v]}.csv`, rows); break; }
+    case 'lgCsv': { const L = PAGE_IMPL.logistics.scope(); let rows; if (v === 'staffsize') { const { ST, est, perPerson } = staffTee(); const R = teeRedistribute(L); const giv = {}; ST.forEach(x => { if (x.tshirt) giv[x.tshirt] = (giv[x.tshirt] || 0) + 1; });
+      rows = [['Size', 'Youth to order', 'Staff given', 'Staff blanks estimated', 'Staff to order', 'Total to order']]; sizesIn(giv, est, R.totals).forEach(s => { const y = R.totals[s] ? R.totals[s].given + R.totals[s].est : 0, a = giv[s] || 0, b = est[s] || 0; if (y || a || b) rows.push([SIZE_LABEL[s] || s, y, a, b, a + b, y + a + b]); });
+      rows.push([]); rows.push(['Staff member', 'Role', 'Gender', 'Size given', 'Estimated size', 'Ward/branch', 'Stake']); ST.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(x => rows.push([x.name, ROLES[x.role] || x.role, x.gender || '', x.tshirt || '', x.tshirt ? '' : perPerson[x.id] || '', x.unit || '', x.stake || '']));
+      exportCSV('fsy-tshirts-staff-and-full-order.csv', rows); break; } if (v === 'size') { const R = teeRedistribute(L); rows = [['Size', 'Given', 'Blanks estimated', 'To order']]; sizesIn(R.totals).forEach(s => rows.push([SIZE_LABEL[s] || s, R.totals[s].given, R.totals[s].est, R.totals[s].given + R.totals[s].est])); } else if (v === 'blank') { const R = teeRedistribute(L); rows = [['Name', 'Age', 'Gender', 'Age group', 'Estimated size', 'Ward/branch', 'Stake', 'Contact', 'Contact phone']]; L.filter(p => !p.tshirt).forEach(p => rows.push([p.name, p.age, p.gender, p.band ? BANDS[p.band] : '', R.perPerson[p.id], p.unit, p.stake, p.c1n, p.c1p])); } else { const f = v === 'med' ? 'medIssue' : 'dietIssue', C = v === 'med' ? MED_CATS : DIET_CATS; rows = [['Name', 'Age', 'Gender', 'Note', 'Categories', 'Group', 'Counselor', 'Company', 'Ward/branch', 'Stake', 'Status', 'Contact', 'Contact phone']]; L.filter(p => p[f]).forEach(p => rows.push([p.name, p.age, p.gender, p[f], cats(p[f], C).join('; '), p.group ? 'G' + p.group.num : '', p.counselor ? p.counselor.name : '', p.company ? p.company.num : '', p.unit, p.stake, p.s || 'not arrived', p.c1n, p.c1p])); } exportCSV(`fsy-${({ med: 'medical', diet: 'dietary', size: 'tshirt-order', blank: 'tshirt-blanks' })[v]}.csv`, rows); break; }
     case 'setTee': { const b = bucketOf(id); S.roster = Object.assign({}, S.roster, { [b]: Object.assign({}, S.roster[b], { [id]: Object.assign({}, S.roster[b][id], { tshirt: v }) }) }); recompute(true); await upd('roster/' + b, { p: { [id]: { tshirt: v } } }, true).catch(fail); toast('Size set to ' + (SIZE_LABEL[v] || v)); break; }
     case 'notIssue': setState(id, { [v]: 'n' }); toast('Removed from the count'); break;
     case 'flagIssue': { const p = S.P.find(x => x.id === id); const on = v === 'mo' ? !!p.medIssue : !!p.dietIssue; await setState(id, { [v]: on ? 'n' : 'y' }); openDetail(id); break; }
@@ -2449,3 +2512,4 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mbg'))
 
 
 boot();
+document.addEventListener('toggle', e => { if (e.target && e.target.id === 'coChecks') UI.checksOpen = e.target.open; }, true);

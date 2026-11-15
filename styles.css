@@ -490,3 +490,20 @@ tr.un-h td{background:var(--surface2);font-weight:800;color:var(--ink);border-to
 }
 .vh{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 #sfPanel .panel-head label.btn{cursor:pointer}
+
+/* collapsible checks */
+details.checks > summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;list-style:none}
+details.checks > summary::-webkit-details-marker{display:none}
+details.checks > summary h2{margin:0}
+details.checks[open] > summary{margin-bottom:12px}
+.checks-sum{display:flex;gap:6px;flex-wrap:wrap}
+.warnlist li.wgroup{display:block}
+.warnlist li.wgroup > details > summary{display:flex;align-items:center;gap:10px;cursor:pointer;list-style:none}
+.warnlist li.wgroup > details > summary::-webkit-details-marker{display:none}
+.warnlist li.wgroup > details > summary::after{content:'Show';margin-left:auto;font-size:.8rem;font-weight:700;color:var(--blue25)}
+.warnlist li.wgroup > details[open] > summary::after{content:'Hide'}
+.warnlist.sub{display:block;margin:8px 0 4px 14px;padding-left:10px;border-left:2px solid var(--line);max-height:320px;overflow:auto}
+tr.divide td{border-top:2px solid var(--line2)}
+tr.subtot td{background:var(--surface2);border-top:2px solid var(--line2)}
+
+.warnlist.sub li{margin:0 0 6px}
