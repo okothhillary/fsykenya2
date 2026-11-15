@@ -1,3 +1,5 @@
+/* FSY Kenya 2nd 2026 Check-in. Firebase settings and owner emails live in config.js. */
+/* ---------- Firebase layer: the small database/user/download interface the app uses ---------- */
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
@@ -47,7 +49,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-15c · checks, totals, staff T-shirts';
+const APP_VERSION = '2026-11-15d · request emails';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1835,6 +1837,14 @@ function staffTeeBlock(L) {
   return h;
 }
 
+/** Optional email alert for access requests: set NOTIFY_URL in config.js to a Google Apps Script web app (see notify.gs). */
+function notifyRequest(note) {
+  const url = typeof NOTIFY_URL !== 'undefined' ? NOTIFY_URL : (window.NOTIFY_URL || '');
+  if (!url) return;
+  const body = JSON.stringify({ type: 'access-request', name: S.meName || '', email: S.email || '', note: String(note || '').slice(0, 200), session: sessName(S.sid), site: location.origin + location.pathname, at: new Date().toISOString() });
+  fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body }).catch(() => { });
+}
+
 /* ---------- page: staff ---------- */
 PAGE_IMPL.staff = {
   frame() {
@@ -2324,7 +2334,7 @@ document.addEventListener('click', async e => {
     case 'acct': openAccount(); break;
     case 'toggleArea': { const set = UI[t.dataset.set] || (UI[t.dataset.set] = new Set()); set.has(v) ? set.delete(v) : set.add(v); render(); break; }
     case 'close': closeModal(); break;
-    case 'request': { const note = ($('#reqNote') || {}).value || ''; try { await S.db.doc('requests/' + S.uid).set({ at: now, note: note.slice(0, 200), email: S.email, name: S.meName }); toast('Request sent'); UI.frameKey = ''; } catch (err) { toast('Could not send the request. Try again.', true); } break; }
+    case 'request': { const note = ($('#reqNote') || {}).value || ''; try { await S.db.doc('requests/' + S.uid).set({ at: now, note: note.slice(0, 200), email: S.email, name: S.meName }); notifyRequest(note); toast('Request sent'); UI.frameKey = ''; } catch (err) { toast('Could not send the request. Try again.', true); } break; }
     case 'signIn': await signIn(); break;
     case 'signOut': closeModal(); await FB.auth.signOut(); break;
     case 'ciF': UI.filter = v; UI.limit = 40; UI.frameKey = ''; render(); break;
