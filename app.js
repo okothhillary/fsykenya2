@@ -242,6 +242,247 @@ function issueText(raw) {
 function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 function cats(text, list) { if (!text) return []; const s = text.toLowerCase(); const r = list.filter(([, re]) => re.test(s)).map(([n]) => n); return r.length ? r : ['Other']; }
 
+/* ---- Staff sign-up forms (Google Forms and similar) ----
+   Different from the portal export: one name column, day/month/year birthdays, free-typed ward or
+   branch, people who submitted more than once. Everything here is pure so it can be tested alone. */
+
+// Units that are not in the participant export. Staff can come from stakes that send no youth.
+const BUILTIN_UNITS = [
+  ['Nairobi Kenya South Stake', 'Nairobi 2nd Ward (Buruburu)', ['buruburu', 'buru buru']]
+];
+const SF_FIELDS = [
+  ['ts', /timestamp|submitted|submission/],
+  ['email', /e-?mail/],
+  ['bday', /birth|\bdob\b/],
+  ['phone', /phone|mobile|tel(e|\b)|contact/],
+  ['stake', /stake|district/],
+  ['unit', /ward|branch|unit|congregation/],
+  ['tshirt', /shirt|size/],
+  ['gender', /gender|\bsex\b/],
+  ['diet', /food|allerg|diet/],
+  ['med', /medic|health/],
+  ['role', /\brole\b|\btype\b|position|calling|assignment|category/],
+  ['name', /name/]
+];
+function sfMap(headers) {
+  const map = {}, used = new Set();
+  headers.forEach((h, i) => { const n = clean(h).toLowerCase(); for (const [k, re] of SF_FIELDS) if (!used.has(k) && re.test(n)) { map[i] = k; used.add(k); return; } });
+  return map;
+}
+function sfName(s) {
+  s = clean(s).replace(/([A-Za-z]{2,})\.(?=\s|[A-Za-z])/g, '$1 ').replace(/\b([A-Za-z])\.\s*/g, '$1. ').replace(/\s+/g, ' ').trim().replace(/[.,]+$/, '');
+  const c = s.match(/^([^,]+),\s*(.+)$/); // "Kadenge, Sammy Kadenge"
+  if (c) s = c[2].toLowerCase().includes(c[1].toLowerCase().trim()) ? c[2] : c[2] + ' ' + c[1];
+  return s.split(' ').filter(Boolean).map(w => (w === w.toUpperCase() || w === w.toLowerCase()) && w.length > 1 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w[0].toUpperCase() + w.slice(1)).join(' ');
+}
+function nameTokens(s) { return uniq(String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(t => t.length >= 2)).sort(); }
+function sfPhone(s) {
+  const first = clean(s).split(/[\/,;]|\bor\b/)[0]; let d = first.replace(/\D/g, '').replace(/^0+(?=254)/, '');
+  if (/^254\d{9}$/.test(d)) d = '0' + d.slice(3);
+  if (/^[17]\d{8}$/.test(d)) d = '0' + d;
+  return d;
+}
+function sfEmail(s) {
+  let e = clean(s).toLowerCase().replace(/\s/g, '');
+  const parts = e.split('@'); if (parts.length > 2) e = parts[0] + '@' + parts[1];
+  return e;
+}
+const okEmail = e => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(e);
+const okPhone = p => /^0[17]\d{8}$/.test(p);
+function sfStamp(s) { // "12/11/2026 12:59:33" -> sortable number
+  const m = clean(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+  const d = Date.parse(s); return isNaN(d) ? 0 : d;
+}
+const DIET_NONE = /^(no+|non|none|nil+|nll|nul+|null|n ?\/? ?[al]|not ?applicable|nothing|no ?one|no ?body|0|-+|x|no ?thing)$/;
+function sfDiet(raw) {
+  let s = clean(raw).toLowerCase().replace(/[’']/g, '').replace(/[.,;!]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  s = s.replace(/\b(i (dont|do not|dnt) have any|i have no|i am not allergic to any|im not allergic to any|not allergic to any|no any|no known|no)\s+(food\s+)?(allergies|allergy|alleries|allergic|alergies|alergy|allegies|food)\b( \w+)?/g, ' ')
+    .replace(/\b(none|nil+|n\/a|not applicable)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s || DIET_NONE.test(s)) return '';
+  return clean(raw).replace(/[.,\s]+$/, '');
+}
+function sfRow(o, refDate) {
+  const issues = [];
+  const name = sfName(o.name);
+  let bday = parseDate(o.bday);
+  const rawY = (clean(o.bday).match(/(\d+)\s*$/) || [])[1] || '';
+  if (bday && rawY && !/^(19|20)\d\d$/.test(rawY)) issues.push(`Birth year written as "${rawY}", read as ${bday.slice(0, 4)}`);
+  const age = bday ? ageOn(bday, refDate) : null;
+  if (o.bday && (!bday || age == null || age < 16 || age > 80)) { issues.push(`Birthday "${clean(o.bday)}" is not possible`); bday = ''; }
+  else if (!o.bday) issues.push('No birthday');
+  const gRaw = clean(o.gender); const gender = normGender(gRaw);
+  if (!gender) issues.push(gRaw ? `Gender "${gRaw}" is unclear` : 'No gender');
+  const email = sfEmail(o.email); if (email && !okEmail(email)) issues.push(`Email "${email}" looks wrong`);
+  const phone = sfPhone(o.phone); if (o.phone && !okPhone(phone)) issues.push(`Phone "${clean(o.phone)}" looks wrong`);
+  return {
+    name, toks: nameTokens(name), bday, gender, email: okEmail(email) ? email : '', emailRaw: email, phone, phoneOk: okPhone(phone),
+    unitRaw: clean(o.unit), stakeRaw: clean(o.stake), tshirt: normSize(o.tshirt), diet: sfDiet(o.diet), dietRaw: clean(o.diet),
+    med: clean(o.med), role: normType(o.role), ts: sfStamp(o.ts), issues
+  };
+}
+/** Same person? Shared contact details only count when the names also overlap, because
+    families sometimes share one phone. */
+function samePerson(a, b) {
+  const shared = a.toks.filter(t => b.toks.includes(t)).length;
+  if (!shared) return false;
+  if (a.email && a.email === b.email) return true;
+  if (a.phoneOk && a.phone === b.phone) return true;
+  const small = Math.min(a.toks.length, b.toks.length);
+  const nameSame = shared === small && shared >= 2;
+  if (nameSame && (a.bday && a.bday === b.bday)) return true;
+  const uc = x => x.uc != null ? x.uc : (x.uc = unitCore(x.unitRaw).core);
+  if (nameSame && a.toks.length === b.toks.length && uc(a) && uc(a) === uc(b)) return true;
+  return false;
+}
+/** Merge several submissions from one person: newest valid answer wins; food notes are all kept. */
+function mergeSubs(list) {
+  list = list.slice().sort((a, b) => a.ts - b.ts || a.row - b.row);
+  const latest = k => { for (let i = list.length - 1; i >= 0; i--) if (list[i][k]) return list[i][k]; return ''; };
+  const m = Object.assign({}, list[list.length - 1]);
+  for (const k of ['bday', 'gender', 'email', 'tshirt', 'unitRaw', 'stakeRaw', 'med', 'role']) m[k] = latest(k);
+  const ph = list.filter(x => x.phoneOk); m.phone = ph.length ? ph[ph.length - 1].phone : m.phone; m.phoneOk = !!ph.length;
+  m.name = list.map(x => x.name).reduce((best, n) => nameTokens(n).length > nameTokens(best).length ? n : best, m.name);
+  m.toks = nameTokens(m.name);
+  const diets = uniq(list.map(x => x.diet).filter(Boolean)); m.diet = diets.join(' / ');
+  // problems that the merged answer still has
+  const lastIssue = re => { for (let i = list.length - 1; i >= 0; i--) { const t = list[i].issues.find(x => re.test(x)); if (t) return t; } return null; };
+  m.issues = [];
+  if (m.bday) { const src = list.slice().reverse().find(x => x.bday === m.bday); (src ? src.issues.filter(t => /^Birth year/.test(t)) : []).forEach(t => m.issues.push(t)); }
+  else m.issues.push(lastIssue(/^Birthday|^No birthday/) || 'No birthday');
+  if (!m.gender) m.issues.push(lastIssue(/Gender|No gender/) || 'No gender');
+  if (!m.email) { const t = lastIssue(/^Email/); if (t) m.issues.push(t); }
+  if (!m.phoneOk) { const t = lastIssue(/^Phone/); if (t) m.issues.push(t); }
+  if (list.length > 1) {
+    const diff = ['tshirt', 'unitRaw', 'bday'].filter(k => uniq(list.map(x => k === 'unitRaw' ? unitCore(x[k]).core : x[k]).filter(Boolean)).length > 1);
+    m.dupNote = `${list.length} submissions` + (diff.length ? ` (answers differed: ${diff.map(k => ({ tshirt: 'T-shirt', unitRaw: 'ward/branch', bday: 'birthday' })[k]).join(', ')}; newest kept)` : '');
+    if (diets.length > 1 || (diets.length && list.some(x => !x.diet && x.dietRaw))) m.issues.push('Food answers differ between submissions: ' + list.map(x => x.dietRaw || '(blank)').join(' → '));
+  }
+  m.subs = list.length;
+  return m;
+}
+function dedupeSubs(rows) {
+  const parent = rows.map((_, i) => i); const find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+  for (let i = 0; i < rows.length; i++) for (let j = i + 1; j < rows.length; j++) if (samePerson(rows[i], rows[j])) parent[find(j)] = find(i);
+  const g = {}; rows.forEach((r, i) => (g[find(i)] = g[find(i)] || []).push(r));
+  return Object.values(g).map(mergeSubs);
+}
+
+/* ---- Matching typed ward/branch names to the real unit and its stake or district ---- */
+const UNIT_STOP = new Set(['ward', 'wards', 'branch', 'branches', 'br', 'brnch', 'church', 'lds', 'the', 'unit', 'congregation', 'of', 'in', 'kenya']);
+function unitCore(s) {
+  s = String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[’'`]/g, '');
+  const hint = ((s.match(/\(([^)]*)\)/) || [])[1] || '').replace(/[^a-z0-9 ]/g, ' ').trim();
+  s = s.replace(/\([^)]*\)/g, ' ').replace(/\bmt\b\.?|\bmt\./g, 'mountain ').replace(/\bmtn\b/g, 'mountain');
+  s = s.replace(/[^a-z0-9]+/g, ' ').replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2');
+  const ORD = { first: '1', '1st': '1', one: '1', second: '2', '2nd': '2', two: '2', third: '3', '3rd': '3', three: '3' };
+  let t = s.split(' ').filter(Boolean);
+  // "1 st" / "2 nd" after splitting digits from letters
+  t = t.reduce((a, w) => { if (/^(st|nd|rd|th)$/.test(w) && /^\d+$/.test(a[a.length - 1] || '')) return a; a.push(ORD[w] || w); return a; }, []);
+  t = t.filter(w => !UNIT_STOP.has(w));
+  return { core: t.join(' '), toks: t, hint };
+}
+function editDist(a, b) { // Damerau (optimal string alignment)
+  const d = []; for (let i = 0; i <= a.length; i++) { d[i] = [i]; } for (let j = 0; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+}
+/** entries: [[stake, unit]], aliases: {core: 'stake|unit'} */
+function unitDirectory(entries, aliases) {
+  const seen = {}, list = [];
+  const add = (stake, unit) => { stake = clean(stake); unit = clean(unit); if (!stake || !unit) return; const k = stake + '|' + unit; if (seen[k]) return; seen[k] = 1; const c = unitCore(unit); list.push({ stake, unit, key: k, core: c.core, toks: c.toks, stakeToks: unitCore(stake).toks }); };
+  entries.forEach(([s, u]) => add(s, u));
+  const al = {};
+  BUILTIN_UNITS.forEach(([s, u, extra]) => { add(s, u); extra.forEach(x => al[unitCore(x).core] = s + '|' + u); });
+  Object.assign(al, aliases || {});
+  for (const k in al) { const [s, u] = al[k].split('|'); add(s, u); }
+  const vocab = new Set(list.flatMap(e => e.toks));
+  const byKey = {}; list.forEach(e => byKey[e.key] = e);
+  return { list, vocab, aliases: al, byKey };
+}
+/** -> { status: 'ok'|'fixed'|'choose'|'unknown', stake, unit, options:[key], why } */
+function matchUnit(raw, stakeRaw, dir) {
+  const c = unitCore(raw); if (!c.core) return { status: 'unknown', stake: '', unit: '', options: [], why: 'No ward or branch given' };
+  const fromKey = (k, status, why) => { const e = dir.byKey[k]; return { status, stake: e.stake, unit: e.unit, options: [k], why }; };
+  if (dir.aliases[c.core] && dir.byKey[dir.aliases[c.core]]) return fromKey(dir.aliases[c.core], 'ok', 'Saved match');
+  let fixed = false;
+  const toks = c.toks.map(t => {
+    if (dir.vocab.has(t) || /\d/.test(t) || t.length < 4) return t;
+    let best = null, bd = 99, tie = false;
+    for (const v of dir.vocab) { if (/\d/.test(v)) continue; const d = editDist(t, v); if (d < bd) { bd = d; best = v; tie = false; } else if (d === bd) tie = true; }
+    if (best && !tie && bd <= (t.length >= 7 ? 2 : 1)) { fixed = true; return best; }
+    return t;
+  });
+  const core = toks.join(' '), nums = toks.filter(t => /^\d+$/.test(t));
+  if (dir.aliases[core] && dir.byKey[dir.aliases[core]]) return fromKey(dir.aliases[core], fixed ? 'fixed' : 'ok', 'Saved match');
+  let cands = dir.list.filter(e => e.core === core);
+  let how = 'exact';
+  if (!cands.length) {
+    cands = dir.list.filter(e => toks.every(t => e.toks.includes(t)) && e.toks.filter(t => /^\d+$/.test(t)).every(n => !nums.length || nums.includes(n)));
+    how = 'part';
+  }
+  const hint = unitCore(c.hint + ' ' + (stakeRaw || '')).toks.filter(t => !/^(stake|district|mission)$/.test(t));
+  if (cands.length > 1 && hint.length) { const h = cands.filter(e => hint.some(t => e.stakeToks.includes(t))); if (h.length) cands = h; }
+  if (cands.length === 1) {
+    const e = cands[0];
+    const why = fixed ? `Spelling read as "${e.unit}"` : how === 'part' ? `Read as "${e.unit}"` : 'Matched';
+    return { status: fixed || how === 'part' ? 'fixed' : 'ok', stake: e.stake, unit: e.unit, options: [e.key], why };
+  }
+  if (cands.length > 1) {
+    const stakes = uniq(cands.map(e => e.stake));
+    return { status: 'choose', stake: stakes.length === 1 ? stakes[0] : '', unit: '', options: cands.map(e => e.key), why: `Could be ${cands.map(e => e.unit).join(' or ')}` };
+  }
+  return { status: 'unknown', stake: '', unit: '', options: [], why: 'Not found in the participant list' };
+}
+
+/** Full pipeline. rows: arrays with header first. existing: current staff records. */
+function staffIntake(rows, opts) {
+  opts = opts || {};
+  const map = opts.map || sfMap(rows[0] || []);
+  const subs = []; let blank = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r]; if (!row || row.every(c => clean(c) === '')) { blank++; continue; }
+    const o = {}; for (const i in map) o[map[i]] = row[i];
+    if (!clean(o.name)) { blank++; continue; }
+    const x = sfRow(o, opts.refDate || ''); x.row = r; subs.push(x);
+  }
+  const people = dedupeSubs(subs).sort((a, b) => a.name.localeCompare(b.name));
+  const dir = unitDirectory(opts.units || [], opts.aliases || {});
+  const units = {};
+  people.forEach(p => {
+    const k = unitCore(p.unitRaw).core + '|' + unitCore(p.stakeRaw).core;
+    const u = units[k] = units[k] || Object.assign({ k, raw: [], n: 0 }, matchUnit(p.unitRaw, p.stakeRaw, dir));
+    u.n++; if (!u.raw.includes(p.unitRaw)) u.raw.push(p.unitRaw); p.uk = k;
+  });
+  return { map, subs: subs.length, blank, people, units, dir };
+}
+/** Apply the unit choices and the role, and match each person to an existing staff record. */
+function intakeRecords(res, choices, role, existing) {
+  const out = [];
+  const ex = (existing || []).map(s => Object.assign({ toks: nameTokens(s.name), phoneOk: okPhone(s.phone || ''), unitRaw: s.unitRaw || s.unit || '' }, s));
+  for (const p of res.people) {
+    const u = res.units[p.uk]; const ch = choices[p.uk];
+    let stake = u.stake, unit = u.unit;
+    if (ch) { const i = ch.indexOf('|'); stake = ch.slice(0, i); unit = ch.slice(i + 1); }
+    else if (!unit) unit = titleCase(p.unitRaw);
+    const r = role === 'column' ? (p.role && STAFF_ROLES.includes(p.role) ? p.role : 'counselor') : role;
+    const old = ex.find(s => samePerson(s, p));
+    out.push(Object.assign({}, old ? Object.assign({}, old) : {}, {
+      id: old ? old.id : 'S' + fnv((p.email || p.toks.join(' ') + p.bday)).toString(36),
+      name: p.name, gender: p.gender || (old && old.gender) || '', bday: p.bday || (old && old.bday) || '', ageCsv: p.bday ? null : (old ? old.ageCsv ?? null : null), role: r,
+      phone: p.phone, email: p.email, unit, stake, unitRaw: p.unitRaw, tshirt: p.tshirt || (old && old.tshirt) || '', diet: p.diet, med: p.med || '', src: 'form', test: false
+    }));
+    for (const k of ['toks', 'phoneOk', 'uc', 'isUpdate']) delete out[out.length - 1][k];
+    out[out.length - 1].isUpdate = !!old;
+  }
+  return out;
+}
+
+
 /* ---- Derive the working participant list ---- */
 function derive(rosterBuckets, stateBuckets, cfg, org, staffMap) {
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
@@ -608,6 +849,7 @@ const can = {
   checkin: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
   viewAll: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'logistics'].includes(role()),
   readOnly: () => ['logistics', 'loghead'].includes(role()),
+  staff: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   reset: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveAny: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
@@ -624,7 +866,7 @@ const PAGES = [
   ['exceptions', 'Walk-ins & exceptions', () => can.checkin() || role() === 'logistics'],
   ['logistics', 'Logistics', () => can.logistics()],
   ['headcount', 'Headcount', () => can.headcount()],
-  ['staff', 'Staff', () => can.admin() || can.viewAll()],
+  ['staff', 'Staff', () => can.admin() || can.viewAll() || role() === 'coordinator'],
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()],
   ['sessions', 'Sessions', () => can.split()]
@@ -753,10 +995,10 @@ async function runAdminSync() {
     await setDoc('share/' + uid, { p, h });
   }
   for (const uid in S.shares) if (!uids.includes(uid) || !accountOf(uid)) { delete S.shares[uid]; await serial('share/' + uid, () => S.db.doc('share/' + uid).delete()); }
-  // 4. logistics accounts count as logistics staff in this session (they rarely appear in the staff upload)
+  // 4. logistics and Session Directing Couple accounts count as staff in this session (they rarely appear in the staff upload)
   await syncAccountStaff();
 }
-const ACCOUNT_STAFF_ROLES = ['logistics'];
+const ACCOUNT_STAFF_ROLES = ['logistics', 'sdc'];
 async function syncAccountStaff() {
   if (!S.loaded.inv || !S.loaded.staff) return;
   const norm = x => String(x || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -949,6 +1191,7 @@ function resetPanel() {
     <div class="dz-list">
       <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${nG || nC ? '' : 'disabled'}>Undo groups</button></div>
       <div class="dz"><div><b>Delete test staff</b><small class="muted">${nT} staff marked Test.</small></div><button class="btn danger" data-act="resetTest" ${nT ? '' : 'disabled'}>Delete test staff</button></div>
+      <div class="dz"><div><b>Delete staff of one type</b><small class="muted">For example every counselor, before uploading a corrected list. Everyone else stays. Logistics and Session Directing Couple members who have an account are always kept.</small><select id="rsType" style="margin-top:8px;max-width:280px">${STAFF_ROLES.map(r => { const n = S.staffList.filter(x => x.role === r && !x.fromAccount).length; return opt(r, `${ROLES[r]}s · ${n}`, r === (UI.rsType || 'counselor')); }).join('')}</select></div><button class="btn danger" data-act="resetType">Delete this type</button></div>
       <div class="dz"><div><b>Delete all staff</b><small class="muted">All ${nS} staff, real and test. Groups and companies lose their counselors and ACs. Accounts stay, but need linking to the new staff records.</small></div><button class="btn danger" data-act="resetStaff" ${nS ? '' : 'disabled'}>Delete all staff</button></div>
     </div></section>`;
 }
@@ -1158,6 +1401,82 @@ async function printForm(stake, unit) {
   const name = pdfSafe(`Check-in form - ${unit ? unit + ' - ' : ''}${stake}.pdf`).replace(/[\\/:*?"<>|]+/g, '');
   await S.dl.save({ filename: name, data: new Blob([bytes], { type: 'application/pdf' }) });
   toast(`Check-in form ready: ${people.length} participants${unitNames.length > 1 ? ' in ' + unitNames.length + ' units' : ''}`);
+}
+/** Printable staff list (A4) for one role, grouped by stake or district and then ward or branch. */
+async function printStaffList(role, onlyStake) {
+  const list = S.staffList.filter(s => s.role === role && (!onlyStake || (s.stake || NO_STAFF_STAKE) === onlyStake));
+  if (!list.length) { toast('There is nobody to print for this selection.', true); return; }
+  toast('Preparing the list…');
+  let L; try { L = await loadPdfLib(); } catch (e) { toast('Could not load the PDF tool. Check your connection and try again.', true); return; }
+  const { PDFDocument, StandardFonts, rgb } = L;
+  const C = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+  const doc = await PDFDocument.create();
+  const sess = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
+  const PLR = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics' }[role] || ROLES[role];
+  doc.setTitle(pdfSafe(`${sess} - ${PLR} - ${onlyStake || 'all stakes and districts'}`)); doc.setAuthor(pdfSafe(sess)); doc.setCreator('FSY Check-in');
+  const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let logo = null; try { logo = await doc.embedPng(await logoPngBytes()); } catch (e) { console.warn('logo', e); }
+  const W = 595.28, H = 841.89, M = 36, ROW = 19;
+  const fit = (t, f, size, max) => { t = pdfSafe(t); if (f.widthOfTextAtSize(t, size) <= max) return t; while (t.length > 1 && f.widthOfTextAtSize(t + '...', size) > max) t = t.slice(0, -1); return t + '...'; };
+  const X = { num: M + 4, name: M + 30, gender: M + 228, age: M + 278, phone: M + 312, size: M + 400, food: M + 438 };
+  const printed = new Date().toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const T = staffByArea(list); const pages = [];
+  let pg, y, curStake;
+  const colHead = () => {
+    pg.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: 20, color: C('#005175') });
+    const hd = (t, x) => pg.drawText(t, { x, y: y, size: 8.5, font: bold, color: C('#ffffff') });
+    hd('#', X.num); hd('NAME', X.name); hd('GENDER', X.gender); hd('AGE', X.age); hd('PHONE', X.phone); hd('SIZE', X.size); hd('FOOD NEEDS', X.food);
+    y -= ROW + 4;
+  };
+  const newPage = (stake, cont) => {
+    pg = doc.addPage([W, H]); pages.push(pg); curStake = stake;
+    const bandH = 78, top = H - M;
+    pg.drawRectangle({ x: M, y: top - bandH, width: W - 2 * M, height: bandH, color: C('#f6faf4') });
+    pg.drawRectangle({ x: M, y: top - bandH - 4, width: W - 2 * M, height: 4, color: C('#fcb449') });
+    let tx = M + 16;
+    if (logo) { const s = 58; pg.drawImage(logo, { x: M + 10, y: top - bandH + (bandH - s) / 2, width: s, height: s }); tx = M + 80; }
+    pg.drawText(pdfSafe(`${sess.toUpperCase()}  -  ${PLR.toUpperCase()}`), { x: tx, y: top - 22, size: 8, font: bold, color: C('#007da5') });
+    pg.drawText(fit(stake + (cont ? ' (continued)' : ''), bold, 17, W - M - tx - 110), { x: tx, y: top - 45, size: 17, font: bold, color: C('#002846') });
+    const n = Object.values(T[stake]).reduce((a, l) => a + l.length, 0);
+    pg.drawText(pdfSafe(`${n} ${n === 1 ? PLR.toLowerCase().replace(/s$/, '') : PLR.toLowerCase()} in ${Object.keys(T[stake]).length} ward${Object.keys(T[stake]).length === 1 ? '' : 's'} or branch${Object.keys(T[stake]).length === 1 ? '' : 'es'}`), { x: tx, y: top - 62, size: 10, font, color: C('#005175') });
+    const pr = pdfSafe('Printed ' + printed); pg.drawText(pr, { x: W - M - 14 - font.widthOfTextAtSize(pr, 8), y: top - 22, size: 8, font, color: C('#4f6f84') });
+    y = top - bandH - 28; colHead();
+  };
+  for (const st of Object.keys(T).sort(areaSort)) {
+    newPage(st, false);
+    for (const un of Object.keys(T[st]).sort(areaSort)) {
+      const people = T[st][un];
+      if (y < M + 60 + ROW * Math.min(2, people.length)) { newPage(st, true); }
+      pg.drawText(fit(un, bold, 11, W - 2 * M - 60), { x: M + 4, y, size: 11, font: bold, color: C('#002846') });
+      const cnt = String(people.length); pg.drawText(cnt, { x: W - M - 6 - bold.widthOfTextAtSize(cnt, 11), y, size: 11, font: bold, color: C('#007da5') });
+      pg.drawLine({ start: { x: M, y: y - 5 }, end: { x: W - M, y: y - 5 }, thickness: 1, color: C('#fcb449') });
+      y -= ROW + 2;
+      people.forEach((s, i) => {
+        if (y < M + 40) { newPage(st, true); pg.drawText(fit(un + ' (continued)', bold, 11, W - 2 * M), { x: M + 4, y, size: 11, font: bold, color: C('#002846') }); y -= ROW + 2; }
+        if (i % 2 === 1) pg.drawRectangle({ x: M, y: y - 6, width: W - 2 * M, height: ROW, color: C('#f6faf4') });
+        const a = staffAge(s, S.config);
+        pg.drawText(String(i + 1), { x: X.num + 12 - font.widthOfTextAtSize(String(i + 1), 9), y, size: 9, font, color: C('#4f6f84') });
+        pg.drawText(fit(s.name, bold, 9.5, X.gender - X.name - 8), { x: X.name, y, size: 9.5, font: bold, color: C('#002846') });
+        pg.drawText(s.gender === 'F' ? 'Female' : s.gender === 'M' ? 'Male' : '-', { x: X.gender, y, size: 9, font, color: C('#002846') });
+        pg.drawText(a != null ? String(a) : '-', { x: X.age, y, size: 9, font, color: C('#002846') });
+        pg.drawText(fit(s.phone || '-', font, 9, X.size - X.phone - 6), { x: X.phone, y, size: 9, font, color: C('#002846') });
+        pg.drawText(fit(s.tshirt || '-', font, 9, X.food - X.size - 6), { x: X.size, y, size: 9, font, color: C('#002846') });
+        pg.drawText(fit(s.diet || '', font, 8.5, W - M - X.food - 4), { x: X.food, y, size: 8.5, font, color: C('#a8452b') });
+        y -= ROW;
+      });
+      y -= 10;
+    }
+  }
+  pages.forEach((p, i) => {
+    const t = pdfSafe(`${sess}  -  ${PLR}`), pn = `Page ${i + 1} of ${pages.length}`;
+    p.drawLine({ start: { x: M, y: M + 14 }, end: { x: W - M, y: M + 14 }, thickness: 0.5, color: C('#cfe3ec') });
+    p.drawText(fit(t, font, 8, W - 2 * M - 80), { x: M, y: M, size: 8, font, color: C('#4f6f84') });
+    p.drawText(pn, { x: W - M - font.widthOfTextAtSize(pn, 8), y: M, size: 8, font, color: C('#4f6f84') });
+  });
+  const bytes = await doc.save();
+  const name = pdfSafe(`${PLR} - ${onlyStake || 'all stakes'}.pdf`).replace(/[\\/:*?"<>|]+/g, '');
+  await S.dl.save({ filename: name, data: new Blob([bytes], { type: 'application/pdf' }) });
+  toast(`List ready: ${list.length} ${PLR.toLowerCase()}`);
 }
 function pCard(p) {
   const st = p.s === 'in' ? `<span class="pill in">In ${esc(fmtTime(p.ti))}</span>` : p.s === 'out' ? `<span class="pill out">Out ${esc(fmtTime(p.to))}</span>` : '<span class="pill none">Not arrived</span>';
@@ -1380,10 +1699,14 @@ function teeBlock(L, H) {
 /* ---------- page: staff ---------- */
 PAGE_IMPL.staff = {
   frame() {
-    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 13–15 groups first, 23 and over to 16–18. Upload a spreadsheet on the Data tab or add people one at a time.</p></div><button class="btn primary adm" data-act="stAdd">+ Add staff member</button></section>
+    const real = S.staffList.filter(s => !s.test && !s.fromAccount).length;
+    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 13–15 groups first, 23 and over to 16–18. Import the staff sign-up form below or add people one at a time.</p></div><div class="btnrow">${can.staff() ? '<button class="btn adm" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm" data-act="stAdd">+ Add staff member</button></div></section>
+    ${can.staff() ? `<section class="panel adm" id="sfPanel"><div class="panel-head"><h2>Import staff</h2><label class="btn primary" for="sfFile">Choose a file to import</label></div>
+      <p class="note" style="margin-top:-4px">Excel or .csv, such as the Google Form responses for counselors, ACs and coordinators. A Type column (AC, Counselor or Coordinator) sets each person's role. Blank rows are skipped, people who sent the form more than once are merged, and each ward or branch is matched to its stake or district. You can import again at any time: people already on the list are updated, not added twice.</p>
+      <input type="file" id="sfFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div id="sfBox"></div></section>` : ''}
     <div id="stK" class="kpis"></div>
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
-    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stList"></div></section>
+    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stView" class="stview"></div><div id="stList"></div></section>
     <details class="panel adm"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a Session Directing Couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
       <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></details>
     ${can.reset() ? resetPanel() : ''}`;
@@ -1395,11 +1718,109 @@ PAGE_IMPL.staff = {
     $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics' })[r]]), 'openStaff');
     $('#stTabs').innerHTML = STAFF_ROLES.map(r => `<button data-act="stTab" data-v="${r}" aria-pressed="${UI.staffTab === r}">${esc(ROLES[r])} · ${cnt(r)}</button>`).join('');
     const list = S.staffList.filter(s => s.role === UI.staffTab);
+    const byArea = UI.staffView === 'area';
+    const plural = PL[UI.staffTab] || ROLES[UI.staffTab] + 's';
+    $('#stView').innerHTML = list.length ? `<div class="chips"><button data-act="stView" data-v="az" aria-pressed="${!byArea}">A–Z</button><button data-act="stView" data-v="area" aria-pressed="${byArea}">By stake and unit</button></div><button class="btn small" data-act="stPdf" data-v="">Print ${esc(plural.toLowerCase())} list (PDF)</button>` : '';
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return 'All companies'; return '—'; };
-    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}<br><small class="muted">${esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
+    const isC = UI.staffTab === 'counselor', ncol = isC ? 7 : 6;
+    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}</small>${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    let body = '';
+    if (byArea) {
+      const T = staffByArea(list);
+      for (const st of Object.keys(T).sort(areaSort)) {
+        const units = T[st], n = Object.values(units).reduce((a, l) => a + l.length, 0);
+        body += `<tr class="st-h"><td colspan="${ncol}"><b>${esc(st)}</b> <span class="muted">· ${n}</span> <button class="btn small" data-act="stPdf" data-v="${esc(st)}">Print</button></td></tr>`;
+        for (const un of Object.keys(units).sort(areaSort)) body += `<tr class="un-h"><td colspan="${ncol}">${esc(un)} <span class="muted">· ${units[un].length}</span></td></tr>` + units[un].map(row).join('');
+      }
+    } else body = list.map(row).join('');
+    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
+    renderSf();
   }
 };
+const NO_STAFF_STAKE = 'Stake or district not known', NO_STAFF_UNIT = 'Ward or branch not given';
+function areaSort(a, b) { const z = x => x === NO_STAFF_STAKE || x === NO_STAFF_UNIT ? 1 : 0; return z(a) - z(b) || a.localeCompare(b); }
+function staffByArea(list) {
+  const T = {};
+  list.forEach(s => { const st = s.stake || NO_STAFF_STAKE, un = s.unit || NO_STAFF_UNIT; ((T[st] = T[st] || {})[un] = T[st][un] || []).push(s); });
+  for (const st in T) for (const un in T[st]) T[st][un].sort((a, b) => a.name.localeCompare(b.name));
+  return T;
+}
+
+/* ---- staff sign-up form import (Staff page) ---- */
+function sfKnownUnits() { return S.P.filter(p => p.src !== 'walkin' && p.stake && p.unit).map(p => [p.stake, p.unit]); }
+async function sfRead(file) {
+  if (typeof XLSX === 'undefined') { toast('The spreadsheet reader did not load. Check your connection and reload.', true); return; }
+  const buf = await file.arrayBuffer(); let wb;
+  if (/\.csv$/i.test(file.name) || file.type === 'text/csv') wb = XLSX.read(new TextDecoder('utf-8').decode(buf).replace(/^﻿/, ''), { type: 'string', raw: true });
+  else wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' }).map(r => r.map(c => c instanceof Date ? parseDate(c) : c));
+  if (rows.length < 2) { toast('That file has no rows.', true); return; }
+  const map = sfMap(rows[0]);
+  if (!Object.values(map).includes('name')) { toast('No name column found in that file.', true); return; }
+  const hasRole = Object.values(map).includes('role'); const roleCol = hasRole ? clean(rows[0][Object.keys(map).find(i => map[i] === 'role')]) : '';
+  UI.sf = { name: file.name, rows, map, roleCol, role: hasRole ? 'column' : (['counselor', 'ac', 'coordinator'].includes(UI.staffTab) ? UI.staffTab : 'counselor'), hasRole, choices: {}, adding: null };
+  sfRun(); renderSf();
+}
+function sfRun() { const F = UI.sf; const al = Object.assign({}, S.config.unitAliases || {}); for (const k in F.choices) al[k.split('|')[0]] = F.choices[k]; F.res = staffIntake(F.rows, { map: F.map, units: sfKnownUnits(), aliases: al, refDate: S.config.sessionStart || '' }); }
+function sfDirOpts(dir, sel) {
+  const by = {}; dir.list.forEach(e => (by[e.stake] = by[e.stake] || []).push(e));
+  return Object.keys(by).sort().map(st => `<optgroup label="${esc(st)}">${by[st].sort((a, b) => a.unit.localeCompare(b.unit)).map(e => opt(e.key, e.unit, e.key === sel)).join('')}</optgroup>`).join('');
+}
+function renderSf() {
+  const box = $('#sfBox'); if (!box) return; const F = UI.sf;
+  if (!F) { box.innerHTML = ''; return; }
+  if (F.done) { box.innerHTML = `<div class="callout info" style="margin-top:10px">${F.done}</div>`; return; }
+  const R = F.res, recs = intakeRecords(R, F.choices, F.role, S.staffList.filter(s => !s.fromAccount && !s.test));
+  const merged = R.subs - R.people.length, upd8 = recs.filter(r => r.isUpdate).length;
+  const need = u => !F.choices[u.k] && (u.status === 'choose' || u.status === 'unknown');
+  const rank = { unknown: 0, choose: 1, fixed: 2, ok: 3 };
+  const U = Object.values(R.units).sort((a, b) => need(b) - need(a) || rank[a.status] - rank[b.status] || b.n - a.n);
+  const nNeed = U.filter(need).reduce((a, u) => a + u.n, 0);
+  const roleName = F.role === 'column' ? 'staff' : ROLES[F.role].toLowerCase() + 's';
+  const chip = u => F.choices[u.k] ? '<span class="chip good">Chosen</span>' : u.status === 'ok' ? '<span class="chip good">Matched</span>' : u.status === 'fixed' ? '<span class="chip info">Spelling fixed</span>' : u.status === 'choose' ? '<span class="chip warn">Choose one</span>' : '<span class="chip bad">Not found</span>';
+  const stakes = uniq(R.dir.list.map(e => e.stake)).sort();
+  const unitRow = u => {
+    const sel = F.choices[u.k] || (u.unit ? u.stake + '|' + u.unit : '');
+    const first = sel ? '' : opt('', u.status === 'choose' ? `Choose: ${u.why.replace(/^Could be /, '')}` : 'Choose the ward or branch…', true);
+    const add = F.adding === u.k ? `<div class="sf-add"><input id="sfNewStake" list="sfStakes" placeholder="Stake or district" value="${esc(u.stake || '')}" autocomplete="off"><input id="sfNewUnit" placeholder="Ward or branch" value="${esc(sfName(u.raw[0]))}" autocomplete="off"><button class="btn small primary" data-act="sfNewSave" data-v="${esc(u.k)}">Use this</button><button class="btn small" data-act="sfNewCancel">Cancel</button></div>` : '';
+    return `<tr${need(u) ? ' class="needs"' : ''}><td><b>${u.raw.map(esc).join('</b>, <b>')}</b><br><small class="muted">${u.n} ${u.n === 1 ? 'person' : 'people'}${u.status === 'fixed' && !F.choices[u.k] ? ' · ' + esc(u.why) : ''}</small></td><td>${chip(u)}</td><td><select data-act="sfUnit" data-v="${esc(u.k)}" aria-label="Ward or branch for ${esc(u.raw[0])}">${first}${sfDirOpts(R.dir, sel)}${opt('__new', '+ Add a ward or branch not on this list')}</select>${sel ? `<small class="muted sf-stake">${esc(sel.split('|')[0])}</small>` : u.stake ? `<small class="muted sf-stake">${esc(u.stake)}</small>` : ''}${add}</td></tr>`;
+  };
+  const issues = R.people.filter(p => p.issues.length), dups = R.people.filter(p => p.subs > 1), diets = R.people.filter(p => p.diet);
+  box.innerHTML = `<div class="inline" style="margin-bottom:10px;flex-wrap:wrap"><b>${esc(F.name)}</b>
+    <label class="inline">Everyone in this file is <select id="sfRole">${['counselor', 'ac', 'coordinator'].map(r => opt(r, 'a ' + ROLES[r].toLowerCase(), F.role === r)).join('')}${F.hasRole ? opt('column', `as given in the ${F.roleCol || 'Type'} column`, F.role === 'column') : ''}</select></label></div>
+    <div class="kpis sf-k"><div class="kpi"><span>Responses</span><b>${R.subs}</b></div><div class="kpi"><span>People</span><b>${R.people.length}</b></div><div class="kpi"><span>Duplicates merged</span><b>${merged}</b></div><div class="kpi"><span>Already on staff list</span><b>${upd8}</b></div></div>
+    ${F.role === 'column' ? `<p class="note"><b>By type:</b> ${['counselor', 'ac', 'coordinator'].map(r => `${recs.filter(x => x.role === r).length} ${esc(ROLES[r].toLowerCase())}s`).join(', ')}${R.people.filter(p => !p.role).length ? ` · <span class="chip warn">${R.people.filter(p => !p.role).length} with no type, imported as counselors</span>` : ''}</p>` : ''}
+    <p class="note">${R.blank ? `${R.blank} blank row${R.blank === 1 ? '' : 's'} skipped. ` : ''}Phone numbers are written as 07… or 01…, names are capitalised and "None", "N/A" and similar food answers are cleared.</p>
+    <h3 style="margin:14px 0 6px">Wards and branches</h3>
+    ${nNeed ? `<div class="callout" style="margin-bottom:8px">${nNeed} ${nNeed === 1 ? 'person needs' : 'people need'} a ward or branch chosen below. Choices are remembered for the next upload.</div>` : '<p class="note">Every ward and branch is matched. Check the spelling fixes, then import.</p>'}
+    ${(() => { const hd = '<thead><tr><th>Typed in the form</th><th></th><th>Ward or branch · stake or district</th></tr></thead>'; const rev = U.filter(u => u.status !== 'ok' || F.choices[u.k] || F.adding === u.k), ok = U.filter(u => !rev.includes(u)); return (rev.length ? `<div class="tablewrap"><table class="sf-units">${hd}<tbody>${rev.map(unitRow).join('')}</tbody></table></div>` : '') + (ok.length ? `<details class="sf-d" ${rev.length ? '' : 'open'}><summary><b>Matched exactly</b> <span class="chip good">${ok.length} wards and branches · ${ok.reduce((a, u) => a + u.n, 0)} people</span></summary><div class="tablewrap" style="margin-top:8px"><table class="sf-units">${hd}<tbody>${ok.map(unitRow).join('')}</tbody></table></div></details>` : ''); })()}
+    <datalist id="sfStakes">${stakes.map(x => `<option value="${esc(x)}">`).join('')}</datalist>
+    ${issues.length ? `<details open class="sf-d"><summary><b>Check these people</b> <span class="chip warn">${issues.length}</span></summary><ul class="sf-list">${issues.map(p => `<li><b>${esc(p.name)}</b> · ${p.issues.map(esc).join('; ')}</li>`).join('')}</ul><p class="note">They are imported as they are. Open them on the staff list afterwards to fix the details.</p></details>` : ''}
+    ${dups.length ? `<details class="sf-d"><summary><b>People who sent the form more than once</b> <span class="chip">${dups.length}</span></summary><ul class="sf-list">${dups.map(p => `<li><b>${esc(p.name)}</b> · ${esc(p.dupNote)}</li>`).join('')}</ul></details>` : ''}
+    ${diets.length ? `<details class="sf-d"><summary><b>Food needs</b> <span class="chip">${diets.length}</span></summary><ul class="sf-list">${diets.map(p => `<li><b>${esc(p.name)}</b> · ${esc(p.diet)}</li>`).join('')}</ul></details>` : ''}
+    <div class="btnrow" style="margin-top:14px"><button class="btn primary" data-act="sfGo" ${F.busy ? 'disabled' : ''}>${F.busy ? esc(F.busy) : `Import ${R.people.length} ${esc(roleName)}`}</button><button class="btn" data-act="sfCancel">Cancel</button></div>`;
+}
+async function sfImport() {
+  const F = UI.sf; if (!F || F.busy) return;
+  const R = F.res;
+  const recs = intakeRecords(R, F.choices, F.role, S.staffList.filter(s => !s.fromAccount && !s.test));
+  const nUpd = recs.filter(r => r.isUpdate).length;
+  F.busy = 'Saving…'; renderSf();
+  try {
+    const s = {}; recs.forEach(r => { const x = Object.assign({}, r); delete x.isUpdate; s[x.id] = x; });
+    S.staff = Object.assign({}, S.staff, s); const ex = S.staffEx; S.staffEx = true;
+    await upd('staff/all', { s }, ex);
+    const al = Object.assign({}, S.config.unitAliases || {}); let n = 0;
+    for (const k in F.choices) { const core = k.split('|')[0]; if (core && al[core] !== F.choices[k]) { al[core] = F.choices[k]; n++; } }
+    if (n && can.admin()) await saveConfig({ unitAliases: al }); else recompute(true);
+    const role = F.role === 'column' ? 'counselor' : F.role; UI.staffTab = role; UI.staffView = 'area';
+    const merged = R.subs - R.people.length;
+    UI.sf = { done: `Imported ${recs.length} ${F.role === 'column' ? 'staff' : esc(ROLES[F.role].toLowerCase()) + 's'}: ${recs.length - nUpd} new${nUpd ? `, ${nUpd} updated` : ''}.${merged ? ` ${merged} duplicate submission${merged === 1 ? ' was' : 's were'} merged.` : ''} The list below is sorted by stake and unit. Use <b>Choose a file to import</b> above to import another file.` };
+    const f = $('#sfFile'); if (f) f.value = '';
+  } catch (e) { fail(e); F.busy = null; }
+  render();
+}
 function openStaffForm(id) {
   const s = id ? S.staffMap[id] : null;
   const stakes = uniq(S.P.map(p => p.stake).concat(S.staffList.map(x => x.stake)).filter(Boolean)).sort();
@@ -1818,6 +2239,14 @@ document.addEventListener('click', async e => {
       break; }
     case 'resetOrg': { if (!can.reset()) break; if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; await resetOrg(); toast('Groups and companies removed'); break; }
     case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
+    case 'resetType': { if (!can.reset()) break; const r = ($('#rsType') || {}).value || 'counselor'; UI.rsType = r; const gone = S.staffList.filter(x => x.role === r && !x.fromAccount); if (!gone.length) { toast(`There are no ${ROLES[r].toLowerCase()}s to delete.`); break; }
+      if (!await confirmTyped(`Delete all ${gone.length} ${ROLES[r].toLowerCase()}s?`, `Every ${esc(ROLES[r].toLowerCase())} record is deleted, real and test. Other staff types are kept.${r === 'counselor' ? ' Groups lose their counselors; press Rebalance after uploading the new list.' : r === 'ac' ? ' Companies lose their ACs; press Rebalance after uploading the new list.' : ''} Sign-in accounts are kept.`, 'DELETE', 'Delete ' + ROLES[r].toLowerCase() + 's')) break;
+      const ids = new Set(gone.map(x => x.id)); const s2 = {}; for (const k in S.staff) if (!ids.has(k)) s2[k] = S.staff[k]; S.staff = s2; recompute(true); await setDoc('staff/all', { s: s2 }).catch(fail);
+      const o = { groups: {}, companies: {} }; let ch = false;
+      for (const g of Object.values(S.org.groups)) { const x = Object.assign({}, g); if (ids.has(g.counselorId)) { x.counselorId = null; ch = true; } o.groups[g.id] = x; }
+      for (const c of Object.values(S.org.companies)) { const x = Object.assign({}, c); if (ids.has(c.acId)) { x.acId = null; ch = true; } if (ids.has(c.coordId)) { x.coordId = null; ch = true; } o.companies[c.id] = x; }
+      if (ch) await saveOrg(o, S.orgGen);
+      toast(`${gone.length} ${ROLES[r].toLowerCase()}s deleted`); break; }
     case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and Session Directing Couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept but will need linking to the new staff records.', 'DELETE', 'Delete all staff')) break;
       S.staff = {}; recompute(true); await setDoc('staff/all', { s: {} }).catch(fail);
       const o = { groups: {}, companies: {} }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = Object.assign({}, g, { counselorId: null }); for (const c of Object.values(S.org.companies)) o.companies[c.id] = Object.assign({}, c, { acId: null, coordId: null });
@@ -1831,8 +2260,15 @@ document.addEventListener('click', async e => {
     case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
-    case 'stEdit': if (can.admin()) openStaffForm(id); break;
-    case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'T-shirt']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.tshirt || ''])); exportCSV('fsy-staff.csv', rows); break; }
+    case 'stView': UI.staffView = v; render(); break;
+    case 'stPdf': printStaffList(UI.staffTab, v || ''); break;
+    case 'sfGo': await sfImport(); break;
+    case 'sfCancel': { UI.sf = null; const f = $('#sfFile'); if (f) f.value = ''; renderSf(); break; }
+    case 'sfPick': { const f = $('#sfFile'); if (f) { f.value = ''; $('#sfPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); f.click(); } break; }
+    case 'sfNewCancel': UI.sf.adding = null; renderSf(); break;
+    case 'sfNewSave': { const st = clean(($('#sfNewStake') || {}).value), un = sfName(($('#sfNewUnit') || {}).value || ''); if (!st || !un) { toast('Type both the stake or district and the ward or branch', true); break; } UI.sf.choices[v] = st + '|' + un; UI.sf.adding = null; sfRun(); renderSf(); break; }
+    case 'stEdit': if (can.staff()) openStaffForm(id); break;
+    case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'Email', 'T-shirt', 'Food needs']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.email || '', s.tshirt || '', s.diet || ''])); exportCSV('fsy-staff.csv', rows); break; }
     case 'exCsv': { const L = PAGE_IMPL.exceptions.lists(); const rows = [['Type', 'Name', 'Age', 'Gender', 'Ward/branch', 'Stake', 'Status', 'Group']]; [['Walk-in', L.walk], ['Not on approved list', L.off], ['Checked in, no group', L.nog]].forEach(([t, list]) => list.forEach(p => rows.push([t, p.name, p.age ?? '', p.gender, p.unit, p.stake, p.s || 'not arrived', p.group ? 'G' + p.group.num : '']))); exportCSV('fsy-walkins-exceptions.csv', rows); break; }
     case 'stDel': { const st = S.staffMap[id]; if (st && st.fromAccount) { toast('This person comes from Accounts. Delete or change their account there.', true); break; } if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
     case 'impGo': await doImport(); break;
@@ -1855,6 +2291,10 @@ document.addEventListener('change', async e => {
   if (t.id === 'ciUnit') { UI.unit = t.value; UI.limit = 40; t.blur(); render(); return; }
   if (t.id === 'impFile') { if (t.files[0]) readFile(t.files[0]).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }); return; }
   if (t.id === 'impMode') { UI.imp.mode = t.value; renderImport(); return; }
+  if (t.id === 'sfFile') { const f = t.files[0]; if (f) sfRead(f).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }).finally(() => { t.value = ''; }); return; }
+  if (t.id === 'rsType') { UI.rsType = t.value; return; }
+  if (t.id === 'sfRole') { UI.sf.role = t.value; renderSf(); return; }
+  if (act === 'sfUnit') { const F = UI.sf; if (t.value === '__new') F.adding = v; else if (t.value) { F.choices[v] = t.value; F.adding = null; } else delete F.choices[v]; t.blur(); renderSf(); if (F.adding) setTimeout(() => { const i = $('#sfNewStake'); if (i) i.focus(); }, 30); return; }
   if (!act) return;
   switch (act) {
     case 'moveP': { const g = t.value || null; t.blur(); await setState(id, { g }); toast(g ? 'Moved to G' + S.org.groups[g].num : 'Taken out of group'); break; }

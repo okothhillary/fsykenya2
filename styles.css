@@ -460,3 +460,33 @@ a.issue[aria-current="true"] small{color:#1f4a66}
 .radio small{font-weight:400}
 .form label.radio input,.radio input[type=radio]{width:18px!important;height:18px;flex:none;padding:0}
 .form label.radio{color:var(--ink);font-size:.92rem}
+
+/* staff list view switch, grouped rows, sign-up form import */
+.stview{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.stview:empty{display:none}
+tr.st-h td{background:var(--blue35);color:#fff;font-size:.95rem;padding-top:10px;padding-bottom:10px}
+tr.st-h td .muted{color:rgba(255,255,255,.8)}
+tr.st-h .btn{margin-left:8px;min-height:30px;padding:3px 10px;background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.5);color:#fff}
+tr.un-h td{background:var(--surface2);font-weight:800;color:var(--ink);border-top:2px solid var(--line2)}
+.sf-k{margin:6px 0 4px}
+.sf-units td{vertical-align:middle}
+.sf-units select{width:100%;min-width:220px;max-width:420px}
+.sf-units tr.needs td{background:#fff6e6}
+.sf-add{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.sf-add input{flex:1 1 160px;min-width:0}
+.sf-d{margin-top:10px;padding:6px 0;border-top:1px solid var(--line)}
+.sf-list{margin:8px 0 4px;padding-left:18px;max-height:320px;overflow:auto}
+.sf-list li{margin:3px 0;line-height:1.4}
+@media (max-width:640px){.sf-units select{min-width:0;max-width:none}.sf-units th:nth-child(2),.sf-units td:nth-child(2){display:none}}
+.sf-stake{display:block;margin-top:3px}
+@media (max-width:640px){
+  .sf-units, .sf-units tbody{display:block;width:100%}
+  .sf-units thead{display:none}
+  .sf-units tr{display:block;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .sf-units td{display:block;padding:0;border:0;background:none!important}
+  .sf-units tr.needs{background:#fff6e6}
+  .sf-units td:last-child{margin-top:8px}
+  .sf-units select{width:100%}
+}
+.vh{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+#sfPanel .panel-head label.btn{cursor:pointer}
