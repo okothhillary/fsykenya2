@@ -47,6 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
+const APP_VERSION = '2026-11-15b · groups follow counselors';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -569,14 +570,30 @@ function fullGenerate(P, staffList, cfg) {
   const size = +cfg.groupSize || 10;
   const groups = {}, companies = {}, assign = {}, log = [];
   const elig = P.filter(p => p.elig);
-  for (const band of ['Y', 'O']) for (const gender of ['F', 'M']) {
-    const list = elig.filter(p => p.band === band && p.gender === gender).sort(sortForDeal);
-    const G = Math.ceil(list.length / size); const ids = [];
-    for (let i = 0; i < G; i++) { const id = rid('g'); groups[id] = { id, band, gender, counselorId: null, companyId: null, num: 0 }; ids.push(id); }
-    list.forEach((p, i) => assign[p.id] = ids[i % G]);
-    if (G) log.push(`${BANDS[band]} ${gender === 'F' ? 'young women' : 'young men'}: ${list.length} participants in ${G} groups`);
-  }
   const counselors = staffList.filter(s => s.role === 'counselor' && s.gender);
+  // Every participant goes to a counselor. With enough counselors groups are the set size; with too few,
+  // there is one group per counselor and groups run larger until more counselors are added (then Rebalance).
+  for (const gender of ['F', 'M']) {
+    const lists = { Y: elig.filter(p => p.band === 'Y' && p.gender === gender).sort(sortForDeal), O: elig.filter(p => p.band === 'O' && p.gender === gender).sort(sortForDeal) };
+    const ideal = { Y: Math.ceil(lists.Y.length / size), O: Math.ceil(lists.O.length / size) };
+    const C = counselors.filter(c => c.gender === gender);
+    let n = { Y: ideal.Y, O: ideal.O }, short = false;
+    if (C.length && C.length < ideal.Y + ideal.O) {
+      short = true; const tot = lists.Y.length + lists.O.length;
+      if (!ideal.Y) n = { Y: 0, O: C.length }; else if (!ideal.O) n = { Y: C.length, O: 0 };
+      else if (C.length === 1) n = lists.Y.length >= lists.O.length ? { Y: 1, O: ideal.O } : { Y: ideal.Y, O: 1 };
+      else { const y = Math.min(Math.max(Math.round(C.length * lists.Y.length / tot), 1), C.length - 1); n = { Y: Math.min(y, ideal.Y), O: Math.min(C.length - y, ideal.O) }; if (n.Y + n.O < C.length) { const left = C.length - n.Y - n.O; if (n.Y < ideal.Y) n.Y = Math.min(ideal.Y, n.Y + left); else n.O = Math.min(ideal.O, n.O + left); } }
+    }
+    for (const band of ['Y', 'O']) {
+      const list = lists[band], G = n[band]; if (!list.length || !G) continue; const ids = [];
+      for (let i = 0; i < G; i++) { const id = rid('g'); groups[id] = { id, band, gender, counselorId: null, companyId: null, num: 0 }; ids.push(id); }
+      list.forEach((p, i) => assign[p.id] = ids[i % G]);
+      const big = Math.ceil(list.length / G);
+      log.push(`${BANDS[band]} ${gender === 'F' ? 'young women' : 'young men'}: ${list.length} participants in ${G} groups${big > size ? ` of up to ${big}` : ''}`);
+    }
+    if (short) log.push(`Only ${C.length} ${gender === 'F' ? 'women' : 'men'} counselors for ${ideal.Y + ideal.O} groups of ${size}: groups are larger for now. Add counselors and press Rebalance to split them.`);
+    else if (!C.length && (lists.Y.length || lists.O.length)) log.push(`No ${gender === 'F' ? 'women' : 'men'} counselors yet: their groups have no counselor`);
+  }
   assignCounselors(Object.values(groups), counselors, new Set(), cfg);
   const acs = staffList.filter(s => s.role === 'ac');
   const gY = Object.values(groups).filter(g => g.band === 'Y').length, gO = Object.values(groups).filter(g => g.band === 'O').length;
@@ -624,11 +641,29 @@ function rebalance(P, staffList, org, cfg) {
   const needy = Object.values(groups).filter(g => !g.counselorId);
   assignCounselors(needy, counselors, used, cfg);
   needy.forEach(g => { if (g.counselorId) log.push(`Group ${g.num} now led by ${staffMap[g.counselorId].name}`); });
-  // dissolve groups still without counselor when siblings exist
+  // groups still without a counselor: their youth go to other groups (the same age band, or a new group below)
   for (const g of Object.values(groups)) {
     if (g.counselorId) continue;
-    const sib = Object.values(groups).filter(x => x.id !== g.id && x.counselorId && x.band === g.band && x.gender === g.gender);
-    if (sib.length) { members[g.id].forEach(p => cur[p.id] = null); log.push(`Group ${g.num} had no counselor; its ${members[g.id].length} members were spread to other groups`); delete groups[g.id]; delete members[g.id]; }
+    const anyLed = Object.values(groups).some(x => x.counselorId && x.gender === g.gender);
+    if (!anyLed) continue; // nobody of this gender can lead yet
+    members[g.id].forEach(p => cur[p.id] = null); log.push(`Group ${g.num} had no counselor; its ${members[g.id].length} members were moved to groups that have one`); delete groups[g.id]; delete members[g.id];
+  }
+  // share counselors between the two age bands of each gender so neither band ends up with much larger groups
+  for (const gender of ['F', 'M']) {
+    const tot = { Y: P.filter(p => p.elig && p.gender === gender && p.band === 'Y').length, O: P.filter(p => p.elig && p.gender === gender && p.band === 'O').length };
+    const led = band => Object.values(groups).filter(g => g.gender === gender && g.band === band && g.counselorId);
+    for (let guard = 0; guard < 500; guard++) {
+      const n = { Y: led('Y').length, O: led('O').length };
+      const load = b => tot[b] ? (n[b] ? tot[b] / n[b] : Infinity) : 0;
+      const H = load('Y') >= load('O') ? 'Y' : 'O', L = H === 'Y' ? 'O' : 'Y';
+      if (load(H) <= size || n[L] < 2) break;
+      if (Math.max(tot[H] / (n[H] + 1), tot[L] / (n[L] - 1)) >= load(H)) break;
+      const d = led(L).sort((a, b) => cPref(staffMap[a.counselorId], H, cfg) - cPref(staffMap[b.counselorId], H, cfg) || members[a.id].length - members[b.id].length)[0];
+      members[d.id].forEach(p => cur[p.id] = null);
+      const id = rid('g'); groups[id] = { id, band: H, gender, counselorId: d.counselorId, companyId: null, num: 0 }; members[id] = [];
+      log.push(`${staffMap[d.counselorId].name} moved from ${BANDS[L]} group ${d.num} to a new ${BANDS[H]} group, which had too few counselors; group ${d.num}'s members joined other ${BANDS[L]} groups`);
+      delete groups[d.id]; delete members[d.id];
+    }
   }
   // place unassigned eligible participants
   const waiting = P.filter(p => p.elig && !cur[p.id]).sort(sortForDeal);
@@ -653,8 +688,47 @@ function rebalance(P, staffList, org, cfg) {
     members[best.id].push(p); cur[p.id] = best.id; placed++;
   }
   if (placed) log.push(`${placed} participant(s) placed into groups`);
+  // even out group sizes inside each gender and age band (only where a group is over the size)
+  let evened = 0;
+  for (const gender of ['F', 'M']) for (const band of ['Y', 'O']) {
+    const gs = () => Object.values(groups).filter(g => g.gender === gender && g.band === band && g.counselorId).sort((a, b) => members[b.id].length - members[a.id].length);
+    for (let guard = 0; guard < 5000; guard++) {
+      const l = gs(); if (l.length < 2) break; const big = l[0], small = l[l.length - 1];
+      if (members[big.id].length <= size || members[big.id].length - members[small.id].length <= 1) break;
+      const m = members[big.id]; const pick = m.slice().sort((a, b) => members[small.id].filter(x => x.unitKey === b.unitKey).length - members[small.id].filter(x => x.unitKey === a.unitKey).length).pop();
+      m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id; evened++;
+    }
+  }
+  if (evened) log.push(`${evened} participant(s) moved to even out group sizes`);
   if (created) log.push(`${created} new group(s) created`);
-  if (overfull) log.push(`${overfull} placement(s) went over the group size of ${size}: add counselors to open new groups`);
+  // free counselors open new groups and take people from groups that are over the size
+  let opened = 0;
+  for (;;) {
+    let best = null;
+    for (const c of counselors) {
+      if (used.has(c.id)) continue;
+      for (const band of ['Y', 'O']) {
+        const gs = Object.values(groups).filter(g => g.band === band && g.gender === c.gender);
+        const over = gs.reduce((a, g) => a + Math.max(0, members[g.id].length - size), 0); if (!over) continue;
+        const key = [cPref(c, band, cfg), -over];
+        if (!best || key[0] < best.key[0] || (key[0] === best.key[0] && key[1] < best.key[1])) best = { c, band, key };
+      }
+    }
+    if (!best) break;
+    const { c, band } = best; const id = rid('g'); groups[id] = { id, band, gender: c.gender, counselorId: c.id, companyId: null, num: 0 }; members[id] = []; used.add(c.id);
+    const sibs = () => Object.values(groups).filter(g => g.id !== id && g.band === band && g.gender === c.gender);
+    for (;;) {
+      const big = sibs().sort((a, b) => members[b.id].length - members[a.id].length)[0];
+      if (!big || members[big.id].length <= members[id].length + 1 || members[id].length >= size) break;
+      // move someone who is not checked in to a different group yet, preferring the unit least shared with the new group
+      const m = members[big.id]; const pick = m.slice().sort((a, b) => members[id].filter(x => x.unitKey === b.unitKey).length - members[id].filter(x => x.unitKey === a.unitKey).length).pop();
+      m.splice(m.indexOf(pick), 1); members[id].push(pick); cur[pick.id] = id;
+    }
+    opened++; log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants moved from groups over ${size}`);
+  }
+  const still = Object.values(groups).filter(g => members[g.id].length > size).length;
+  if (still) log.push(`${still} group(s) are still over the size of ${size}: add counselors and press Rebalance again`);
+  else if (overfull && !opened) log.push(`${overfull} placement(s) went over the group size of ${size}: add counselors to open new groups`);
   // ACs
   const acs = staffList.filter(s => s.role === 'ac');
   for (const c of Object.values(companies)) {
@@ -723,6 +797,8 @@ function validate(P, org, staffMap, cfg) {
   P.forEach(p => { if (p.g && mem[p.g]) mem[p.g].push(p); });
   const un = P.filter(p => p.elig && (!p.g || !groups[p.g])).length;
   if (un) w.push(['warn', `${un} eligible participant(s) are not in a group`, 'unassigned']);
+  const noCoun = Object.values(groups).filter(g => !(g.counselorId && staffMap[g.counselorId])).length;
+  if (noCoun) w.push(['bad', `${noCoun} group(s) have no counselor. Press Rebalance: their youth move into same-gender groups of the same age that have a counselor, and those groups grow until you add counselors.`]);
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
     if (!c) w.push(['bad', `Group ${g.num} has no counselor`]);
@@ -733,6 +809,8 @@ function validate(P, org, staffMap, cfg) {
     if (!g.companyId || !companies[g.companyId]) w.push(['warn', `Group ${g.num} is not in a company`]);
     else if (companies[g.companyId].band !== g.band) w.push(['bad', `Group ${g.num} is in a company of the other age group`]);
   }
+  const noG = Object.values(staffMap).filter(s => s.role === 'counselor' && !s.gender).length;
+  if (noG) w.push(['warn', `${noG} counselor(s) have no gender, so they cannot lead a group. Open them on the Staff page to fix.`]);
   for (const c of Object.values(companies)) {
     const gs = Object.values(groups).filter(g => g.companyId === c.id);
     if (!c.acId || !staffMap[c.acId]) w.push(['bad', `Company ${c.num} has no assistant coordinator`]);
@@ -1144,7 +1222,8 @@ function openAccount() {
   <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
   ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
   ${S.mySessions.length > 1 ? `<div><p class="th" style="margin-bottom:6px">Session</p><div class="sheetlist">${S.mySessions.map(id => `<button data-act="switchSession" data-v="${esc(id)}" ${id === S.sid ? 'aria-current="page"' : ''}>${ICONS.checkin}${esc(sessName(id))}${id === S.sid ? ' · open now' : ''}</button>`).join('')}</div></div>` : ''}
-  <div class="sheetlist"><button data-act="signOut">${ICONS.signout}Sign out</button></div>`);
+  <div class="sheetlist"><button data-act="signOut">${ICONS.signout}Sign out</button></div>
+  <p class="note" style="margin:0;text-align:center">App version ${esc(APP_VERSION)}</p>`);
 }
 function gateView() {
   const ident = `<picture><img class="identifier" src="assets/identifier-light.webp" width="380" height="410" alt="2026 youth theme identifier: Walk with Me, Moses 6:34"></picture>`;
