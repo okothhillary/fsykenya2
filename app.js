@@ -753,6 +753,29 @@ async function runAdminSync() {
     await setDoc('share/' + uid, { p, h });
   }
   for (const uid in S.shares) if (!uids.includes(uid) || !accountOf(uid)) { delete S.shares[uid]; await serial('share/' + uid, () => S.db.doc('share/' + uid).delete()); }
+  // 4. logistics accounts count as logistics staff in this session (they rarely appear in the staff upload)
+  await syncAccountStaff();
+}
+const ACCOUNT_STAFF_ROLES = ['logistics'];
+async function syncAccountStaff() {
+  if (!S.loaded.inv || !S.loaded.staff) return;
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z]/g, '');
+  const want = {};
+  for (const h in S.invites) { const v = S.invites[h]; if (v && ACCOUNT_STAFF_ROLES.includes(v.role) && invHere(v)) want['acct_' + fnv(h).toString(36)] = { h, v }; }
+  const add = {}, del = [];
+  for (const id in want) {
+    const { h, v } = want[id], cur = S.staff[id];
+    if (v.staffId && S.staff[v.staffId] && S.staff[v.staffId].role === v.role && v.staffId !== id) { if (cur && cur.fromAccount) del.push(id); continue; }
+    if (!cur && S.staffList.some(s => !s.fromAccount && s.role === v.role && norm(s.name) && norm(s.name) === norm(v.name))) continue;
+    const name = titleCase(v.name || h.split('@')[0]);
+    if (!cur || cur.name !== name || cur.role !== v.role) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '' }, cur || {}, { id, name, role: v.role, fromAccount: 1 });
+  }
+  for (const id in S.staff) { const s = S.staff[id]; if (s && s.fromAccount && !want[id]) del.push(id); }
+  if (!Object.keys(add).length && !del.length) return;
+  const s = Object.assign({}, S.staff, add); del.forEach(id => delete s[id]); S.staff = s;
+  const ex = S.staffEx; S.staffEx = true;
+  if (del.length) await setDoc('staff/all', { s }); else await upd('staff/all', { s: add }, ex);
+  recompute();
 }
 function subscribe() {
   const db = S.db; const onErr = e => { console.error(e); if (e.code === 'revoked') { S.noDb = true; render(); } };
@@ -1374,7 +1397,7 @@ PAGE_IMPL.staff = {
     const list = S.staffList.filter(s => s.role === UI.staffTab);
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return 'All companies'; return '—'; };
-    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}<br><small class="muted">${esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
+    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${UI.staffTab === 'counselor' ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${list.map(s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}<br><small class="muted">${esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given')}${s.phone ? ' · ' + esc(s.phone) : ''}</small></td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${UI.staffTab === 'counselor' ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
   }
 };
 function openStaffForm(id) {
@@ -1811,7 +1834,7 @@ document.addEventListener('click', async e => {
     case 'stEdit': if (can.admin()) openStaffForm(id); break;
     case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'T-shirt']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.tshirt || ''])); exportCSV('fsy-staff.csv', rows); break; }
     case 'exCsv': { const L = PAGE_IMPL.exceptions.lists(); const rows = [['Type', 'Name', 'Age', 'Gender', 'Ward/branch', 'Stake', 'Status', 'Group']]; [['Walk-in', L.walk], ['Not on approved list', L.off], ['Checked in, no group', L.nog]].forEach(([t, list]) => list.forEach(p => rows.push([t, p.name, p.age ?? '', p.gender, p.unit, p.stake, p.s || 'not arrived', p.group ? 'G' + p.group.num : '']))); exportCSV('fsy-walkins-exceptions.csv', rows); break; }
-    case 'stDel': { const st = S.staffMap[id]; if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
+    case 'stDel': { const st = S.staffMap[id]; if (st && st.fromAccount) { toast('This person comes from Accounts. Delete or change their account there.', true); break; } if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
     case 'impGo': await doImport(); break;
     case 'impCancel': UI.imp = null; renderImport(); const f = $('#impFile'); if (f) f.value = ''; break;
     case 'reqDel': await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(fail); break;
