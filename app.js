@@ -50,7 +50,7 @@ const NBUCKETS = 32;
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
-  regadmin: 'Registration admin', sdc: 'Session directing couple', seventy: 'Area Seventy', loghead: 'Head of Logistics', coordinator: 'Coordinator',
+  regadmin: 'Registration admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Head of Logistics', coordinator: 'Coordinator',
   ac: 'Assistant coordinator', counselor: 'Counselor', logistics: 'Logistics'
 };
 const STAFF_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics'];
@@ -591,7 +591,7 @@ const TOP_ROLES = ['regadmin', 'seventy', 'loghead'];
 function invSessions(i) { return i && Array.isArray(i.sessions) && i.sessions.length ? i.sessions : ['main']; }
 /** Does this account belong to the session being viewed? Registration admins and the Area Seventy belong to all. */
 function invHere(i) { return !!i && (TOP_ROLES.includes(i.role) || invSessions(i).includes(S.sid)); }
-/** Registration admins hand out any role; the Area Seventy any but registration admin; a directing couple only session roles. */
+/** Registration admins hand out any role; the Area Seventy any but registration admin; a Session Directing Couple only session roles. */
 function roleAssignable(r) { const me = realRole(); if (me === 'regadmin') return true; if (me === 'seventy') return r !== 'regadmin'; return !['regadmin', 'seventy', 'loghead'].includes(r); }
 function sessName(sid) { const x = S.sessions[sid]; return (x && x.name) || (sid === 'main' ? 'FSY Kenya 2nd 2026' : 'Session'); }
 function inviteFor(uid) { const m = S.members[uid]; const i = m && m.h && S.invites[m.h] ? S.invites[m.h] : null; return invHere(i) ? i : null; }
@@ -880,7 +880,7 @@ function renderHeader() {
   }
   const top = $('#top'); if (top) { document.documentElement.style.setProperty('--toph', top.offsetHeight + 'px'); const sticky = getComputedStyle(top).position === 'sticky'; const tabs = document.querySelector('.tabs'); document.documentElement.style.setProperty('--stick', sticky ? (top.offsetHeight + (tabs ? tabs.offsetHeight : 0)) + 'px' : '0px'); }
 }
-const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Directing couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
+const SHORT_ROLE = { regadmin: 'Reg admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
   const cur = currentPage(); const keys = navPages();
   $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
@@ -945,7 +945,7 @@ function lockReadOnly(pg) {
 function resetPanel() {
   const nG = Object.keys(S.org.groups).length, nC = Object.keys(S.org.companies).length, nT = S.staffList.filter(x => x.test).length, nS = S.staffList.length;
   return `<section class="panel danger-zone"><div class="panel-head"><h2>Start over</h2><span class="chip bad">Can't be undone</span></div>
-    <p class="note" style="margin-top:-4px">For registration admins, the directing couple, the Area Seventy and coordinators. Check-ins, participants and headcounts already submitted are kept.</p>
+    <p class="note" style="margin-top:-4px">For registration admins, the Session Directing Couple, the Area Seventy and coordinators. Check-ins, participants and headcounts already submitted are kept.</p>
     <div class="dz-list">
       <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${nG || nC ? '' : 'disabled'}>Undo groups</button></div>
       <div class="dz"><div><b>Delete test staff</b><small class="muted">${nT} staff marked Test.</small></div><button class="btn danger" data-act="resetTest" ${nT ? '' : 'disabled'}>Delete test staff</button></div>
@@ -1220,7 +1220,7 @@ PAGE_IMPL.companies = {
     const by = r => S.staffList.filter(s => s.role === r);
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
     const acs = by('ac'), acUsed = new Set(Object.values(C).map(c => c.acId));
-    $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session directing couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
+    $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Assistant coordinators</div><div class="tier"><div class="node"><b class="num">${acs.length}</b><small class="muted">${Object.keys(C).length} companies · ${acs.filter(a => !acUsed.has(a.id)).length} spare</small></div><div class="node"><b class="num">${by('counselor').length}</b><small class="muted">counselors · ${Object.keys(G).length} groups</small></div></div></div>`;
     const w = validate(S.P, S.org, S.staffMap, S.config);
@@ -1384,13 +1384,13 @@ PAGE_IMPL.staff = {
     <div id="stK" class="kpis"></div>
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
     <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stList"></div></section>
-    <details class="panel adm"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a directing couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
+    <details class="panel adm"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a Session Directing Couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
       <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></details>
     ${can.reset() ? resetPanel() : ''}`;
   },
   update() {
     const cnt = r => S.staffList.filter(s => s.role === r).length;
-    const PL = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Directing couple', logistics: 'Logistics' };
+    const PL = { counselor: 'Counselors', ac: 'Assistant coordinators', coordinator: 'Coordinators', sdc: 'Session Directing Couple', logistics: 'Logistics' };
     $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
     $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics' })[r]]), 'openStaff');
     $('#stTabs').innerHTML = STAFF_ROLES.map(r => `<button data-act="stTab" data-v="${r}" aria-pressed="${UI.staffTab === r}">${esc(ROLES[r])} · ${cnt(r)}</button>`).join('');
@@ -1420,8 +1420,8 @@ function openStaffForm(id) {
 }
 
 /* ---------- page: headcount (nightly, Dec 7–11) ---------- */
-/** Who each role reports the headcount to. The directing couple, Area Seventy and logistics only view. */
-function hcChain() { const r = role(); return r === 'counselor' ? 'your AC' : r === 'ac' ? 'your coordinator' : r === 'coordinator' ? 'the session directing couple' : ''; }
+/** Who each role reports the headcount to. The Session Directing Couple, Area Seventy and logistics only view. */
+function hcChain() { const r = role(); return r === 'counselor' ? 'your AC' : r === 'ac' ? 'your coordinator' : r === 'coordinator' ? 'the Session Directing Couple' : ''; }
 function hcViewOnly() { return can.readOnly() || ['sdc', 'seventy'].includes(role()); }
 const DAYNAME = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function isoUTC(d) { return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
@@ -1452,7 +1452,7 @@ function hcScopeGroups() {
 PAGE_IMPL.headcount = {
   frame() {
     const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live' + (hcViewOnly() ? ' · view only' : '');
-    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Your counselors report their groups here. Check your groups, then submit any group yourself to your coordinator if needed. Missing youth and groups that have not reported are highlighted.' : r === 'coordinator' ? 'Every company, live as counselors and ACs report. Check the night, then report to the session directing couple.' : 'Every group, company and missing youth for the night, updating live as counselors, ACs and coordinators report.'}</p></div>${['regadmin', 'sdc', 'seventy', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
+    return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Your counselors report their groups here. Check your groups, then submit any group yourself to your coordinator if needed. Missing youth and groups that have not reported are highlighted.' : r === 'coordinator' ? 'Every company, live as counselors and ACs report. Check the night, then report to the Session Directing Couple.' : 'Every group, company and missing youth for the night, updating live as counselors, ACs and coordinators report.'}</p></div>${['regadmin', 'sdc', 'seventy', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
     <div class="segscroll"><div class="chips" id="hcDays"></div></div>
     <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>`;
   },
@@ -1534,7 +1534,7 @@ PAGE_IMPL.sessions = {
         <label>Move them to<select id="spDest" data-region="1">${opt('new', 'A new session', sp.dest === 'new')}${others.map(id => opt(id, sessName(id), sp.dest === id)).join('')}</select></label>
         ${sp.dest === 'new' ? `<label>New session name<input id="spName" data-region="1" value="${esc(sp.name)}" placeholder="e.g. FSY Kenya 2026 · Western" autocomplete="off"></label>` : ''}
         <div class="span2"><span class="note" style="display:block;margin-bottom:6px;font-weight:700">Staff team for ${sp.dest === 'new' ? 'the new session' : esc(sessName(sp.dest))}</span>
-          <label class="radio"><input type="radio" name="spTeam" value="same" ${sp.team === 'same' ? 'checked' : ''}><span>The same session directing couple <small class="muted">· they get access to both sessions</small></span></label>
+          <label class="radio"><input type="radio" name="spTeam" value="same" ${sp.team === 'same' ? 'checked' : ''}><span>The same Session Directing Couple <small class="muted">· they get access to both sessions</small></span></label>
           <label class="radio"><input type="radio" name="spTeam" value="new" ${sp.team === 'new' ? 'checked' : ''}><span>A different staff team <small class="muted">· upload their staff file and create their accounts in that session</small></span></label></div>
       </div>
       <p class="th" style="margin:16px 0 6px">Choose stakes, districts, wards and branches</p>
@@ -1573,7 +1573,7 @@ async function moveParticipants(list, target, opts) {
     if (S.stateEx.has(b) && byB[b].some(id => (S.state[b] || {})[id])) await FB.fs.doc(rawPath(src, 'state/' + b)).update(gone).catch(() => { });
     if (S.medicalEx.has(b) && byB[b].some(id => (S.medical[b] || {})[id])) await FB.fs.doc(rawPath(src, 'medical/' + b)).update(gone).catch(() => { });
   }
-  // 3. the session list, and access for the directing couple if they lead both
+  // 3. the session list, and access for the Session Directing Couple if they lead both
   const entry = { [src]: { name: S.config.sessionName || sessName(src), at: (S.sessions[src] || {}).at || 0 } };
   if (opts.isNew) entry[target] = { name: opts.name, at: Date.now(), by: S.meName || '', from: src };
   await FB.fs.doc('meta/sessions').set({ s: entry }, { merge: true });
@@ -1673,8 +1673,8 @@ PAGE_IMPL.access = {
     <div class="panel"><h2>Sign-in requests</h2><p class="note" style="margin-top:-4px">From people whose Google email did not match an account. Choosing a role creates an account for that email.</p><div id="acReq"></div></div>
     <div class="panel"><h2>What each role sees and does</h2><div class="tablewrap"><table><thead><tr><th>Role</th><th>Sees</th><th>Can</th></tr></thead><tbody>
       <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
-      <tr><td>Session directing couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
-      <tr><td>Area Seventy</td><td>Every session</td><td>The same as the session directing couple, in every session, plus splitting and reorganising sessions.</td></tr>
+      <tr><td>Session Directing Couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
+      <tr><td>Area Seventy</td><td>Every session</td><td>The same as the Session Directing Couple, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Head of Logistics</td><td>Every session</td><td>Everything logistics can see and do, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, logistics for everyone.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
@@ -1811,14 +1811,14 @@ document.addEventListener('click', async e => {
     case 'spGo': { if (!can.split()) break; const sp = UI.split; const list = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)); if (!list.length) break;
       const isNew = sp.dest === 'new', name = isNew ? clean(sp.name) : sessName(sp.dest); if (isNew && !name) { toast('Give the new session a name', true); break; }
       const units = uniq(list.map(p => areaOf(p).un)).length;
-      if (!await confirmTyped(`Move ${list.length} participants to ${name}?`, `${list.length} youth from ${units} ward${units === 1 ? '' : 's'} and branch${units === 1 ? '' : 'es'} leave ${esc(sessName(S.sid))}, with their check-ins and medical notes. They leave their groups here. ${sp.team === 'same' ? 'The session directing couple will be able to open both sessions.' : 'Set up the staff team and accounts in the new session.'}`, 'MOVE', 'Move participants')) break;
+      if (!await confirmTyped(`Move ${list.length} participants to ${name}?`, `${list.length} youth from ${units} ward${units === 1 ? '' : 's'} and branch${units === 1 ? '' : 'es'} leave ${esc(sessName(S.sid))}, with their check-ins and medical notes. They leave their groups here. ${sp.team === 'same' ? 'The Session Directing Couple will be able to open both sessions.' : 'Set up the staff team and accounts in the new session.'}`, 'MOVE', 'Move participants')) break;
       const target = isNew ? 's' + rid('') : sp.dest; toast('Moving participants…');
       try { await moveParticipants(list, target, { isNew, name, team: sp.team }); UI.split = { dest: 'new', name: '', team: 'same', sel: new Set() }; UI.sessCounts = null; render(); toast(`${list.length} participants moved to ${name}`, false, { label: 'Open', fn: () => { try { localStorage.setItem('fsy.session.' + S.uid, target); } catch (e) { } location.hash = ''; location.reload(); } }); }
       catch (e) { fail(e); }
       break; }
     case 'resetOrg': { if (!can.reset()) break; if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; await resetOrg(); toast('Groups and companies removed'); break; }
     case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
-    case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and directing couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept but will need linking to the new staff records.', 'DELETE', 'Delete all staff')) break;
+    case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and Session Directing Couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept but will need linking to the new staff records.', 'DELETE', 'Delete all staff')) break;
       S.staff = {}; recompute(true); await setDoc('staff/all', { s: {} }).catch(fail);
       const o = { groups: {}, companies: {} }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = Object.assign({}, g, { counselorId: null }); for (const c of Object.values(S.org.companies)) o.companies[c.id] = Object.assign({}, c, { acId: null, coordId: null });
       if (Object.keys(o.groups).length || Object.keys(o.companies).length) await saveOrg(o, S.orgGen);
