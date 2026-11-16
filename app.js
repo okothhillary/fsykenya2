@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16h · live counts for counselors and ACs';
+const APP_VERSION = '2026-11-16i · ACs and coordinators never lead groups';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -574,12 +574,25 @@ function renumber(groups, companies) {
   const gs = Object.values(groups).sort((a, b) => (order[a.companyId] || 9999) - (order[b.companyId] || 9999) || (a.gender > b.gender ? 1 : -1) || (a.num || 9999) - (b.num || 9999));
   gs.forEach((g, i) => g.num = i + 1);
 }
+/** The same person entered twice (same email, or the same full name) with a leadership role on one record and
+    "counselor" on the other: the counselor record must not lead a group. Returns {counselorId: other record}. */
+const LEAD_ROLES = ['ac', 'coordinator', 'sdc'];
+function shadowedCounselors(staffList) {
+  const out = {}; const lead = staffList.filter(s => LEAD_ROLES.includes(s.role) && !s.test);
+  const key = s => nameTokens(s.name).join(' ');
+  for (const c of staffList) {
+    if (c.role !== 'counselor') continue;
+    const o = lead.find(l => l.id !== c.id && ((c.email && l.email && c.email.toLowerCase() === l.email.toLowerCase()) || (key(c).split(' ').length >= 2 && key(c) === key(l))));
+    if (o) out[c.id] = o;
+  }
+  return out;
+}
 function fullGenerate(P, staffList, cfg) {
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
   const size = +cfg.groupSize || 10;
   const groups = {}, companies = {}, assign = {}, log = [];
   const elig = P.filter(p => p.elig);
-  const counselors = staffList.filter(s => s.role === 'counselor' && s.gender);
+  const shadow = shadowedCounselors(staffList); const counselors = staffList.filter(s => s.role === 'counselor' && s.gender && !shadow[s.id]);
   // Every participant goes to a counselor. With enough counselors groups are the set size; with too few,
   // there is one group per counselor and groups run larger until more counselors are added (then Rebalance).
   for (const gender of ['F', 'M']) {
@@ -641,13 +654,15 @@ function rebalance(P, staffList, org, cfg) {
   // counselors still valid?
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
-    if (g.counselorId && (!c || c.role !== 'counselor')) { log.push(`Group ${g.num} lost its counselor`); g.counselorId = null; }
+    const sh = g.counselorId && shadowedCounselors(staffList)[g.counselorId];
+    if (g.counselorId && (!c || c.role !== 'counselor')) { log.push(c ? `${c.name} is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}, so group ${g.num} needs a new counselor` : `Group ${g.num} lost its counselor`); g.counselorId = null; }
+    else if (sh) { log.push(`${c.name} is also listed as ${ROLES[sh.role].toLowerCase()}, so they were taken off group ${g.num}`); g.counselorId = null; }
     else if (c && c.gender && c.gender !== g.gender) { log.push(`${c.name} no longer matches the gender of group ${g.num}, so they were taken off it and will get a ${c.gender === 'F' ? 'young women' : 'young men'}'s group if one is needed`); g.counselorId = null; }
   }
   // empty groups
   for (const g of Object.values(groups)) if (!members[g.id].length) { log.push(`Group ${g.num} was empty and was removed`); delete groups[g.id]; delete members[g.id]; }
   const used = new Set(Object.values(groups).map(g => g.counselorId).filter(Boolean));
-  const counselors = staffList.filter(s => s.role === 'counselor' && s.gender);
+  const shadow = shadowedCounselors(staffList); const counselors = staffList.filter(s => s.role === 'counselor' && s.gender && !shadow[s.id]);
   const needy = Object.values(groups).filter(g => !g.counselorId);
   assignCounselors(needy, counselors, used, cfg);
   needy.forEach(g => { if (g.counselorId) log.push(`Group ${g.num} now led by ${staffMap[g.counselorId].name}`); });
@@ -807,6 +822,10 @@ function validate(P, org, staffMap, cfg) {
   P.forEach(p => { if (p.g && mem[p.g]) mem[p.g].push(p); });
   const un = P.filter(p => p.elig && (!p.g || !groups[p.g])).length;
   if (un) w.push(['warn', `${un} eligible participant(s) are not in a group`, 'unassigned']);
+  const shadow = shadowedCounselors(Object.values(staffMap));
+  for (const g of Object.values(groups)) { const c = g.counselorId && staffMap[g.counselorId]; if (!c) continue;
+    if (c.role !== 'counselor') w.push(['bad', `Group ${g.num} is led by ${c.name}, who is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}. Press Rebalance.`]);
+    else if (shadow[c.id]) { const co = Object.values(companies).find(x => x.acId === shadow[c.id].id); w.push(['bad', `${c.name} leads group ${g.num} but is also listed as ${ROLES[shadow[c.id].role].toLowerCase()}${co ? ' (Company ' + co.num + ')' : ''}. Press Rebalance, then delete the extra counselor record on the Staff page.`]); } }
   const noCoun = Object.values(groups).filter(g => !(g.counselorId && staffMap[g.counselorId])).length;
   if (noCoun) w.push(['bad', `${noCoun} group(s) have no counselor. Press Rebalance: their youth move into same-gender groups of the same age that have a counselor, and those groups grow until you add counselors.`]);
   for (const g of Object.values(groups)) {
@@ -1734,7 +1753,7 @@ PAGE_IMPL.companies = {
         if ((cn && has(cn.name)) || (mg && +mg[1] === g.num)) { one(cid, g.id); hits.add(g.id); lines.push(cn && has(cn.name) ? `Counselor <b>${esc(cn.name)}</b> → G${g.num}${C[g.companyId] ? ' · Company ' + C[g.companyId].num : ''}` : `G${g.num}${C[g.companyId] ? ' · Company ' + C[g.companyId].num : ''}`); }
       }
       if (q.length >= 3 && !mg && !mc && !lines.length) { const ys = S.P.filter(p => p.g && G[p.g] && has(p.name)).slice(0, 12); ys.forEach(p => { const g = G[p.g]; one(g.companyId && C[g.companyId] ? g.companyId : '_loose', g.id); hits.add(g.id); lines.push(`Youth <b>${esc(p.name)}</b> → G${g.num}${C[g.companyId] ? ' · Company ' + C[g.companyId].num : ''}`); }); }
-      const sp = S.staffList.filter(s => ['ac', 'counselor'].includes(s.role) && has(s.name) && !Object.values(G).some(g => g.counselorId === s.id) && !Object.values(C).some(c => c.acId === s.id));
+      const shq = shadowedCounselors(S.staffList); const sp = S.staffList.filter(s => ['ac', 'counselor'].includes(s.role) && !shq[s.id] && has(s.name) && !Object.values(G).some(g => g.counselorId === s.id) && !Object.values(C).some(c => c.acId === s.id));
       sp.forEach(s => lines.push(`<b>${esc(s.name)}</b> (${esc(ROLES[s.role].toLowerCase())}) has no ${s.role === 'ac' ? 'company' : 'group'} yet`));
       find = `<div class="findbar">${lines.length ? `<b>${lines.length} match${lines.length === 1 ? '' : 'es'}</b><ul>${lines.slice(0, 15).map(l => `<li>${l}</li>`).join('')}</ul>` : `<b>No matches for "${esc(UI.coQ)}"</b>`}<button class="btn small" data-act="coQClear">Clear search</button></div>`;
       comps = comps.filter(c => only[c.id]);
@@ -2053,8 +2072,9 @@ PAGE_IMPL.staff = {
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return 'All companies'; return '—'; };
     const isC = UI.staffTab === 'counselor', ncol = isC ? 7 : 6;
+    const shadowS = shadowedCounselors(S.staffList);
     const linkedIds = new Set(Object.values(S.invites || {}).map(v => v && v.staffId).filter(Boolean));
-    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
     let body = '';
     if (byArea) {
       const T = staffByArea(list);
