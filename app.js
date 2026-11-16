@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16b · accounts link to staff automatically';
+const APP_VERSION = '2026-11-16c · staff email field';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -477,7 +477,7 @@ function intakeRecords(res, choices, role, existing) {
     out.push(Object.assign({}, old ? Object.assign({}, old) : {}, {
       id: old ? old.id : 'S' + fnv((p.email || p.toks.join(' ') + p.bday)).toString(36),
       name: p.name, gender: p.gender || (old && old.gender) || '', bday: p.bday || (old && old.bday) || '', ageCsv: p.bday ? null : (old ? old.ageCsv ?? null : null), role: r,
-      phone: p.phone, email: p.email, unit, stake, unitRaw: p.unitRaw, tshirt: p.tshirt || (old && old.tshirt) || '', diet: p.diet, med: p.med || '', src: 'form', test: false
+      phone: p.phone || (old && old.phone) || '', email: p.email || (old && old.email) || '', unit, stake, unitRaw: p.unitRaw, tshirt: p.tshirt || (old && old.tshirt) || '', diet: p.diet, med: p.med || '', src: 'form', test: false
     }));
     for (const k of ['toks', 'phoneOk', 'uc', 'isUpdate']) delete out[out.length - 1][k];
     out[out.length - 1].isUpdate = !!old;
@@ -2030,7 +2030,8 @@ PAGE_IMPL.staff = {
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return 'All companies'; return '—'; };
     const isC = UI.staffTab === 'counselor', ncol = isC ? 7 : 6;
-    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}</small>${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    const linkedIds = new Set(Object.values(S.invites || {}).map(v => v && v.staffId).filter(Boolean));
+    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
     let body = '';
     if (byArea) {
       const T = staffByArea(list);
@@ -2138,6 +2139,7 @@ function openStaffForm(id) {
     <label>Gender<select id="stGender" required>${opt('', 'Choose…', !(s && s.gender))}${opt('F', 'Female', s && s.gender === 'F')}${opt('M', 'Male', s && s.gender === 'M')}</select></label>
     <label>Age<input id="stAge" type="number" min="16" max="90" inputmode="numeric" value="${esc(s ? (staffAge(s, S.config) ?? '') : '')}"></label>
     <label>Phone<input id="stPhone" inputmode="tel" value="${esc(s ? s.phone || '' : '')}"></label>
+    <label class="span2">Google email <small class="muted" style="font-weight:600">· links their sign-in account to this record</small><input id="stEmail" type="email" inputmode="email" autocomplete="off" placeholder="name@gmail.com" value="${esc(s ? s.email || '' : '')}"></label>
     <label>Stake / district<input id="stStake" list="dlStStakes" value="${esc(s ? s.stake || '' : '')}" autocomplete="off"></label>
     <label>Ward / branch<input id="stUnit" list="dlStUnits" value="${esc(s ? s.unit || '' : '')}" autocomplete="off"></label>
     <label>T-shirt size<select id="stSize">${opt('', 'Not given', !(s && s.tshirt))}${SIZES.map(z => opt(z, SIZE_LABEL[z], s && s.tshirt === z)).join('')}</select></label>
@@ -2653,8 +2655,10 @@ document.addEventListener('submit', async e => {
   if (f.id === 'stForm') {
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
     const age = parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
-    const rec = Object.assign({}, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: val('stRole'), phone: val('stPhone'), tshirt: val('stSize'), stake: clean(val('stStake')), unit: clean(val('stUnit')) });
-    await saveStaffRec(rec); UI.staffTab = rec.role; closeModal(); toast(sid ? 'Saved' : name + ' added');
+    const email = sfEmail(val('stEmail')); if (email && !okEmail(email)) { toast('That email does not look right', true); return; }
+    const dupE = email && S.staffList.find(x => x.id !== sid && (x.email || '').toLowerCase() === email); if (dupE) { toast(`${dupE.name} already has that email`, true); return; }
+    const rec = Object.assign({}, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: val('stRole'), phone: sfPhone(val('stPhone')) || clean(val('stPhone')), email, tshirt: val('stSize'), stake: clean(val('stStake')), unit: clean(val('stUnit')) });
+    await saveStaffRec(rec); linkTried = {}; UI.staffTab = rec.role; closeModal(); toast(sid ? 'Saved' : name + ' added');
   }
   if (f.id === 'invForm') {
     const name = titleCase(val('invName')), email = clean(val('invEmail')).toLowerCase(), r = val('invRole'), sid = val('invStaff') || null;
