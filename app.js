@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17b · Head of Logistics has Area Seventy rights';
+const APP_VERSION = '2026-11-17c · Session Directing Couple can split sessions';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1008,7 +1008,7 @@ const can = {
   report: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'wellness'].includes(role()),
   accounts: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
   // the real account must be allowed to split, and a preview of another role hides it, so previews show exactly what that role sees
-  split: () => TOP_ROLES.includes(realRole()) && TOP_ROLES.includes(role()),
+  split: () => [...TOP_ROLES, 'sdc'].includes(realRole()) && [...TOP_ROLES, 'sdc'].includes(role()),
   headcount: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
 };
 const PAGES = [
@@ -2370,7 +2370,7 @@ async function hcWrite(gid, patch, submit) {
 PAGE_IMPL.sessions = {
   frame() {
     UI.split = UI.split || { dest: 'new', name: '', team: 'same', sel: new Set() };
-    return `<section class="pagehead"><div><p class="th">Sessions · registration admin, Area Seventy & Head of Logistics</p><h1>Split or reorganise</h1><p class="note">Move participants by stake, district, ward or branch into a new session or another existing one. Only participants move: staff for the new session come from its own staff upload.</p></div></section>
+    return `<section class="pagehead"><div><p class="th">Sessions · registration admin, Area Seventy, Head of Logistics & Session Directing Couple</p><h1>Split or reorganise</h1><p class="note">Move participants by stake, district, ward or branch into a new session or another existing one. Only participants move: staff for the new session come from its own staff upload.</p></div></section>
     <section class="panel"><div class="panel-head"><h2>Sessions</h2></div><div id="sessList" class="sess-list"></div></section>
     <section class="panel" id="splitPanel"></section>`;
   },
@@ -2413,10 +2413,19 @@ async function loadSessionCounts() {
 }
 async function moveParticipants(list, target, opts) {
   const src = S.sid, del = firebase.firestore.FieldValue.delete;
+  const isSdc = realRole() === 'sdc', myKey = emailKey(S.email || '');
   const byB = {}; list.forEach(p => (byB[bucketOf(p.id)] = byB[bucketOf(p.id)] || []).push(p.id));
   const intake = {}; for (const u in S.intake) Object.assign(intake, (S.intake[u] || {}).p || {});
+  // 1. the session list first (a Session Directing Couple may only open a new session they created)
+  const entry = { [src]: { name: S.config.sessionName || sessName(src), at: (S.sessions[src] || {}).at || 0 } };
+  if (opts.isNew) entry[target] = { name: opts.name, at: Date.now(), by: S.meName || '', creator: S.email || '', from: src };
+  await FB.fs.doc('meta/sessions').set({ s: entry }, { merge: true });
+  Object.assign(S.sessions, entry);
+  // 2. access: a directing couple adds the new session to their own account, then to the other directing couple of this session
+  if (isSdc && opts.isNew) { const mine = invSessions(S.invites[myKey] || {}); if (!mine.includes(target)) await FB.fs.doc('invites/' + myKey).set({ sessions: mine.concat(target) }, { merge: true }); }
+  if (opts.team === 'same') for (const e in S.invites) { const v = S.invites[e]; if (e !== myKey || !isSdc) if (v.role === 'sdc' && invSessions(v).includes(src) && !invSessions(v).includes(target)) await FB.fs.doc('invites/' + e).set({ sessions: invSessions(v).concat(target) }, { merge: true }).catch(err => console.warn('access', e, err)); }
   if (opts.isNew) await FB.fs.doc(rawPath(target, 'config/session')).set(Object.assign({}, S.config, { sessionName: opts.name, excludedStakes: [], excludedUnits: [] }));
-  // 1. copy into the destination
+  // 3. copy into the destination
   for (const b in byB) {
     const r = {}, st = {}, md = {};
     byB[b].forEach(id => {
@@ -2428,19 +2437,16 @@ async function moveParticipants(list, target, opts) {
     if (Object.keys(st).length) await FB.fs.doc(rawPath(target, 'state/' + b)).set({ p: st }, { merge: true });
     if (Object.keys(md).length) await FB.fs.doc(rawPath(target, 'medical/' + b)).set({ p: md }, { merge: true });
   }
-  // 2. remove from this session (field by field, so check-ins made meanwhile elsewhere are untouched)
+  // 4. remove from this session (field by field, so check-ins made meanwhile elsewhere are untouched)
   for (const b in byB) {
     const gone = {}; byB[b].forEach(id => gone['p.' + id] = del());
     await FB.fs.doc(rawPath(src, 'roster/' + b)).update(gone);
     if (S.stateEx.has(b) && byB[b].some(id => (S.state[b] || {})[id])) await FB.fs.doc(rawPath(src, 'state/' + b)).update(gone).catch(() => { });
     if (S.medicalEx.has(b) && byB[b].some(id => (S.medical[b] || {})[id])) await FB.fs.doc(rawPath(src, 'medical/' + b)).update(gone).catch(() => { });
   }
-  // 3. the session list, and access for the Session Directing Couple if they lead both
-  const entry = { [src]: { name: S.config.sessionName || sessName(src), at: (S.sessions[src] || {}).at || 0 } };
-  if (opts.isNew) entry[target] = { name: opts.name, at: Date.now(), by: S.meName || '', from: src };
-  await FB.fs.doc('meta/sessions').set({ s: entry }, { merge: true });
-  Object.assign(S.sessions, entry); if (!S.mySessions.includes(target)) S.mySessions.push(target);
-  if (opts.team === 'same') for (const e in S.invites) { const v = S.invites[e]; if (v.role === 'sdc' && invSessions(v).includes(src) && !invSessions(v).includes(target)) await FB.fs.doc('invites/' + e).set({ sessions: invSessions(v).concat(target) }, { merge: true }); }
+  // 5. a directing couple handing a new session to a different team steps out of it
+  if (isSdc && opts.isNew && opts.team === 'new') { const mine = invSessions(S.invites[myKey] || {}).filter(x => x !== target); await FB.fs.doc('invites/' + myKey).set({ sessions: mine }, { merge: true }).catch(() => { }); }
+  else if (!S.mySessions.includes(target)) S.mySessions.push(target);
 }
 
 /* page: data */
@@ -2710,7 +2716,7 @@ document.addEventListener('click', async e => {
     case 'spGo': { if (!can.split()) break; const sp = UI.split; const list = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)); if (!list.length) break;
       const isNew = sp.dest === 'new', name = isNew ? clean(sp.name) : sessName(sp.dest); if (isNew && !name) { toast('Give the new session a name', true); break; }
       const units = uniq(list.map(p => areaOf(p).un)).length;
-      if (!await confirmTyped(`Move ${list.length} participants to ${name}?`, `${list.length} youth from ${units} ward${units === 1 ? '' : 's'} and branch${units === 1 ? '' : 'es'} leave ${esc(sessName(S.sid))}, with their check-ins and medical notes. They leave their groups here. ${sp.team === 'same' ? 'The Session Directing Couple will be able to open both sessions.' : 'Set up the staff team and accounts in the new session.'}`, 'MOVE', 'Move participants')) break;
+      if (!await confirmTyped(`Move ${list.length} participants to ${name}?`, `${list.length} youth from ${units} ward${units === 1 ? '' : 's'} and branch${units === 1 ? '' : 'es'} leave ${esc(sessName(S.sid))}, with their check-ins and medical notes. They leave their groups here. ${sp.team === 'same' ? 'The Session Directing Couple will be able to open both sessions.' : 'Set up the staff team and accounts in the new session.' + (realRole() === 'sdc' && isNew ? ' <b>You will not keep access to the new session</b>: a registration admin, the Area Seventy or the Head of Logistics sets up its team.' : '')}`, 'MOVE', 'Move participants')) break;
       const target = isNew ? 's' + rid('') : sp.dest; toast('Moving participants…');
       try { await moveParticipants(list, target, { isNew, name, team: sp.team }); UI.split = { dest: 'new', name: '', team: 'same', sel: new Set() }; UI.sessCounts = null; render(); toast(`${list.length} participants moved to ${name}`, false, { label: 'Open', fn: () => { try { localStorage.setItem('fsy.session.' + S.uid, target); } catch (e) { } location.hash = ''; location.reload(); } }); }
       catch (e) { fail(e); }
