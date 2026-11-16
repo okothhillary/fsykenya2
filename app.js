@@ -44,10 +44,10 @@ const downloadShim = {
   }
 };
 
-/* ===== Core logic ===== */
-/* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
+/* Core logic */
+/* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16u · no renumber summary';
+const APP_VERSION = '2026-11-17a · tally for leaders only, gender on accounts';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -124,7 +124,7 @@ function ageOn(bday, onDate) {
 }
 function bandOfAge(a) { if (a == null || isNaN(a)) return null; return a <= 15 ? 'Y' : 'O'; }
 
-/* ---- Column mapping ---- */
+/* Column mapping */
 const FIELDS = [
   ['first', 'First name', ['first name', 'firstname', 'given name', 'first']],
   ['last', 'Last name', ['last name', 'lastname', 'surname', 'family name', 'last']],
@@ -204,7 +204,7 @@ function rowsToRecords(rows, mapping, mode, now) {
   return out;
 }
 
-/* ---- Medical & dietary cleanup ---- */
+/* Medical & dietary cleanup */
 const BENIGN_PHRASES = [
   /\b(physically |medically )?(fit|fine|healthy|well|okay|ok|okey|good|normal)\b/g, /\bn ?[\/\\]? ?a\b/g, /\bnil+\b/g, /\bnone\b/g,
   /no (known )?allerg(y|ies)/g, /not sick/g, /good health/g, /perfect condition/g, /no medical( \w+)*/g,
@@ -245,7 +245,7 @@ function issueText(raw) {
 function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 function cats(text, list) { if (!text) return []; const s = text.toLowerCase(); const r = list.filter(([, re]) => re.test(s)).map(([n]) => n); return r.length ? r : ['Other']; }
 
-/* ---- Staff sign-up forms (Google Forms and similar) ----
+/* Staff sign-up forms (Google Forms and similar).
    Different from the portal export: one name column, day/month/year birthdays, free-typed ward or
    branch, people who submitted more than once. Everything here is pure so it can be tested alone. */
 
@@ -375,7 +375,7 @@ function dedupeSubs(rows) {
   return Object.values(g).map(mergeSubs);
 }
 
-/* ---- Matching typed ward/branch names to the real unit and its stake or district ---- */
+/* Matching typed ward/branch names to the real unit and its stake or district */
 const UNIT_STOP = new Set(['ward', 'wards', 'branch', 'branches', 'br', 'brnch', 'church', 'lds', 'the', 'unit', 'congregation', 'of', 'in', 'kenya']);
 function unitCore(s) {
   s = String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[’'`]/g, '');
@@ -493,7 +493,7 @@ function intakeRecords(res, choices, role, existing) {
 }
 
 
-/* ---- Derive the working participant list ---- */
+/* Derive the working participant list */
 function derive(rosterBuckets, stateBuckets, cfg, org, staffMap) {
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
   const exStake = new Set(cfg.excludedStakes || []), exUnit = new Set(cfg.excludedUnits || []), exStatus = new Set(cfg.excludedStatuses || []);
@@ -542,7 +542,7 @@ function cPref(c, band, cfg) { // 0 = preferred, 1 = unknown age, 2 = other band
   return a >= 23 ? 0 : 2;
 }
 
-/* ---- Company / group generation ---- */
+/* Company / group generation */
 function sortForDeal(a, b) { return (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name); }
 function assignCounselors(groupsArr, counselors, used, cfg) {
   for (let pass = 0; pass <= 2; pass++) {
@@ -887,7 +887,7 @@ function validate(P, org, staffMap, cfg) {
   return w;
 }
 
-/* ---- T-shirt blanks: estimate sizes from the people most like them ---- */
+/* T-shirt blanks: estimate sizes from the people most like them */
 const SIZE_ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
 function sizeRank(s) { const i = SIZE_ORDER.indexOf(s); return i < 0 ? 99 : i; }
 function largestRemainder(weights, n) { // weights: {size: w}
@@ -929,14 +929,14 @@ function teeRedistribute(list) {
   return { cells, perPerson, totals, blankN: blanks.length };
 }
 
-/* ---- SHA-256 (sign-in email matching) ---- */
+/* SHA-256 (sign-in email matching) */
 function sha256(ascii) { function rr(v, a) { return (v >>> a) | (v << (32 - a)); } var mp = Math.pow, maxWord = mp(2, 32), result = '', words = [], bitLen = ascii.length * 8, hash = [], k = [], pc = 0, isC = {}, i, j; for (var c = 2; pc < 64; c++) { if (!isC[c]) { for (i = 0; i < 313; i += c) isC[i] = c; hash[pc] = (mp(c, .5) * maxWord) | 0; k[pc++] = (mp(c, 1 / 3) * maxWord) | 0; } } ascii += '\x80'; while (ascii.length % 64 - 56) ascii += '\x00'; for (i = 0; i < ascii.length; i++) { j = ascii.charCodeAt(i); words[i >> 2] |= j << ((3 - i) % 4) * 8; } words[words.length] = ((bitLen / maxWord) | 0); words[words.length] = bitLen; for (j = 0; j < words.length;) { var w = words.slice(j, j += 16), old = hash; hash = hash.slice(0, 8); for (i = 0; i < 64; i++) { var w15 = w[i - 15], w2 = w[i - 2], a = hash[0], e = hash[4], t1 = hash[7] + (rr(e, 6) ^ rr(e, 11) ^ rr(e, 25)) + ((e & hash[5]) ^ ((~e) & hash[6])) + k[i] + (w[i] = (i < 16) ? w[i] : (w[i - 16] + (rr(w15, 7) ^ rr(w15, 18) ^ (w15 >>> 3)) + w[i - 7] + (rr(w2, 17) ^ rr(w2, 19) ^ (w2 >>> 10))) | 0), t2 = (rr(a, 2) ^ rr(a, 13) ^ rr(a, 22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2])); hash = [(t1 + t2) | 0].concat(hash); hash[4] = (hash[4] + t1) | 0; } for (i = 0; i < 8; i++) hash[i] = (hash[i] + old[i]) | 0; } for (i = 0; i < 8; i++) for (j = 3; j + 1; j--) { var b = (hash[i] >> (j * 8)) & 255; result += ((b < 16) ? 0 : '') + b.toString(16); } return result; }
 function emailKey(e) { return String(e || '').trim().toLowerCase(); }
 
-/* ---- CSV writer ---- */
+/* CSV writer */
 function toCSV(rows) { return rows.map(r => r.map(v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(',')).join('\n'); }
 
-/* ---- Test staff ---- */
+/* Test staff */
 const TEST_F = ['Achieng', 'Wanjiru', 'Chebet', 'Njeri', 'Akinyi', 'Nafula', 'Wairimu', 'Atieno', 'Mumbua', 'Kerubo', 'Jepchirchir', 'Nekesa', 'Adhiambo', 'Wambui', 'Moraa', 'Cherono', 'Muthoni', 'Awino', 'Nyambura', 'Kemunto'];
 const TEST_M = ['Otieno', 'Kamau', 'Kiprono', 'Mwangi', 'Omondi', 'Wafula', 'Kipchumba', 'Njoroge', 'Ochieng', 'Mutua', 'Barasa', 'Kibet', 'Odhiambo', 'Githinji', 'Simiyu', 'Korir', 'Onyango', 'Maina', 'Wekesa', 'Rotich'];
 const TEST_LAST = ['Test', 'Sample', 'Demo'];
@@ -957,8 +957,8 @@ function makeTestStaff(P, cfg, nAcs) {
 }
 
 
-/* ===== Interface ===== */
-/* ===== FSY Check-in UI ===== */
+/* Interface */
+/* FSY Check-in UI */
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const S = {
@@ -972,7 +972,7 @@ const S = {
 };
 const UI = { page: null, frameKey: '', q: '', filter: 'all', stake: '', unit: '', limit: 40, logScope: 'all', staffTab: 'counselor', open: new Set(), openStakes: new Set(), band: '', imp: null, genLog: null, pending: false };
 
-/* ---------- roles ---------- */
+/* roles */
 /* Roles that open every session and may split or reorganise sessions. */
 const TOP_ROLES = ['regadmin', 'seventy', 'loghead'];
 function invSessions(i) { return i && Array.isArray(i.sessions) && i.sessions.length ? i.sessions : ['main']; }
@@ -1013,7 +1013,7 @@ const can = {
 };
 const PAGES = [
   ['checkin', 'Check-in', () => can.checkin() || role() === 'wellness'],
-  ['tally', 'Tally', () => !!role()],
+  ['tally', 'Tally', () => !!role() && !['counselor', 'ac'].includes(role())],
   ['companies', 'Companies & groups', () => can.checkin()],
   ['exceptions', 'Walk-ins & exceptions', () => can.checkin() || role() === 'logistics'],
   ['logistics', 'Logistics', () => can.logistics()],
@@ -1033,7 +1033,7 @@ function currentPage() {
   return ok.includes('checkin') ? 'checkin' : ok[0] || null;
 }
 
-/* ---------- helpers ---------- */
+/* helpers */
 function toast(msg, err, action) {
   const box = $('#toast'); while (box.children.length > 1) box.firstChild.remove();
   const t = document.createElement('div'); t.className = 'toast' + (err ? ' err' : '');
@@ -1079,7 +1079,7 @@ async function exportCSV(name, rows) {
   try { await S.dl.save({ filename: name, data: '﻿' + toCSV(rows) }); } catch (e) { if (e && e.code !== 'declined') toast('The file was not saved.', true); }
 }
 
-/* ---------- writes ---------- */
+/* writes */
 const Q = {};
 function serial(path, fn) { const p = (Q[path] || Promise.resolve()).catch(() => { }).then(fn); Q[path] = p; return p; }
 function upd(path, data, exists) { return serial(path, () => exists ? S.db.doc(path).update(data) : S.db.doc(path).set(data)); }
@@ -1105,7 +1105,7 @@ function saveStaffRec(rec) { S.staff = Object.assign({}, S.staff, { [rec.id]: re
 function saveSizes(patch) { S.config = Object.assign({}, S.config, patch); recompute(true); return (S.configEx ? upd('config/session', patch, true) : setDoc('config/session', S.config)).catch(fail); }
 function saveConfig(patch) { S.config = Object.assign({}, S.config, patch); recompute(true); S.configEx = true; return setDoc('config/session', S.config).catch(fail); }
 
-/* ---------- data load ---------- */
+/* data load */
 let rcT = null;
 function recompute(now) {
   clearTimeout(rcT);
@@ -1197,7 +1197,8 @@ async function syncAccountStaff() {
     if (v.staffId && S.staff[v.staffId] && S.staff[v.staffId].role === v.role && v.staffId !== id) { if (cur && cur.fromAccount) del.push(id); continue; }
     if (!cur && S.staffList.some(s => !s.fromAccount && s.role === v.role && norm(s.name) && norm(s.name) === norm(v.name))) continue;
     const name = titleCase(v.name || h.split('@')[0]);
-    if (!cur || cur.name !== name || cur.role !== v.role) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '' }, cur || {}, { id, name, role: v.role, fromAccount: 1 });
+    const gender = v.gender || (cur && cur.gender) || '';
+    if (!cur || cur.name !== name || cur.role !== v.role || (cur.gender || '') !== gender) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '' }, cur || {}, { id, name, role: v.role, gender, fromAccount: 1 });
   }
   for (const id in S.staff) { const s = S.staff[id]; if (s && s.fromAccount && !want[id]) del.push(id); }
   if (!Object.keys(add).length && !del.length) return;
@@ -1285,7 +1286,7 @@ async function signIn() {
   catch (e) { if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) await FB.auth.signInWithRedirect(p); else toast(signInError(e), true); }
 }
 
-/* ---------- shell ---------- */
+/* shell */
 const I = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 const ICONS = {
   checkin: I('<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.6 2.6L16.5 9"/>'),
@@ -1305,7 +1306,7 @@ const ICONS = {
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'], ac: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -1409,7 +1410,7 @@ async function resetOrg() {
   await setStates(ch).catch(fail);
 }
 
-/* ---------- participant scope helpers ---------- */
+/* participant scope helpers */
 function myGroups() { const sid = myStaffId(); return Object.values(S.org.groups).filter(g => g.counselorId && g.counselorId === sid); }
 function myCompanies() { const sid = myStaffId(); const r = role(); if (r === 'coordinator') return Object.values(S.org.companies); return Object.values(S.org.companies).filter(c => sid && ((r === 'ac' && c.acId === sid) || (r === 'coordinator' && c.coordId === sid))); }
 function inMine(p) {
@@ -1430,7 +1431,7 @@ function moveSelect(p) {
   return `<select data-act="moveP" data-id="${esc(p.id)}" aria-label="Move ${esc(p.name)} to group">${can.moveAny() ? opt('', '— Not in a group', !p.g) : ''}${gs.map(g => opt(g.id, `G${g.num} · ${g.gender === 'F' ? 'YW' : 'YM'} ${BANDS[g.band]}${g.companyId && C[g.companyId] ? ' · Co ' + C[g.companyId].num : ''}${g.gender !== p.gender || g.band !== p.band ? ' ⚠' : ''}`, p.g === g.id)).join('')}</select>`;
 }
 
-/* ---------- page: check-in ---------- */
+/* page: check-in */
 const PAGE_IMPL = {};
 PAGE_IMPL.checkin = {
   frame() {
@@ -1469,7 +1470,7 @@ PAGE_IMPL.checkin = {
     }
     const toks = UI.q.toLowerCase().split(/\s+/).filter(Boolean);
     const browsing = !toks.length && !UI.stake && UI.filter === 'all';
-    // ----- selection header (a stake or a unit is open) -----
+    // selection header (a stake or a unit is open)
     if (UI.stake) {
       const inSel = P.filter(p => (p.inc || p.s) && areaOf(p).st === UI.stake && (!UI.unit || areaOf(p).un === UI.unit));
       const units = uniq(P.filter(p => (p.inc || p.s) && areaOf(p).st === UI.stake).map(p => areaOf(p).un)).sort();
@@ -1531,7 +1532,7 @@ function ciRow(p, showUnit) {
   return `<div class="crow st-${p.s || 'none'}"><button class="crow-name" data-act="detail" data-id="${esc(p.id)}"><b>${esc(p.name)}</b>${issues}<small>${p.age ?? '?'} yrs · ${p.gender === 'F' ? 'Female' : p.gender === 'M' ? 'Male' : '?'} · ${p.group ? 'G' + p.group.num + (p.company ? ' · Co ' + p.company.num : '') : 'No group yet'} · Size ${tee}</small>${showUnit ? `<small>${esc(p.unit || '—')} · ${esc(p.stake || '—')}</small>` : ''}${p.flags.some(f => ['walkin', 'area', 'status', 'pending'].includes(f)) ? `<span class="flags">${flagChips(p, ['walkin', 'area', 'status', 'pending'])}</span>` : ''}</button><div class="crow-act">${act}</div></div>`;
 }
 
-/* ---------- printable check-in form (PDF) ---------- */
+/* printable check-in form (PDF) */
 function loadScript(src) { return new Promise((res, rej) => { const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = rej; document.head.appendChild(el); }); }
 async function loadPdfLib() {
   if (window.PDFLib) return window.PDFLib;
@@ -1704,7 +1705,7 @@ function pCard(p) {
     ${repChip(p)}<div class="pc-actions">${acts}${can.report() && seesPrivate(p) ? `<button class="btn" data-act="repNew" data-id="${esc(p.id)}" style="flex:0 0 auto" title="Report a health concern">Health</button>` : ''}<button class="btn" data-act="detail" data-id="${esc(p.id)}" style="flex:0 0 auto">Details</button></div></article>`;
 }
 
-/* ---------- page: tally ---------- */
+/* page: tally */
 PAGE_IMPL.tally = {
   frame() { return `<section class="pagehead"><div><h1>Tally</h1><p class="note" style="margin:4px 0 0">Live counts for the session, each stake and each ward or branch. Tap a stake to see its units.</p></div><button class="btn" data-act="tallyCsv">Export CSV</button></section><div id="tK" class="kpis"></div><div class="panel"><div class="panel-head"><h2>Everyone at the session</h2></div><div id="tAll"></div></div><div class="grid2"><div class="panel"><h2>By age group and gender</h2><div id="tBG"></div></div><div class="panel"><h2>By company</h2><div id="tCo"></div></div></div><div class="panel"><h2>By stake, ward and branch</h2><div id="tSt"></div></div>`; },
   update() {
@@ -1754,14 +1755,16 @@ function checksList(w) {
   }).join('')}</ul>`;
 }
 
-/* ---------- page: companies ---------- */
+/* page: companies */
 PAGE_IMPL.companies = {
   frame() {
+    // counselors and ACs land on their own group or company, with a counselor's group list already open
+    if (!UI.coMineSet && ['counselor', 'ac'].includes(role())) { UI.coMineSet = true; UI.band = 'mine'; if (role() === 'counselor') myGroups().forEach(g => UI.open.add(g.id)); }
     const adm = can.orgEdit();
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${gsize(S.config, 'F') === gsize(S.config, 'M') ? esc(gsize(S.config, 'F')) : `${gsize(S.config, 'F')} young women or ${gsize(S.config, 'M')} young men`} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
     <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber">Renumber groups by company</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     ${adm ? foldSec('co-sizes', 'Group sizes', 'coSizeN', '', '<div id="coSizes"></div>') : ''}
-    <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
+    <div id="coLog"></div><div class="co-top"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
     <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '13–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
     <div id="coFind"></div><div id="coGrid" class="companies"></div>
     ${can.reset() ? resetPanel() : ''}`;
@@ -1782,11 +1785,13 @@ PAGE_IMPL.companies = {
       const sizeN = gsize(S.config, c.gender); const over = Object.values(G).filter(g => g.gender === c.gender && (memN[g.id] || 0) > sizeN).length;
       return [c, over ? `${over} ${c.gender === 'F' ? "young women's" : "young men's"} group(s) are over ${sizeN}. Press Rebalance to give them a group` : `spare: every ${c.gender === 'F' ? "young women's" : "young men's"} group already has ${sizeN} or fewer. Available as a reserve or to swap in`];
     }).sort((a, b) => a[1].localeCompare(b[1]) || a[0].name.localeCompare(b[0].name));
-    $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
-      <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
-      <div class="tierlabel">Assistant coordinators and counselors</div><div class="tier stat-tier">
+    $('#coChart').innerHTML = `<div class="orgchart lead-grid"><div class="lead-col"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
+</div>
+      <div class="lead-col"><div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
+</div>
+      <div class="lead-col lead-wide"><div class="tierlabel">Assistant coordinators and counselors</div><div class="tier stat-tier">
         <div class="statnode"><div class="sn-top"><b>${acs.length}</b><span>assistant coordinators</span></div><ul><li><b>${acs.filter(a => acUsed.has(a.id)).length}</b> lead a company</li><li class="${acs.filter(a => !acUsed.has(a.id)).length ? 'warn' : ''}"><b>${acs.filter(a => !acUsed.has(a.id)).length}</b> spare</li></ul></div>
-        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list">${fitHint()}<p class="note" style="margin:10px 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
+        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list">${fitHint()}<p class="note" style="margin:10px 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
     if ($('#coSizes')) {
       $('#coSizeN').textContent = `${gsize(S.config, 'F')} young women · ${gsize(S.config, 'M')} young men`;
       if (!$('#sizeForm')) $('#coSizes').innerHTML = `<form id="sizeForm" class="form size-form"><label>Young women per group<input id="szF" type="number" min="4" max="25" value="${gsize(S.config, 'F')}"></label><label>Young men per group<input id="szM" type="number" min="4" max="25" value="${gsize(S.config, 'M')}"></label><div class="size-go"><button class="btn primary" type="submit">Save sizes</button></div></form><p class="note" style="margin:6px 0 10px">After changing sizes, press <b>Rebalance, keep groups</b>. Groups over the new size get a free counselor of the same gender; nobody already in a group under the size is moved.</p><div id="coFit"></div>`;
@@ -1827,6 +1832,9 @@ PAGE_IMPL.companies = {
       find = `<div class="findbar">${lines.length ? `<b>${lines.length} match${lines.length === 1 ? '' : 'es'}</b><ul>${lines.slice(0, 15).map(l => `<li>${l}</li>`).join('')}</ul>` : `<b>No matches for "${esc(UI.coQ)}"</b>`}<button class="btn small" data-act="coQClear">Clear search</button></div>`;
       comps = comps.filter(c => only[c.id]);
     }
+    if (UI.band === 'mine' && role() === 'counselor' && !only) { // a counselor's "Mine" shows just their own group(s), inside their company
+      only = {}; myGroups().forEach(g => { const cid = g.companyId && C[g.companyId] ? g.companyId : '_loose'; (only[cid] = only[cid] || new Set()).add(g.id); });
+    }
     $('#coFind').innerHTML = find;
     const looseN = Object.values(G).filter(g => (!g.companyId || !C[g.companyId]) && (!only || (only._loose && only._loose.has(g.id)))).length;
     const solo = comps.length === 1 && !(looseN && UI.band !== 'mine' && !lim);
@@ -1856,7 +1864,7 @@ function grpBlock(g, mem, hit) {
    ${adm ? `<div><button class="btn small danger" data-act="delGrp" data-id="${g.id}">Remove group</button></div>` : ''}</div>` : ''}</div>`;
 }
 
-/* ---------- tally by stake and unit (used on several pages) ---------- */
+/* tally by stake and unit (used on several pages) */
 function areaTally(items, cols, setName) {
   const T = {};
   items.forEach(it => { const st = it.stake || '(No stake given)', un = it.unit || '(No ward or branch given)'; const s = T[st] = T[st] || { t: {}, u: {} }; const u = s.u[un] = s.u[un] || {}; s.t[it.key] = (s.t[it.key] || 0) + 1; u[it.key] = (u[it.key] || 0) + 1; });
@@ -1872,7 +1880,7 @@ function areaTally(items, cols, setName) {
   return h + `<tr class="total"><td>All stakes</td>${cols.map(([k]) => `<td class="n">${tot[k] || 0}</td>`).join('')}<td class="n">${sum(tot)}</td></tr></tbody></table></div><p class="note" style="margin:6px 0 0">Tap a stake to see its wards and branches.</p>`;
 }
 
-/* ---------- page: exceptions ---------- */
+/* page: exceptions */
 PAGE_IMPL.exceptions = {
   frame() {
     const stakes = uniq(S.P.map(p => p.stake).filter(Boolean)).sort(), units = uniq(S.P.map(p => p.unit).filter(Boolean)).sort();
@@ -1922,17 +1930,17 @@ function exRow(p) {
   return `<tr><td><a href="#" data-act="detail" data-id="${esc(p.id)}"><b>${esc(p.name)}</b></a><br><small class="muted">${p.age ?? '?'} yrs · ${p.gender || '?'}</small></td><td><div class="flags">${reason}</div></td><td>${esc(p.unit)}<br><small class="muted">${esc(p.stake)}</small></td><td>${st}</td><td>${ms || (p.group ? 'G' + p.group.num : '<span class="muted">None</span>')}</td>${can.admin() ? `<td>${incBtn}</td>` : ''}</tr>`;
 }
 
-/* ---------- page: logistics ---------- */
+/* page: logistics */
 function lgHash() { const h = (location.hash || '').slice(1); return /^(med|diet|tee)-[a-z0-9-]+$/.test(h) ? h : ''; }
 function registered() { return S.P.filter(p => p.inc || p.s); }
 PAGE_IMPL.logistics = {
-  frame() { return `<section class="pagehead"><div><p class="th">Logistics${['counselor', 'ac'].includes(role()) ? ' · your company only' : ' · whole session'}</p><h1>Medical, dietary and T-shirts</h1><p class="note" style="margin:4px 0 0">Built from the upload, before anyone checks in. Notes such as "none", "N/A", "nil" or "fit" are left out. Tap an issue to see exactly who has it.</p></div><div class="seg" role="group" aria-label="Who to count">${[['all', 'Everyone registered'], ['in', 'Checked in now']].map(([v, l]) => `<button data-act="logScope" data-v="${v}" aria-pressed="${UI.logScope === v}">${l}</button>`).join('')}</div></section>
+  frame() { return `<section class="pagehead"><div><p class="th">Logistics${role() === 'counselor' ? ' · your group only' : role() === 'ac' ? ' · your company only' : ' · whole session'}</p><h1>Medical, dietary and T-shirts</h1><p class="note" style="margin:4px 0 0">Built from the upload, before anyone checks in. Notes such as "none", "N/A", "nil" or "fit" are left out. Tap an issue to see exactly who has it.</p></div><div class="seg" role="group" aria-label="Who to count">${[['all', 'Everyone registered'], ['in', 'Checked in now']].map(([v, l]) => `<button data-act="logScope" data-v="${v}" aria-pressed="${UI.logScope === v}">${l}</button>`).join('')}</div></section>
   <div id="lgK" class="kpis"></div>
   ${foldSec('sec-med', 'Medical', 'lgMedN', '<button class="btn small" data-act="lgCsv" data-v="med">Export CSV</button>', '<div id="lgMed"></div>')}
   ${foldSec('sec-diet', 'Dietary', 'lgDietN', '<button class="btn small" data-act="lgCsv" data-v="diet">Export CSV</button>', '<div id="lgDiet"></div>')}
   ${foldSec('sec-tee', 'T-shirts', 'lgTeeN', '<button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button>', '<div id="lgSize"></div>')}
   ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-steee', 'Staff T-shirts', 'lgStN', '<button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button>', '<div id="lgStaffSize"></div>')}`; },
-  scope() { return (UI.logScope === 'in' ? S.P.filter(p => p.s === 'in') : registered()).filter(seesPrivate); },
+  scope() { const mine = role() === 'counselor' ? new Set(myGroups().map(g => g.id)) : null; return (UI.logScope === 'in' ? S.P.filter(p => p.s === 'in') : registered()).filter(p => seesPrivate(p) && (!mine || (p.g && mine.has(p.g)))); },
   update() {
     const L = this.scope(), H = lgHash();
     const med = L.filter(p => p.medIssue), diet = L.filter(p => p.dietIssue), blanks = L.filter(p => !p.tshirt);
@@ -2038,7 +2046,7 @@ function fitWidth() {
 }
 window.addEventListener('resize', () => { fitKey = ''; fitWidth(); });
 
-/* ---------- health concerns (reported by counselors, followed up by wellness coordinators) ---------- */
+/* health concerns (reported by counselors, followed up by wellness coordinators) */
 const REP_KINDS = [['medical', 'Medical'], ['dietary', 'Dietary'], ['injury', 'Injury or illness'], ['emotional', 'Emotional wellbeing'], ['other', 'Other']];
 const repKind = k => (REP_KINDS.find(x => x[0] === k) || [k, k])[1];
 function allReports() { const out = []; for (const u in S.reports || {}) for (const id in S.reports[u] || {}) { const r = S.reports[u][id]; if (r) out.push(Object.assign({ id, owner: u }, r)); } return out.sort((a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1) || (b.urgent ? 1 : 0) - (a.urgent ? 1 : 0) || b.at - a.at); }
@@ -2081,7 +2089,7 @@ async function updateReport(owner, id, patch) {
   try { await S.db.doc('reports/' + owner).set({ r: { [id]: patch } }, { merge: true }); } catch (e) { fail(e); }
 }
 
-/* ---------- page: wellness ---------- */
+/* page: wellness */
 function wlOpen(id) { return foldOpen(id); }
 function foldOpen(id) { const o = UI.foldSet || {}; return id in o ? o[id] : id === 'wl-rep'; }
 function foldSec(id, title, countId, tools, body) { return `<details class="panel fold" id="${id}" ${foldOpen(id) ? 'open' : ''}><summary><h2>${title}</h2><span class="chip" id="${countId}"></span></summary><div class="fold-body">${tools ? `<div class="fold-tools">${tools}</div>` : ''}${body}</div></details>`; }
@@ -2114,7 +2122,7 @@ PAGE_IMPL.wellness = {
   }
 };
 
-/* ---------- page: staff ---------- */
+/* page: staff */
 PAGE_IMPL.staff = {
   frame() {
     const real = S.staffList.filter(s => !s.test && !s.fromAccount).length;
@@ -2171,7 +2179,7 @@ function staffByArea(list) {
   return T;
 }
 
-/* ---- staff sign-up form import (Staff page) ---- */
+/* staff sign-up form import (Staff page) */
 function sfKnownUnits() { return S.P.filter(p => p.src !== 'walkin' && p.stake && p.unit).map(p => [p.stake, p.unit]); }
 async function sfRead(file) {
   if (typeof XLSX === 'undefined') { toast('The spreadsheet reader did not load. Check your connection and reload.', true); return; }
@@ -2265,7 +2273,7 @@ function openStaffForm(id) {
   setTimeout(() => { const n = $('#stName'); if (n && !s) n.focus(); }, 60);
 }
 
-/* ---------- page: headcount (nightly, Dec 7–11) ---------- */
+/* page: headcount (nightly, Dec 7–11) */
 /** Who each role reports the headcount to. The Session Directing Couple, Area Seventy and logistics only view. */
 function hcChain() { const r = role(); return r === 'counselor' ? 'your AC' : r === 'ac' ? 'your coordinator' : r === 'coordinator' ? 'the Session Directing Couple' : ''; }
 function hcViewOnly() { return can.readOnly() || ['sdc', 'seventy'].includes(role()); }
@@ -2358,7 +2366,7 @@ async function hcWrite(gid, patch, submit) {
   await setDoc('headcount/' + id, next).catch(fail);
 }
 
-/* ---------- page: sessions (split and move participants) ---------- */
+/* page: sessions (split and move participants) */
 PAGE_IMPL.sessions = {
   frame() {
     UI.split = UI.split || { dest: 'new', name: '', team: 'same', sel: new Set() };
@@ -2435,7 +2443,7 @@ async function moveParticipants(list, target, opts) {
   if (opts.team === 'same') for (const e in S.invites) { const v = S.invites[e]; if (v.role === 'sdc' && invSessions(v).includes(src) && !invSessions(v).includes(target)) await FB.fs.doc('invites/' + e).set({ sessions: invSessions(v).concat(target) }, { merge: true }); }
 }
 
-/* ---------- page: data ---------- */
+/* page: data */
 PAGE_IMPL.data = {
   frame() {
     return `<section class="pagehead"><div><h1>Data & areas</h1><p class="note" style="margin:4px 0 0">Upload the FSY portal export, choose which stakes and units belong to this session, and clean up problem records.</p></div></section>
@@ -2513,7 +2521,7 @@ async function doImport() {
   renderImport();
 }
 
-/* ---------- page: access ---------- */
+/* page: access */
 PAGE_IMPL.access = {
   frame() {
     return `<section class="pagehead"><div><p class="th">Accounts</p><h1>Who can use the app</h1><p class="note" style="margin:4px 0 0">Create an account for each person with their Google email. When they sign in with that Google account, they get their role straight away.</p></div></section>
@@ -2521,6 +2529,7 @@ PAGE_IMPL.access = {
     <div class="panel"><h2>Create an account</h2><form id="invForm" class="form">
       <label>Full name<input id="invName" required autocomplete="off"></label>
       <label>Google email<input id="invEmail" type="email" required autocomplete="off" placeholder="name@gmail.com"></label>
+      <label>Gender<select id="invGender">${opt('', 'Choose…')}${opt('F', 'Female')}${opt('M', 'Male')}</select></label>
       <label>Role<select id="invRole" required>${opt('', 'Choose…')}${Object.keys(ROLES).filter(r => roleAssignable(r)).map(r => opt(r, ROLES[r])).join('')}</select></label>
       <label>Staff record<select id="invStaff">${opt('', '— Link later')}${S.staffList.filter(x => ['counselor', 'ac', 'coordinator', 'sdc'].includes(x.role)).map(x => opt(x.id, x.name + ' · ' + ROLES[x.role])).join('')}</select></label>
       ${S.mySessions.length > 1 ? `<div class="span2"><span class="note" style="display:block;margin-bottom:4px;font-weight:700">Sessions they can open</span><div class="flags">${S.mySessions.map(id => `<label class="chip sesschk"><input type="checkbox" class="invSessChk" value="${esc(id)}" ${id === S.sid ? 'checked' : ''}> ${esc(sessName(id))}</label>`).join('')}</div><small class="muted">Registration admins and the Area Seventy open every session.</small></div>` : ''}
@@ -2548,7 +2557,7 @@ PAGE_IMPL.access = {
     if (!$('#invList')) return;
     if (!$('#accAllWrap') && can.split() && $('#invCount')) $('#invCount').insertAdjacentHTML('afterend', `<label class="inline note" id="accAllWrap" style="margin:0"><input type="checkbox" id="accAll" ${UI.accAll ? 'checked' : ''}> Show every session</label>`);
     $('#invCount').textContent = invs.length ? `${Object.keys(claimed).filter(h => S.invites[h]).length} of ${invs.length} signed in` : '';
-    const rowOf = ([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]) ? ' <span class="chip warn">Link needed</span>' : v.staffId && S.staff[v.staffId] && v.staffAuto ? ` <span class="chip good" title="Linked automatically by matching ${v.staffAuto === 'email' ? 'email' : 'name and role'}">Auto${v.staffAuto === 'name' ? ' (name)' : ''}</span>` : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`;
+    const rowOf = ([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select>${ACCOUNT_STAFF_ROLES.includes(v.role) ? `<select data-act="invGender" data-id="${h}" aria-label="Gender" class="inv-g${v.gender ? '' : ' missing'}">${opt('', 'Gender?', !v.gender)}${opt('F', 'Female', v.gender === 'F')}${opt('M', 'Male', v.gender === 'M')}</select>` : ''}</td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]) ? ' <span class="chip warn">Link needed</span>' : v.staffId && S.staff[v.staffId] && v.staffAuto ? ` <span class="chip good" title="Linked automatically by matching ${v.staffAuto === 'email' ? 'email' : 'name and role'}">Auto${v.staffAuto === 'name' ? ' (name)' : ''}</span>` : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`;
     const aq = (UI.accQ || '').toLowerCase().trim(), af = UI.accF || 'all';
     const linkNeeded = v => ['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]);
     const shown = invs.filter(([h, v]) => (!aq || [v.name, h, S.inviteEmails[h], ROLES[v.role], v.staffId && S.staff[v.staffId] ? S.staff[v.staffId].name : ''].join(' ').toLowerCase().includes(aq))
@@ -2579,7 +2588,7 @@ async function setAccess(uid, patch) {
   await upd('access/roles', { u: { [uid]: rec } }, ex).catch(fail);
 }
 
-/* ---------- participant details ---------- */
+/* participant details */
 function openDetail(id) {
   const p = S.P.find(x => x.id === id); if (!p) return;
   const adm = can.admin(), priv = seesPrivate(p);
@@ -2603,7 +2612,7 @@ function openDetail(id) {
     ${can.deleteP() ? `<button class="btn danger" data-act="delP" data-id="${esc(p.id)}">Delete participant</button>` : ''}</div>` : ''}`);
 }
 
-/* ---------- generator actions ---------- */
+/* generator actions */
 async function runRebalance() {
   const r = rebalance(S.P, S.staffList, S.org, S.config);
   UI.genLog = { title: 'Rebalanced. Existing groups were kept.', lines: r.log };
@@ -2635,7 +2644,7 @@ async function runRegen() {
   await setStates(ch).catch(fail); toast('Companies generated');
 }
 
-/* ---------- events ---------- */
+/* events */
 document.addEventListener('click', async e => {
   const t = e.target.closest('[data-act]'); if (!t) return;
   const act = t.dataset.act, v = t.dataset.v, id = t.dataset.id;
@@ -2771,7 +2780,7 @@ document.addEventListener('change', async e => {
   if (t.name === 'spTeam') { UI.split.team = t.value; return; }
   if (t.dataset && t.dataset.act === 'spUnit') { t.checked ? UI.split.sel.add(t.dataset.v) : UI.split.sel.delete(t.dataset.v); render(); return; }
   if (t.dataset && t.dataset.act === 'spStake') { const st = t.dataset.v; S.P.filter(p => areaOf(p).st === st).forEach(p => { const k = st + '|' + areaOf(p).un; t.checked ? UI.split.sel.add(k) : UI.split.sel.delete(k); }); render(); return; }
-  if (t.id === 'viewAs') { S.viewAs = t.value || null; S.viewAsStaff = null; if (S.viewAs && ['counselor', 'ac', 'coordinator'].includes(S.viewAs)) { const s = S.staffList.find(x => x.role === S.viewAs && (S.viewAs !== 'counselor' || Object.values(S.org.groups).some(g => g.counselorId === x.id)) && (S.viewAs !== 'ac' || Object.values(S.org.companies).some(c => c.acId === x.id))); S.viewAsStaff = s ? s.id : null; if (s) toast('Previewing as ' + s.name); } UI.frameKey = ''; closeModal(); render(); return; }
+  if (t.id === 'viewAs') { S.viewAs = t.value || null; S.viewAsStaff = null; UI.coMineSet = false; UI.band = ''; UI.filterSet = false; UI.filter = 'all'; if (S.viewAs && ['counselor', 'ac', 'coordinator'].includes(S.viewAs)) { const s = S.staffList.find(x => x.role === S.viewAs && (S.viewAs !== 'counselor' || Object.values(S.org.groups).some(g => g.counselorId === x.id)) && (S.viewAs !== 'ac' || Object.values(S.org.companies).some(c => c.acId === x.id))); S.viewAsStaff = s ? s.id : null; if (s) toast('Previewing as ' + s.name); } UI.frameKey = ''; closeModal(); render(); return; }
   if (t.id === 'ciStake') { UI.stake = t.value; UI.unit = ''; UI.limit = 40; t.blur(); render(); return; }
   if (t.id === 'ciUnit') { UI.unit = t.value; UI.limit = 40; t.blur(); render(); return; }
   if (t.id === 'impFile') { if (t.files[0]) readFile(t.files[0]).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }); return; }
@@ -2794,6 +2803,7 @@ document.addEventListener('change', async e => {
     case 'stRole': { t.blur(); await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
     case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
+    case 'invGender': { await upd('invites/' + id, { gender: t.value || '' }, true).catch(fail); toast('Gender saved'); break; }
     case 'invRole': { await upd('invites/' + id, { role: t.value }, true).catch(fail); toast('Role changed'); break; }
     case 'invStaff': { await upd('invites/' + id, { staffId: t.value || null, staffAuto: null, staffManual: true }, true).catch(fail); toast(t.value ? 'Staff record linked' : 'Link removed'); break; }
     case 'acStaff': { await setAccess(id, { staffId: t.value || null }); toast('Linked'); break; }
@@ -2828,7 +2838,7 @@ document.addEventListener('submit', async e => {
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !r) { toast('Enter a name, a valid email and a role', true); return; }
     const h = emailKey(email); if (S.invites[h]) { toast('There is already an account for ' + email, true); return; }
     const chosen = [...document.querySelectorAll('.invSessChk:checked')].map(x => x.value); const sessions = chosen.length ? chosen : [S.sid];
-    try { await setDoc('invites/' + h, { name, role: r, staffId: sid, sessions, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
+    try { await setDoc('invites/' + h, { name, role: r, gender: val('invGender') || '', staffId: sid, sessions, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
   }
   if (f.id === 'cfgForm') { if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, useAll: false, groupSizeF: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)), groupSizeM: Math.max(4, Math.min(25, parseInt(val('cfSizeM'), 10) || 10)), groupSize: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)) }); toast('Settings saved. Press Rebalance on Companies & groups to apply group sizes.'); }
   if (f.id === 'edForm') {
