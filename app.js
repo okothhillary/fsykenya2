@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16j · checks scoped for counselors and ACs';
+const APP_VERSION = '2026-11-16k · session counts leave out cancelled';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -2302,8 +2302,8 @@ PAGE_IMPL.sessions = {
   },
   update() {
     if (!UI.sessCounts) { UI.sessCounts = {}; loadSessionCounts(); }
-    $('#sessList').innerHTML = Object.keys(S.sessions).filter(id => S.mySessions.includes(id)).map(id => { const cur = id === S.sid; const n = cur ? S.P.length : UI.sessCounts[id]; const x = S.sessions[id];
-      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div>${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}</div>`; }).join('');
+    $('#sessList').innerHTML = Object.keys(S.sessions).filter(id => S.mySessions.includes(id)).map(id => { const cur = id === S.sid; const n = cur ? registered().length : UI.sessCounts[id], left = cur ? S.P.length - registered().length : (UI.sessLeft || {})[id]; const x = S.sessions[id];
+      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${left ? ` <span class="muted">(+${left} cancelled or left out)</span>` : ''}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div>${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}</div>`; }).join('');
     const sp = UI.split, others = S.mySessions.filter(id => id !== S.sid);
     const T = {}; S.P.forEach(p => { const { st, un } = areaOf(p); const x = T[st] = T[st] || { n: 0, u: {} }; x.n++; const u = x.u[un] = x.u[un] || { n: 0, inn: 0 }; u.n++; if (p.s === 'in') u.inn++; });
     const picked = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)), pIn = picked.filter(p => p.s === 'in').length;
@@ -2326,7 +2326,15 @@ PAGE_IMPL.sessions = {
   }
 };
 async function loadSessionCounts() {
-  for (const id of S.mySessions) { if (id === S.sid) continue; try { const sn = await FB.fs.collection(rawPath(id, 'roster')).get(); UI.sessCounts[id] = sn.docs.reduce((a, d) => a + Object.keys((d.data() || {}).p || {}).length, 0); } catch (e) { UI.sessCounts[id] = '?'; } }
+  UI.sessLeft = UI.sessLeft || {};
+  for (const id of S.mySessions) { if (id === S.sid) continue; try {
+    // count the way the open session does: cancelled statuses and left-out areas are not participants
+    const cd = await FB.fs.doc(rawPath(id, 'config/session')).get(); const cfg = Object.assign({}, DEFAULT_CONFIG, cd.exists ? cd.data() : {});
+    const exS = new Set(cfg.excludedStatuses || []), exSt = new Set(cfg.excludedStakes || []), exU = new Set(cfg.excludedUnits || []);
+    const sn = await FB.fs.collection(rawPath(id, 'roster')).get(); let n = 0, out = 0;
+    sn.docs.forEach(d => { const m = (d.data() || {}).p || {}; for (const k in m) { const r = m[k]; if (!r) continue; const st = normStatus(r.status); if ((st && exS.has(st)) || exSt.has(r.stake) || exU.has((r.stake || '') + '|' + (r.unit || ''))) out++; else n++; } });
+    UI.sessCounts[id] = n; UI.sessLeft[id] = out;
+  } catch (e) { UI.sessCounts[id] = '?'; } }
   if (currentPage() === 'sessions') render();
 }
 async function moveParticipants(list, target, opts) {
