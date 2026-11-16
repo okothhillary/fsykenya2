@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17c · Session Directing Couple can split sessions';
+const APP_VERSION = '2026-11-17e · groups mix districts';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -553,14 +553,17 @@ function assignCounselors(groupsArr, counselors, used, cfg) {
     }
   }
 }
-function placeGroupInCompany(g, companies, groups) {
+function placeGroupInCompany(g, companies, groups, stakeOf) {
   const comps = Object.values(companies).filter(c => c.band === g.band);
   if (!comps.length) return null;
+  // fewest groups of the same gender, then fewest groups, then least overlap of districts with this group
+  const mine = (stakeOf && stakeOf[g.id]) || {};
   let best = null, bk = null;
-  for (const c of comps) {
+  for (const c of shuffled(comps)) {
     const inC = Object.values(groups).filter(x => x.companyId === c.id);
-    const key = [inC.filter(x => x.gender === g.gender).length, inC.length, c.num || 0];
-    if (!bk || key[0] < bk[0] || (key[0] === bk[0] && (key[1] < bk[1] || (key[1] === bk[1] && key[2] < bk[2])))) { bk = key; best = c; }
+    let overlap = 0; if (stakeOf) inC.forEach(x => { const o = stakeOf[x.id] || {}; for (const st in mine) overlap += mine[st] * (o[st] || 0); });
+    const key = [inC.filter(x => x.gender === g.gender).length, inC.length, overlap, c.num || 0];
+    if (!bk || key[0] < bk[0] || (key[0] === bk[0] && (key[1] < bk[1] || (key[1] === bk[1] && (key[2] < bk[2] || (key[2] === bk[2] && key[3] < bk[3])))))) { bk = key; best = c; }
   }
   g.companyId = best.id; return best;
 }
@@ -603,6 +606,30 @@ function fitHint() {
   const differ = ['F', 'M'].some(g => f[g].fit);
   return `<div class="fit-hint"><p class="note" style="margin:0 0 4px"><b>Fit group sizes to your counselors</b></p><ul>${line('F', 'Young women')}${line('M', 'Young men')}</ul>${differ && can.orgEdit() ? `<button type="button" class="btn small" data-act="fitSizes">Use ${f.F.fit || f.F.now} for young women and ${f.M.fit || f.M.now} for young men</button> <small class="muted">then press Rebalance</small>` : ''}</div>`;
 }
+/* Mixing districts: hand people out so each group gets as few from the same district (and ward or branch) as possible.
+   The biggest districts go first, in a random order, so every run is a fresh shuffle. */
+function shuffled(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function mixAssign(list, ids, assign) {
+  const G = ids.length; if (!G) return; const cap = Math.ceil(list.length / G);
+  const cnt = ids.map(() => ({ n: 0, st: {}, un: {} }));
+  const by = {}; list.forEach(p => (by[p.stake || ''] = by[p.stake || ''] || []).push(p));
+  const order = shuffled(Object.values(by)).sort((a, b) => b.length - a.length).flatMap(arr => shuffled(arr));
+  for (const p of order) {
+    let best = -1, bk = null;
+    for (const i of shuffled(ids.map((_, k) => k))) {
+      const c = cnt[i]; if (c.n >= cap) continue;
+      const key = [c.st[p.stake || ''] || 0, c.un[p.unitKey] || 0, c.n];
+      if (!bk || key[0] < bk[0] || (key[0] === bk[0] && (key[1] < bk[1] || (key[1] === bk[1] && key[2] < bk[2])))) { bk = key; best = i; }
+    }
+    const c = cnt[best]; c.n++; c.st[p.stake || ''] = (c.st[p.stake || ''] || 0) + 1; c.un[p.unitKey] = (c.un[p.unitKey] || 0) + 1; assign[p.id] = ids[best];
+  }
+}
+/** Who to move from one group to another: the person whose district (then ward or branch) the receiving group has least of. */
+function pickMover(from, to) {
+  const st = {}, un = {}; to.forEach(x => { st[x.stake] = (st[x.stake] || 0) + 1; un[x.unitKey] = (un[x.unitKey] || 0) + 1; });
+  let best = null, bk = null; for (const p of shuffled(from)) { const k = [st[p.stake] || 0, un[p.unitKey] || 0]; if (!bk || k[0] < bk[0] || (k[0] === bk[0] && k[1] < bk[1])) { bk = k; best = p; } }
+  return best;
+}
 function fullGenerate(P, staffList, cfg) {
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
   const size = +cfg.groupSize || 10;
@@ -625,7 +652,7 @@ function fullGenerate(P, staffList, cfg) {
     for (const band of ['Y', 'O']) {
       const list = lists[band], G = n[band]; if (!list.length || !G) continue; const ids = [];
       for (let i = 0; i < G; i++) { const id = rid('g'); groups[id] = { id, band, gender, counselorId: null, companyId: null, num: 0 }; ids.push(id); }
-      list.forEach((p, i) => assign[p.id] = ids[i % G]);
+      mixAssign(list, ids, assign);
       const big = Math.ceil(list.length / G);
       log.push(`${BANDS[band]} ${gender === 'F' ? 'young women' : 'young men'}: ${list.length} participants in ${G} groups${big > size ? ` of up to ${big}` : ''}`);
     }
@@ -644,7 +671,8 @@ function fullGenerate(P, staffList, cfg) {
   let ai = 0;
   for (const [band, n] of [['Y', cY], ['O', cO]]) for (let i = 0; i < n; i++) { const id = rid('c'); companies[id] = { id, band, acId: acs[ai++].id, coordId: null, num: 0 }; }
   const order = Object.values(groups).sort((a, b) => a.gender.localeCompare(b.gender));
-  for (const g of order) placeGroupInCompany(g, companies, groups);
+  const stakeOf = {}; elig.forEach(p => { const gid = assign[p.id]; if (gid) { const o = stakeOf[gid] = stakeOf[gid] || {}; o[p.stake || ''] = (o[p.stake || ''] || 0) + 1; } });
+  for (const g of order) placeGroupInCompany(g, companies, groups, stakeOf);
   assignCoordinators(companies, staffList.filter(s => s.role === 'coordinator'));
   renumber(groups, companies);
   log.push(`${Object.keys(companies).length} companies formed from ${A} assistant coordinators`);
@@ -715,7 +743,7 @@ function rebalance(P, staffList, org, cfg) {
     const pool = withC.length ? withC : cands;
     let best = null, bk = null;
     for (const g of pool) {
-      const n = members[g.id].length, same = members[g.id].filter(m => m.unitKey === p.unitKey).length;
+      const n = members[g.id].length, same = members[g.id].filter(m => m.stake === p.stake).length * 100 + members[g.id].filter(m => m.unitKey === p.unitKey).length;
       const key = [n, same];
       if (!bk || key[0] < bk[0] || (key[0] === bk[0] && key[1] < bk[1])) { bk = key; best = g; }
     }
@@ -736,7 +764,7 @@ function rebalance(P, staffList, org, cfg) {
     for (let guard = 0; guard < 5000; guard++) {
       const l = gs(); if (l.length < 2) break; const big = l[0], small = l[l.length - 1];
       if (members[big.id].length <= gsize(cfg, gender) || members[big.id].length - members[small.id].length <= 1) break;
-      const m = members[big.id]; const pick = m.slice().sort((a, b) => members[small.id].filter(x => x.unitKey === b.unitKey).length - members[small.id].filter(x => x.unitKey === a.unitKey).length).pop();
+      const m = members[big.id]; const pick = pickMover(m, members[small.id]);
       m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id; evened++;
     }
   }
@@ -762,7 +790,7 @@ function rebalance(P, staffList, org, cfg) {
       const big = sibs().sort((a, b) => members[b.id].length - members[a.id].length)[0];
       if (!big || members[big.id].length <= members[id].length + 1 || members[id].length >= gsize(cfg, c.gender)) break;
       // move someone who is not checked in to a different group yet, preferring the unit least shared with the new group
-      const m = members[big.id]; const pick = m.slice().sort((a, b) => members[id].filter(x => x.unitKey === b.unitKey).length - members[id].filter(x => x.unitKey === a.unitKey).length).pop();
+      const m = members[big.id]; const pick = pickMover(m, members[id]);
       m.splice(m.indexOf(pick), 1); members[id].push(pick); cur[pick.id] = id;
     }
     opened++; log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants moved from groups over ${gsize(cfg, c.gender)}`);
@@ -779,14 +807,14 @@ function rebalance(P, staffList, org, cfg) {
     const { c, band } = best; const id = rid('g'); groups[id] = { id, band, gender: c.gender, counselorId: c.id, companyId: null, num: 0 }; members[id] = []; used.add(c.id);
     for (;;) { const big = Object.values(groups).filter(g => g.id !== id && g.band === band && g.gender === c.gender).sort((a, b) => members[b.id].length - members[a.id].length)[0];
       if (!big || members[big.id].length <= members[id].length + 1) break;
-      const m = members[big.id]; const pick = m.slice().sort((a, b) => members[id].filter(x => x.unitKey === b.unitKey).length - members[id].filter(x => x.unitKey === a.unitKey).length).pop();
+      const m = members[big.id]; const pick = pickMover(m, members[id]);
       m.splice(m.indexOf(pick), 1); members[id].push(pick); cur[pick.id] = id; }
     log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants, one or two from each of the biggest groups`);
   }
   if (cfg.useAll) for (const gender of ['F', 'M']) for (const band of ['Y', 'O']) for (let guard = 0; guard < 2000; guard++) {
     const l = Object.values(groups).filter(g => g.gender === gender && g.band === band && g.counselorId).sort((a, b) => members[b.id].length - members[a.id].length);
     if (l.length < 2) break; const big = l[0], small = l[l.length - 1]; if (members[big.id].length - members[small.id].length <= 1) break;
-    const m = members[big.id]; const pick = m.slice().sort((a, b) => members[small.id].filter(x => x.unitKey === b.unitKey).length - members[small.id].filter(x => x.unitKey === a.unitKey).length).pop();
+    const m = members[big.id]; const pick = pickMover(m, members[small.id]);
     m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id;
   }
   const still = Object.values(groups).filter(g => members[g.id].length > gsize(cfg, g.gender)).length;
@@ -814,7 +842,8 @@ function rebalance(P, staffList, org, cfg) {
       const id = rid('c'); companies[id] = { id, band, acId: freeAcs.shift().id, coordId: null, num: 9000 }; log.push(`New ${BANDS[band]} company opened`);
     }
   }
-  let lp = 0; for (const g of loose) if (placeGroupInCompany(g, companies, groups)) lp++;
+  const stakeOfR = {}; for (const gid in members) { const o = stakeOfR[gid] = {}; members[gid].forEach(p => o[p.stake || ''] = (o[p.stake || ''] || 0) + 1); }
+  let lp = 0; for (const g of loose) if (placeGroupInCompany(g, companies, groups, stakeOfR)) lp++;
   if (lp) log.push(`${lp} group(s) added to companies`);
   // spare ACs open new companies and pull whole groups from the largest companies
   while (freeAcs.length) {
@@ -2091,7 +2120,7 @@ async function updateReport(owner, id, patch) {
 
 /* page: wellness */
 function wlOpen(id) { return foldOpen(id); }
-function foldOpen(id) { const o = UI.foldSet || {}; return id in o ? o[id] : id === 'wl-rep'; }
+function foldOpen(id) { const o = UI.foldSet || {}; return id in o ? o[id] : ['wl-rep', 'hc-missing', 'hc-late'].includes(id); }
 function foldSec(id, title, countId, tools, body) { return `<details class="panel fold" id="${id}" ${foldOpen(id) ? 'open' : ''}><summary><h2>${title}</h2><span class="chip" id="${countId}"></span></summary><div class="fold-body">${tools ? `<div class="fold-tools">${tools}</div>` : ''}${body}</div></details>`; }
 function openFold(id) { UI.foldSet = Object.assign(UI.foldSet || {}, { [id]: true }); const d = document.getElementById(id); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
 PAGE_IMPL.wellness = {
@@ -2347,8 +2376,8 @@ function hcOverview(groups, day) {
   const missing = xs.flatMap(x => x.missing.map(p => ({ p, x }))).concat(xs.filter(x => x.submitted).flatMap(x => x.unmarked.map(p => ({ p, x, unmarked: true }))));
   const comps = uniq(groups.map(g => g.companyId)).map(id => S.org.companies[id]).filter(Boolean).sort((a, b) => a.num - b.num);
   let h = `<div class="kpis"><div class="kpi"><span>Groups reported</span><b>${reported.length} / ${xs.length}</b></div><div class="kpi"><span>Present</span><b>${pres} / ${exp}</b><small>in groups that reported · ${allIn} checked in</small></div><div class="kpi" style="${missing.length ? 'background:var(--bad);color:#fff' : ''}"><span>Missing</span><b>${missing.length}</b></div><div class="kpi"><span>Not reported yet</span><b>${late.length}</b></div></div>`;
-  h += `<section class="panel hc-alert ${missing.length ? 'on' : ''}"><div class="panel-head"><h2>Missing youth</h2><span class="chip ${missing.length ? 'bad' : 'good'}">${missing.length}</span></div>${missing.length ? `<div class="hc-miss">${missing.map(({ p, x, unmarked }) => { const c = x.g.companyId && S.org.companies[x.g.companyId]; const why = unmarked ? 'Not marked when submitted' : ((x.doc && x.doc.reasons && x.doc.reasons[p.id]) || 'No reason given'); return `<button class="hc-mi" data-act="hcOpen" data-g="${x.g.id}"><b>${esc(p.name)}</b><span>G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${c ? ' · Company ' + c.num : ''}</span><span class="why">${esc(why)}</span><small class="muted">${esc(p.age ?? '?')} yrs · ${esc(p.unit)}${x.doc && x.doc.at ? ' · reported ' + esc(fmtTime(x.doc.at)) + ' by ' + esc(x.doc.byName || '') : ''}</small></button>`; }).join('')}</div>` : '<p class="note">Nobody has been reported missing for this night.</p>'}</section>`;
-  h += `<section class="panel hc-alert ${late.length ? 'warn' : ''}"><div class="panel-head"><h2>Groups that haven't reported</h2><span class="chip ${late.length ? 'warn' : 'good'}">${late.length}</span></div>${late.length ? `<div class="flags">${late.map(x => `<button class="chip warn" data-act="hcOpen" data-g="${x.g.id}" style="cursor:pointer;padding:6px 11px">G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${x.doc ? ' · started' : ''}</button>`).join('')}</div>` : '<p class="note">Every group has reported.</p>'}</section>`;
+  h += `${missing.length ? `<details class="panel fold hc-alert on" id="hc-missing" ${foldOpen('hc-missing') ? 'open' : ''}><summary><h2>Missing youth</h2><span class="chip bad">${missing.length}</span></summary>` : `<section class="panel hc-alert"><div class="panel-head"><h2>Missing youth</h2><span class="chip good">0</span></div>`}${missing.length ? `<div class="hc-miss">${missing.map(({ p, x, unmarked }) => { const c = x.g.companyId && S.org.companies[x.g.companyId]; const why = unmarked ? 'Not marked when submitted' : ((x.doc && x.doc.reasons && x.doc.reasons[p.id]) || 'No reason given'); return `<button class="hc-mi" data-act="hcOpen" data-g="${x.g.id}"><b>${esc(p.name)}</b><span>G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${c ? ' · Company ' + c.num : ''}</span><span class="why">${esc(why)}</span><small class="muted">${esc(p.age ?? '?')} yrs · ${esc(p.unit)}${x.doc && x.doc.at ? ' · reported ' + esc(fmtTime(x.doc.at)) + ' by ' + esc(x.doc.byName || '') : ''}</small></button>`; }).join('')}</div>` : '<p class="note">Nobody has been reported missing for this night.</p>'}${missing.length ? '</details>' : '</section>'}`;
+  h += `${late.length ? `<details class="panel fold hc-alert warn" id="hc-late" ${foldOpen('hc-late') ? 'open' : ''}><summary><h2>Groups that haven't reported</h2><span class="chip warn">${late.length}</span></summary>` : `<section class="panel hc-alert"><div class="panel-head"><h2>Groups that haven't reported</h2><span class="chip good">0</span></div>`}${late.length ? `<div class="flags">${late.map(x => `<button class="chip warn" data-act="hcOpen" data-g="${x.g.id}" style="cursor:pointer;padding:6px 11px">G${x.g.num} · ${esc(sName(x.g.counselorId) || 'No counselor')}${x.doc ? ' · started' : ''}</button>`).join('')}</div>` : '<p class="note">Every group has reported.</p>'}${late.length ? '</details>' : '</section>'}`;
   h += `<div class="companies">${comps.map(c => { const cxAll = all.filter(x => x.g.companyId === c.id), cx = cxAll.filter(x => x.expected || x.doc), cr = cx.filter(x => x.submitted); const cp = cr.reduce((a, x) => a + x.present.length, 0), ce = cr.reduce((a, x) => a + x.expected, 0), cIn = S.P.filter(p => p.company && p.company.id === c.id && p.s === 'in').length, cm = cx.reduce((a, x) => a + x.missing.length, 0); const allDone = cx.length && cr.length === cx.length;
     return `<section class="company"><div class="co-head"><div class="co-title"><h2>Company ${c.num}</h2><div class="inline">${cm ? `<span class="chip bad">${cm} missing</span>` : ''}${cx.length ? `<span class="chip ${allDone ? 'good' : 'warn'}">${cr.length}/${cx.length} reported</span>` : '<span class="chip">Nobody checked in</span>'}</div></div>
       <div class="co-meta"><span class="muted">AC</span><span>${esc(sName(c.acId) || '—')}</span><span class="muted">Present</span><span class="num"><b>${cp}</b> of ${ce} in reported groups · ${cIn} checked in${allDone && ce !== cIn ? ' <span class="chip warn">totals differ from check-in</span>' : ''}</span></div></div>
