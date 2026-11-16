@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16d · smarter ward matching';
+const APP_VERSION = '2026-11-16f · rebalance fixes gender mismatches';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -251,7 +251,9 @@ function cats(text, list) { if (!text) return []; const s = text.toLowerCase(); 
 
 // Units that are not in the participant export. Staff can come from stakes that send no youth.
 const BUILTIN_UNITS = [
-  ['Nairobi Kenya South Stake', 'Nairobi 2nd Ward (Buruburu)', ['buruburu', 'buru buru']]
+  ['Nairobi Kenya South Stake', 'Nairobi 2nd Ward (Buruburu)', ['buruburu', 'buru buru']],
+  ['Nairobi Kenya South Stake', 'Nairobi 1st Ward', []],
+  ['Nairobi Kenya South Stake', 'South B Ward', ['southb']]
 ];
 const SF_FIELDS = [
   ['ts', /timestamp|submitted|submission/],
@@ -640,6 +642,7 @@ function rebalance(P, staffList, org, cfg) {
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
     if (g.counselorId && (!c || c.role !== 'counselor')) { log.push(`Group ${g.num} lost its counselor`); g.counselorId = null; }
+    else if (c && c.gender && c.gender !== g.gender) { log.push(`${c.name} no longer matches the gender of group ${g.num}, so they were taken off it and will get a ${c.gender === 'F' ? 'young women' : 'young men'}'s group if one is needed`); g.counselorId = null; }
   }
   // empty groups
   for (const g of Object.values(groups)) if (!members[g.id].length) { log.push(`Group ${g.num} was empty and was removed`); delete groups[g.id]; delete members[g.id]; }
