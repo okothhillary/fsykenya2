@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16c · staff email field';
+const APP_VERSION = '2026-11-16d · smarter ward matching';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -358,8 +358,9 @@ function mergeSubs(list) {
   if (!m.email) { const t = lastIssue(/^Email/); if (t) m.issues.push(t); }
   if (!m.phoneOk) { const t = lastIssue(/^Phone/); if (t) m.issues.push(t); }
   if (list.length > 1) {
-    const diff = ['tshirt', 'unitRaw', 'bday'].filter(k => uniq(list.map(x => k === 'unitRaw' ? unitCore(x[k]).core : x[k]).filter(Boolean)).length > 1);
-    m.dupNote = `${list.length} submissions` + (diff.length ? ` (answers differed: ${diff.map(k => ({ tshirt: 'T-shirt', unitRaw: 'ward/branch', bday: 'birthday' })[k]).join(', ')}; newest kept)` : '');
+    const diff = ['tshirt', 'unitRaw', 'bday', 'role'].filter(k => uniq(list.map(x => k === 'unitRaw' ? unitCore(x[k]).core : x[k]).filter(Boolean)).length > 1);
+    m.dupNote = `${list.length} submissions` + (diff.length ? ` (answers differed: ${diff.map(k => ({ tshirt: 'T-shirt', unitRaw: 'ward/branch', bday: 'birthday', role: 'type' })[k]).join(', ')}; newest kept)` : '');
+    if (diff.includes('role')) m.issues.push(`Type differs between submissions: ${list.map(x => x.role ? ROLES[x.role] : '(blank)').join(' → ')}. Imported as ${ROLES[m.role] || 'Counselor'}`);
     if (diets.length > 1 || (diets.length && list.some(x => !x.diet && x.dietRaw))) m.issues.push('Food answers differ between submissions: ' + list.map(x => x.dietRaw || '(blank)').join(' → '));
   }
   m.subs = list.length;
@@ -383,7 +384,7 @@ function unitCore(s) {
   let t = s.split(' ').filter(Boolean);
   // "1 st" / "2 nd" after splitting digits from letters
   t = t.reduce((a, w) => { if (/^(st|nd|rd|th)$/.test(w) && /^\d+$/.test(a[a.length - 1] || '')) return a; a.push(ORD[w] || w); return a; }, []);
-  t = t.filter(w => !UNIT_STOP.has(w));
+  t = t.filter(w => !UNIT_STOP.has(w) && !(w.length >= 3 && /^[a-z]+$/.test(w) && (editDist(w, 'ward') <= 1 || editDist(w, 'branch') <= 1)));
   return { core: t.join(' '), toks: t, hint };
 }
 function editDist(a, b) { // Damerau (optimal string alignment)
@@ -427,6 +428,10 @@ function matchUnit(raw, stakeRaw, dir) {
   if (!cands.length) {
     cands = dir.list.filter(e => toks.every(t => e.toks.includes(t)) && e.toks.filter(t => /^\d+$/.test(t)).every(n => !nums.length || nums.includes(n)));
     how = 'part';
+  }
+  if (!cands.length && toks.length > 1) { // e.g. "Nyalenda branch Kisumu": drop words that only name a stake or town
+    const stakeWords = new Set(dir.list.flatMap(e => e.stakeToks)); const keep = toks.filter(t => !stakeWords.has(t) || dir.list.some(e => e.toks.includes(t)));
+    if (keep.length && keep.length < toks.length) { cands = dir.list.filter(e => e.core === keep.join(' ') || keep.every(t => e.toks.includes(t))); how = 'part'; c.hint = (c.hint + ' ' + toks.filter(t => !keep.includes(t)).join(' ')).trim(); }
   }
   const hint = unitCore(c.hint + ' ' + (stakeRaw || '')).toks.filter(t => !/^(stake|district|mission)$/.test(t));
   if (cands.length > 1 && hint.length) { const h = cands.filter(e => hint.some(t => e.stakeToks.includes(t))); if (h.length) cands = h; }
