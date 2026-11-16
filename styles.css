@@ -580,3 +580,10 @@ details.fold{scroll-margin-top:96px}
 .ci-mine{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .ci-g{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:4px 10px;font-size:.82rem;color:#fff}
 .ci-g.full{background:#8cc06a;border-color:#8cc06a;color:#002846}
+
+/* accounts: search, quick filters, rows folded by role */
+.acc-tools{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px}
+.acc-tools input{flex:1 1 320px;min-width:0}
+.acc-tools .chips{flex-wrap:wrap}
+tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
+.fold-tools{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-bottom:10px}

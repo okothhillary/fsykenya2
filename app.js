@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16k · session counts leave out cancelled';
+const APP_VERSION = '2026-11-16m · logistics lists fold';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1867,16 +1867,18 @@ function registered() { return S.P.filter(p => p.inc || p.s); }
 PAGE_IMPL.logistics = {
   frame() { return `<section class="pagehead"><div><p class="th">Logistics${['counselor', 'ac'].includes(role()) ? ' · your company only' : ' · whole session'}</p><h1>Medical, dietary and T-shirts</h1><p class="note" style="margin:4px 0 0">Built from the upload, before anyone checks in. Notes such as "none", "N/A", "nil" or "fit" are left out. Tap an issue to see exactly who has it.</p></div><div class="seg" role="group" aria-label="Who to count">${[['all', 'Everyone registered'], ['in', 'Checked in now']].map(([v, l]) => `<button data-act="logScope" data-v="${v}" aria-pressed="${UI.logScope === v}">${l}</button>`).join('')}</div></section>
   <div id="lgK" class="kpis"></div>
-  <section class="panel" id="sec-med"><div class="panel-head"><h2>Medical</h2><button class="btn small" data-act="lgCsv" data-v="med">Export CSV</button></div><div id="lgMed"></div></section>
-  <section class="panel" id="sec-diet"><div class="panel-head"><h2>Dietary</h2><button class="btn small" data-act="lgCsv" data-v="diet">Export CSV</button></div><div id="lgDiet"></div></section>
-  <section class="panel" id="sec-tee"><div class="panel-head"><h2>T-shirts</h2><div class="btnrow"><button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button></div></div><div id="lgSize"></div></section>
-  ${['counselor', 'ac'].includes(role()) ? '' : `<section class="panel" id="sec-steee"><div class="panel-head"><h2>Staff T-shirts</h2><button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button></div><div id="lgStaffSize"></div></section>`}`; },
+  ${foldSec('sec-med', 'Medical', 'lgMedN', '<button class="btn small" data-act="lgCsv" data-v="med">Export CSV</button>', '<div id="lgMed"></div>')}
+  ${foldSec('sec-diet', 'Dietary', 'lgDietN', '<button class="btn small" data-act="lgCsv" data-v="diet">Export CSV</button>', '<div id="lgDiet"></div>')}
+  ${foldSec('sec-tee', 'T-shirts', 'lgTeeN', '<button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button>', '<div id="lgSize"></div>')}
+  ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-steee', 'Staff T-shirts', 'lgStN', '<button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button>', '<div id="lgStaffSize"></div>')}`; },
   scope() { return (UI.logScope === 'in' ? S.P.filter(p => p.s === 'in') : registered()).filter(seesPrivate); },
   update() {
     const L = this.scope(), H = lgHash();
     const med = L.filter(p => p.medIssue), diet = L.filter(p => p.dietIssue), blanks = L.filter(p => !p.tshirt);
     const href = h => '#' + h;
-    $('#lgK').innerHTML = `<div class="kpi"><span>${UI.logScope === 'in' ? 'Checked in' : 'Registered'}${['counselor', 'ac'].includes(role()) ? ' (yours)' : ''}</span><b>${L.length}</b></div><a class="kpi hero" href="${href('med-all')}" style="text-decoration:none"><span>Medical needs</span><b>${med.length}</b></a><a class="kpi hero" href="${href('diet-all')}" style="text-decoration:none"><span>Dietary needs</span><b>${diet.length}</b></a><div class="kpi"><span>Sizes given</span><b>${L.length - blanks.length}</b></div><a class="kpi" href="${href('tee-blank')}" style="text-decoration:none;color:inherit"><span>Blank sizes</span><b>${blanks.length}</b></a>`;
+    const kb = (v, cls, l, n) => `<button class="kpi kpi-btn ${cls}" data-act="lgGo" data-v="${v}"><span>${l}</span><b>${n}</b><small>Show list ›</small></button>`;
+    $('#lgK').innerHTML = `<div class="kpi"><span>${UI.logScope === 'in' ? 'Checked in' : 'Registered'}${['counselor', 'ac'].includes(role()) ? ' (yours)' : ''}</span><b>${L.length}</b></div>` + kb('med', 'hero', 'Medical needs', med.length) + kb('diet', 'hero', 'Dietary needs', diet.length) + kb('tee', '', 'Sizes given', L.length - blanks.length) + kb('blank', '', 'Blank sizes', blanks.length) + ($('#sec-steee') ? kb('steee', '', 'Staff T-shirts', S.staffList.filter(x => !x.test).length) : '');
+    $('#lgMedN').textContent = med.length; $('#lgDietN').textContent = diet.length; $('#lgTeeN').textContent = `${L.length - blanks.length} given · ${blanks.length} blank`; if ($('#lgStN')) $('#lgStN').textContent = S.staffList.filter(x => !x.test).length;
     const block = (list, field, CATS, kind, pre) => {
       if (!S.P.length) return '<p class="note">Upload participants on the Data & areas tab and this fills in straight away.</p>';
       if (!list.length) return '<p class="note">Nobody in this view has a note that needs attention.</p>';
@@ -1893,7 +1895,7 @@ PAGE_IMPL.logistics = {
     $('#lgDiet').innerHTML = block(diet, 'dietIssue', DIET_CATS, 'do', 'diet');
     $('#lgSize').innerHTML = teeBlock(L, H);
     if ($('#lgStaffSize')) $('#lgStaffSize').innerHTML = staffTeeBlock(L);
-    if (H && UI.lgLast !== H) { const el = document.getElementById(H.startsWith('tee') ? 'tee-list' : H.split('-')[0] + '-list'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+    if (H && UI.lgLast !== H) { const sec = document.getElementById(H.startsWith('tee') ? 'sec-tee' : 'sec-' + H.split('-')[0]); if (sec && !sec.open) { sec.open = true; UI.foldSet = Object.assign(UI.foldSet || {}, { [sec.id]: true }); } const el = document.getElementById(H.startsWith('tee') ? 'tee-list' : H.split('-')[0] + '-list'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     UI.lgLast = H;
   }
 };
@@ -2019,7 +2021,10 @@ async function updateReport(owner, id, patch) {
 }
 
 /* ---------- page: wellness ---------- */
-function wlOpen(id) { const o = UI.wlOpenSet || {}; return id in o ? o[id] : id === 'wl-rep'; }
+function wlOpen(id) { return foldOpen(id); }
+function foldOpen(id) { const o = UI.foldSet || {}; return id in o ? o[id] : id === 'wl-rep'; }
+function foldSec(id, title, countId, tools, body) { return `<details class="panel fold" id="${id}" ${foldOpen(id) ? 'open' : ''}><summary><h2>${title}</h2><span class="chip" id="${countId}"></span></summary><div class="fold-body">${tools ? `<div class="fold-tools">${tools}</div>` : ''}${body}</div></details>`; }
+function openFold(id) { UI.foldSet = Object.assign(UI.foldSet || {}, { [id]: true }); const d = document.getElementById(id); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
 PAGE_IMPL.wellness = {
   frame() {
     return `<section class="pagehead"><div><p class="th">Wellness · whole session</p><h1>Health and wellbeing</h1><p class="note" style="margin:4px 0 0">Concerns reported by counselors, and every medical and dietary note for youth and staff. Notes such as "none" or "N/A" are left out.</p></div><div class="btnrow"><button class="btn" data-act="wlCsv">Export CSV</button></div></section>
@@ -2457,7 +2462,7 @@ PAGE_IMPL.access = {
       ${S.mySessions.length > 1 ? `<div class="span2"><span class="note" style="display:block;margin-bottom:4px;font-weight:700">Sessions they can open</span><div class="flags">${S.mySessions.map(id => `<label class="chip sesschk"><input type="checkbox" class="invSessChk" value="${esc(id)}" ${id === S.sid ? 'checked' : ''}> ${esc(sessName(id))}</label>`).join('')}</div><small class="muted">Registration admins and the Area Seventy open every session.</small></div>` : ''}
       <p class="note span2" style="margin:0">Counselors and ACs must be linked to their staff record. That decides which group and company, and whose medical and dietary notes, they can see.</p>
       <div class="span2"><button class="btn primary" type="submit">Create account</button></div></form></div>
-    <div class="panel"><div class="panel-head"><h2>Accounts you created</h2><span class="note" id="invCount"></span></div><div id="invList"></div></div>
+    <div class="panel"><div class="panel-head"><h2>Accounts you created</h2><span class="note" id="invCount"></span></div><div class="acc-tools"><input id="accQ" type="search" placeholder="Search accounts by name, email, role or staff record" autocomplete="off" value="${esc(UI.accQ || '')}"><div class="chips" id="accChips"></div><div id="accOC"></div></div><div id="invList"></div></div>
     <div class="panel"><h2>Sign-in requests</h2><p class="note" style="margin-top:-4px">From people whose Google email did not match an account. Choosing a role creates an account for that email.</p><div id="acReq"></div></div>
     <div class="panel"><h2>What each role sees and does</h2><div class="tablewrap"><table><thead><tr><th>Role</th><th>Sees</th><th>Can</th></tr></thead><tbody>
       <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
@@ -2479,7 +2484,20 @@ PAGE_IMPL.access = {
     if (!$('#invList')) return;
     if (!$('#accAllWrap') && can.split() && $('#invCount')) $('#invCount').insertAdjacentHTML('afterend', `<label class="inline note" id="accAllWrap" style="margin:0"><input type="checkbox" id="accAll" ${UI.accAll ? 'checked' : ''}> Show every session</label>`);
     $('#invCount').textContent = invs.length ? `${Object.keys(claimed).filter(h => S.invites[h]).length} of ${invs.length} signed in` : '';
-    $('#invList').innerHTML = invs.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Staff record</th>${S.mySessions.length > 1 || UI.accAll ? '<th>Sessions</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${invs.map(([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]) ? ' <span class="chip warn">Link needed</span>' : v.staffId && S.staff[v.staffId] && v.staffAuto ? ` <span class="chip good" title="Linked automatically by matching ${v.staffAuto === 'email' ? 'email' : 'name and role'}">Auto${v.staffAuto === 'name' ? ' (name)' : ''}</span>` : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No accounts yet. Create the first one above.</p>';
+    const rowOf = ([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]) ? ' <span class="chip warn">Link needed</span>' : v.staffId && S.staff[v.staffId] && v.staffAuto ? ` <span class="chip good" title="Linked automatically by matching ${v.staffAuto === 'email' ? 'email' : 'name and role'}">Auto${v.staffAuto === 'name' ? ' (name)' : ''}</span>` : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`;
+    const aq = (UI.accQ || '').toLowerCase().trim(), af = UI.accF || 'all';
+    const linkNeeded = v => ['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]);
+    const shown = invs.filter(([h, v]) => (!aq || [v.name, h, S.inviteEmails[h], ROLES[v.role], v.staffId && S.staff[v.staffId] ? S.staff[v.staffId].name : ''].join(' ').toLowerCase().includes(aq))
+      && (af === 'all' || (af === 'link' && linkNeeded(v)) || (af === 'out' && !claimed[h]) || (af === 'in' && claimed[h])));
+    const ncol = (S.mySessions.length > 1 || UI.accAll) ? 7 : 6;
+    const open = UI.accOpen || (UI.accOpen = new Set());
+    const byRole = {}; shown.forEach(x => (byRole[x[1].role] = byRole[x[1].role] || []).push(x));
+    const order = Object.keys(ROLES).filter(r => byRole[r]).concat(Object.keys(byRole).filter(r => !ROLES[r]));
+    $('#accChips').innerHTML = [['all', 'All · ' + invs.length], ['link', 'Link needed · ' + invs.filter(([, v]) => linkNeeded(v)).length], ['out', 'Not signed in yet · ' + invs.filter(([h]) => !claimed[h]).length], ['in', 'Signed in · ' + invs.filter(([h]) => claimed[h]).length]].map(([v, l]) => `<button data-act="accF" data-v="${v}" aria-pressed="${af === v}">${l}</button>`).join('');
+    $('#accOC').innerHTML = order.length > 1 && !aq && af === 'all' ? `<div class="btnrow" style="margin:0"><button class="btn small" data-act="accAllOpen" data-v="1">Open all</button><button class="btn small" data-act="accAllOpen" data-v="">Close all</button></div>` : '';
+    const body = order.map(r => { const list = byRole[r], isOpen = !!aq || af !== 'all' || open.has(r), signed = list.filter(([h]) => claimed[h]).length, need = list.filter(([, v]) => linkNeeded(v)).length;
+      return `<tr class="click acc-h" data-act="accToggle" data-v="${esc(r)}"><td colspan="${ncol}"><b>${isOpen ? '▾' : '▸'} ${esc(ROLE_PLURAL[r] || ROLES[r] || r)}</b> <span class="muted">· ${list.length} · ${signed} signed in</span>${need ? ` <span class="chip warn">${need} link needed</span>` : ''}</td></tr>` + (isOpen ? list.map(rowOf).join('') : ''); }).join('');
+    $('#invList').innerHTML = invs.length ? (shown.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Staff record</th>${S.mySessions.length > 1 || UI.accAll ? '<th>Sessions</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<p class="note">No accounts match.</p>`) : '<p class="note">No accounts yet. Create the first one above.</p>';
     const reqIds = Object.keys(S.requests).filter(id => !S.invites[emailKey(S.requests[id].email || '')]);
     const accIds = Object.keys(S.access);
     const ps = S.user ? await S.user.profiles(uniq(reqIds.concat(accIds))) : {};
@@ -2639,7 +2657,11 @@ document.addEventListener('click', async e => {
     case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
     case 'coQClear': UI.coQ = ''; { const i = $('#coQ'); if (i) i.value = ''; } render(); break;
     case 'wlRep': UI.wlRep = v; render(); break;
-    case 'wlGo': { const map = { open: ['wl-rep', () => UI.wlRep = 'open'], urgent: ['wl-rep', () => UI.wlRep = 'urgent'], med: ['wl-youth', () => { UI.wlY = 'med'; UI.wlMore = false; }], diet: ['wl-youth', () => { UI.wlY = 'diet'; UI.wlMore = false; }], staff: ['wl-staff', () => { }] }[v]; if (!map) break; map[1](); UI.wlOpenSet = Object.assign(UI.wlOpenSet || {}, { [map[0]]: true }); render(); const d = document.getElementById(map[0]); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } break; }
+    case 'lgGo': { if (v === 'blank') { UI.foldSet = Object.assign(UI.foldSet || {}, { 'sec-tee': true }); if (location.hash === '#tee-blank') openFold('sec-tee'); else location.hash = 'tee-blank'; break; } openFold({ med: 'sec-med', diet: 'sec-diet', tee: 'sec-tee', steee: 'sec-steee' }[v]); break; }
+    case 'accToggle': { const o = UI.accOpen || (UI.accOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); render(); break; }
+    case 'accAllOpen': { UI.accOpen = new Set(v ? Object.keys(ROLES) : []); render(); break; }
+    case 'accF': UI.accF = v; render(); break;
+    case 'wlGo': { const map = { open: ['wl-rep', () => UI.wlRep = 'open'], urgent: ['wl-rep', () => UI.wlRep = 'urgent'], med: ['wl-youth', () => { UI.wlY = 'med'; UI.wlMore = false; }], diet: ['wl-youth', () => { UI.wlY = 'diet'; UI.wlMore = false; }], staff: ['wl-staff', () => { }] }[v]; if (!map) break; map[1](); UI.foldSet = Object.assign(UI.foldSet || {}, { [map[0]]: true }); render(); const d = document.getElementById(map[0]); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } break; }
     case 'wlY': UI.wlY = v; UI.wlMore = false; render(); break;
     case 'wlMore': UI.wlMore = true; render(); break;
     case 'wlCsv': { const rows = [['Who', 'Name', 'Role or group', 'Unit', 'Stake', 'Medical', 'Dietary', 'Checked in']]; registered().filter(p => p.medIssue || p.dietIssue).forEach(p => rows.push(['Youth', p.name, p.group ? 'G' + p.group.num : '', p.unit, p.stake, p.medIssue || '', p.dietIssue || '', p.s === 'in' ? 'yes' : ''])); S.staffList.filter(x => !x.test && (x.med || x.diet)).forEach(x => rows.push(['Staff', x.name, ROLES[x.role] || x.role, x.unit || '', x.stake || '', x.med || '', x.diet || '', ''])); rows.push([]); rows.push(['Concern', 'Participant', 'Kind', 'Urgent', 'Status', 'Reported', 'By', 'Details', 'Follow-up']); allReports().forEach(r => rows.push(['', r.pname || '', repKind(r.kind), r.urgent ? 'yes' : '', r.status, fmtWhen(r.at), r.byName || '', r.text, r.resNote || ''])); exportCSV('fsy-wellness.csv', rows); break; }
@@ -2741,6 +2763,7 @@ document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'coQ') { UI.coQ = t.value; clearTimeout(UI.coT); UI.coT = setTimeout(() => PAGE_IMPL.companies.update(), 200); return; }
   if (t.id === 'stQ') { UI.stQ = t.value; clearTimeout(UI.stT); UI.stT = setTimeout(() => PAGE_IMPL.staff.update(), 200); return; }
+  if (t.id === 'accQ') { UI.accQ = t.value; clearTimeout(UI.accT); UI.accT = setTimeout(() => PAGE_IMPL.access.update(), 200); return; }
   if (t.id === 'wlQ') { UI.wlQ = t.value; clearTimeout(UI.wlT); UI.wlT = setTimeout(() => { PAGE_IMPL.wellness.update(); }, 200); return; }
   if (t.dataset && t.dataset.hcreason) { const g = t.dataset.g, id = t.dataset.hcreason; clearTimeout(hcNoteT[id]); hcNoteT[id] = setTimeout(() => { const cur = hcDoc(hcDay(), g) || {}; const next = Object.assign({}, cur, { reasons: Object.assign({}, cur.reasons || {}, { [id]: t.value.slice(0, 200) }) }); S.hc[hcDay() + '_' + g] = next; setDoc('headcount/' + hcDay() + '_' + g, Object.assign(next, { by: S.uid, byName: S.meName || '', updatedAt: Date.now() })).catch(fail); }, 700); }
 });
@@ -2759,4 +2782,4 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mbg'))
 
 boot();
 document.addEventListener('toggle', e => { if (e.target && e.target.id === 'coChecks') UI.checksOpen = e.target.open; }, true);
-document.addEventListener('toggle', e => { const t = e.target; if (t && t.classList && t.classList.contains('fold') && /^wl-/.test(t.id)) UI.wlOpenSet = Object.assign(UI.wlOpenSet || {}, { [t.id]: t.open }); }, true);
+document.addEventListener('toggle', e => { const t = e.target; if (t && t.classList && t.classList.contains('fold') && t.id) UI.foldSet = Object.assign(UI.foldSet || {}, { [t.id]: t.open }); }, true);
