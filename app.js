@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16g · one-company view uses the width';
+const APP_VERSION = '2026-11-16h · live counts for counselors and ACs';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1376,7 +1376,7 @@ PAGE_IMPL.checkin = {
     const r = role();
     const mineLabel = r === 'counselor' ? 'My group' : r === 'ac' ? 'My company' : null;
     const segs = [['all', 'Everyone'], ['arrive', 'Not arrived'], ['in', 'Checked in'], ['out', 'Checked out']].concat(mineLabel ? [['mine', mineLabel]] : []);
-    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
+    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow" id="ciEye">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
     <div id="ciAnchor"></div>
     <div class="searchbar" id="ciBar">
       <div class="searchrow">${ICONS.search}<input type="search" id="ciQ" placeholder="Search name, unit or G12" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
@@ -1390,9 +1390,21 @@ PAGE_IMPL.checkin = {
     const exp = P.filter(p => p.elig && p.src !== 'walkin').length;
     const inn = P.filter(p => p.s === 'in').length, out = P.filter(p => p.s === 'out').length, wk = P.filter(p => p.src === 'walkin' && p.s).length;
     const arrived = P.filter(p => p.elig && p.src !== 'walkin' && p.s).length;
+    const mineGs = role() === 'counselor' ? myGroups() : role() === 'ac' ? Object.values(S.org.groups).filter(g => myCompanies().some(c => c.id === g.companyId)) : [];
+    if (mineGs.length) { // counselors and ACs: live numbers for their own group or company first
+      const ids = new Set(mineGs.map(g => g.id)), M = P.filter(p => p.g && ids.has(p.g) && (p.inc || p.s));
+      const mIn = M.filter(p => p.s === 'in').length, mOut = M.filter(p => p.s === 'out').length, mArr = M.filter(p => p.s).length;
+      const cos = uniq(mineGs.map(g => g.companyId)).map(id => S.org.companies[id]).filter(Boolean);
+      $('#ciEye').textContent = role() === 'counselor' ? `Your group${mineGs.length > 1 ? 's' : ''} · ${mineGs.map(g => 'G' + g.num).join(', ')} · live` : `Your company · ${cos.map(c => 'Company ' + c.num).join(', ')} · live`;
+      $('#ciNum').textContent = mIn; $('#ciOf').textContent = `of ${M.length} checked in`;
+      $('#ciProg').style.width = pct(mArr, M.length) + '%';
+      const perG = role() === 'ac' ? `<div class="ci-mine">${mineGs.sort((a, b) => a.gender.localeCompare(b.gender) || a.num - b.num).map(g => { const gp = M.filter(p => p.g === g.id), gi = gp.filter(p => p.s === 'in').length; return `<span class="ci-g ${gi === gp.length && gp.length ? 'full' : ''}"><b>G${g.num}</b> ${gi}/${gp.length}</span>`; }).join('')}</div>` : '';
+      $('#ciK').innerHTML = `<span class="hstat y"><b>${M.length - mArr}</b> not here yet</span><span class="hstat"><b>${mOut}</b> checked out</span><span class="hstat"><b>${inn}</b> in the whole session</span>${perG}`;
+    } else {
     $('#ciNum').textContent = inn; $('#ciOf').textContent = `checked in · ${exp} expected`;
     $('#ciProg').style.width = pct(arrived, exp) + '%';
     $('#ciK').innerHTML = `<span class="hstat y"><b>${pct(arrived, exp)}%</b> arrived</span><span class="hstat"><b>${exp - arrived}</b> not here yet</span><span class="hstat"><b>${wk}</b> walk-ins</span><span class="hstat"><b>${out}</b> checked out</span>`;
+    }
     const toks = UI.q.toLowerCase().split(/\s+/).filter(Boolean);
     const browsing = !toks.length && !UI.stake && UI.filter === 'all';
     // ----- selection header (a stake or a unit is open) -----

@@ -567,3 +567,16 @@ details.fold{scroll-margin-top:96px}
   .companies.solo .co-head{flex-direction:row;flex-wrap:wrap;gap:6px 28px;align-items:center;justify-content:space-between}
   .companies.solo .co-meta{grid-template-columns:auto minmax(180px,320px) auto auto;gap:4px 12px}
 }
+
+/* any page showing a single company (headcount, groups, search): use the full width */
+.companies:has(> .company:only-child){grid-template-columns:1fr}
+@media (min-width:900px){
+  .companies:has(> .company:only-child) > .company{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));align-content:start}
+  .companies:has(> .company:only-child) > .company > :not(.grp){grid-column:1/-1}
+  .companies:has(> .company:only-child) > .company > .grp{border-right:1px solid var(--line)}
+  .companies:has(> .company:only-child) .co-head{flex-direction:row;flex-wrap:wrap;gap:6px 28px;align-items:center;justify-content:space-between}
+}
+/* counselors and ACs: their own live numbers on the check-in page */
+.ci-mine{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.ci-g{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:4px 10px;font-size:.82rem;color:#fff}
+.ci-g.full{background:#8cc06a;border-color:#8cc06a;color:#002846}
