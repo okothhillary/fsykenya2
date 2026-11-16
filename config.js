@@ -1,6 +1,6 @@
 
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBr69YFaKKYoa2VovDJBPPTwS3mjFgu0Co", /* firebase webapi; not a secret API Key */
+  apiKey: "AIzaSyBr69YFaKKYoa2VovDJBPPTwS3mjFgu0Co", /* firebase webapi, designed to be public; not a secret API Key */
   authDomain: "fsykenya2.firebaseapp.com",
   projectId: "fsykenya2",
   storageBucket: "fsykenya2.firebasestorage.app",
