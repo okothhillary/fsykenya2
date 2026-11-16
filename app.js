@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-15g · coordinators manage groups';
+const APP_VERSION = '2026-11-16a · searches, width follows menu';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1226,6 +1226,7 @@ const SHORT_ROLE = { wellness: 'Wellness', regadmin: 'Reg admin', sdc: 'Session 
 function renderNav() {
   const cur = currentPage(); const keys = navPages();
   $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
+  fitWidth();
   const bn = $('#bnav');
   if (!keys.length || gateView()) { bn.hidden = true; return; }
   const main = keys.length <= 5 ? keys : keys.slice(0, 4), rest = keys.length <= 5 ? [] : keys.slice(4);
@@ -1653,8 +1654,8 @@ PAGE_IMPL.companies = {
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${esc(S.config.groupSize || 10)} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
     <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
-    <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '13–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div></div>
-    <div id="coGrid" class="companies"></div>
+    <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '13–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
+    <div id="coFind"></div><div id="coGrid" class="companies"></div>
     ${can.reset() ? resetPanel() : ''}`;
   },
   update() {
@@ -1674,26 +1675,46 @@ PAGE_IMPL.companies = {
     const lim = ['counselor', 'ac'].includes(role()); if (lim) { const ids = scopeCompanyIds(role(), myStaffId()); comps = comps.filter(c => ids.includes(c.id)); }
     if (UI.band === 'Y' || UI.band === 'O') comps = comps.filter(c => c.band === UI.band);
     if (UI.band === 'mine') { const mineIds = role() === 'counselor' ? myGroups().map(g => g.companyId) : myCompanies().map(c => c.id); comps = comps.filter(c => mineIds.includes(c.id)); }
+    // search: an AC shows their whole company; a counselor, youth or group number shows just that group
+    const q = (UI.coQ || '').toLowerCase().trim(); let only = null, hits = null, find = '';
+    if (q) {
+      only = {}; hits = new Set(); const lines = [];
+      const has = x => String(x || '').toLowerCase().includes(q);
+      const mg = q.match(/^g(?:roup)?\s*(\d+)$/), mc = q.match(/^c(?:o|ompany)?\.?\s*(\d+)$/);
+      const all = id => { only[id] = 'all'; };
+      const one = (cid, gid) => { if (only[cid] === 'all') return; (only[cid] = only[cid] || new Set()).add(gid); };
+      for (const c of Object.values(C)) { const a = S.staffMap[c.acId]; if ((a && has(a.name)) || (mc && +mc[1] === c.num)) { all(c.id); lines.push(a && has(a.name) ? `AC <b>${esc(a.name)}</b> → Company ${c.num} (all ${Object.values(G).filter(g => g.companyId === c.id).length} groups)` : `Company ${c.num}`); } }
+      for (const g of Object.values(G)) {
+        const cn = S.staffMap[g.counselorId]; const cid = g.companyId && C[g.companyId] ? g.companyId : '_loose';
+        if ((cn && has(cn.name)) || (mg && +mg[1] === g.num)) { one(cid, g.id); hits.add(g.id); lines.push(cn && has(cn.name) ? `Counselor <b>${esc(cn.name)}</b> → G${g.num}${C[g.companyId] ? ' · Company ' + C[g.companyId].num : ''}` : `G${g.num}${C[g.companyId] ? ' · Company ' + C[g.companyId].num : ''}`); }
+      }
+      if (q.length >= 3 && !mg && !mc && !lines.length) { const ys = S.P.filter(p => p.g && G[p.g] && has(p.name)).slice(0, 12); ys.forEach(p => { const g = G[p.g]; one(g.companyId && C[g.companyId] ? g.companyId : '_loose', g.id); hits.add(g.id); lines.push(`Youth <b>${esc(p.name)}</b> → G${g.num}${C[g.companyId] ? ' · Company ' + C[g.companyId].num : ''}`); }); }
+      const sp = S.staffList.filter(s => ['ac', 'counselor'].includes(s.role) && has(s.name) && !Object.values(G).some(g => g.counselorId === s.id) && !Object.values(C).some(c => c.acId === s.id));
+      sp.forEach(s => lines.push(`<b>${esc(s.name)}</b> (${esc(ROLES[s.role].toLowerCase())}) has no ${s.role === 'ac' ? 'company' : 'group'} yet`));
+      find = `<div class="findbar">${lines.length ? `<b>${lines.length} match${lines.length === 1 ? '' : 'es'}</b><ul>${lines.slice(0, 15).map(l => `<li>${l}</li>`).join('')}</ul>` : `<b>No matches for "${esc(UI.coQ)}"</b>`}<button class="btn small" data-act="coQClear">Clear search</button></div>`;
+      comps = comps.filter(c => only[c.id]);
+    }
+    $('#coFind').innerHTML = find;
     const coCard = c => {
-      const gs = Object.values(G).filter(g => g.companyId === c.id).sort((a, b) => a.gender.localeCompare(b.gender) || a.num - b.num);
+      const gs = Object.values(G).filter(g => g.companyId === c.id && (!only || only[c.id] === 'all' || (only[c.id] && only[c.id].has(g.id)))).sort((a, b) => a.gender.localeCompare(b.gender) || a.num - b.num);
       const ps = gs.flatMap(g => mem[g.id]);
       const acSel = adm ? `<select data-act="coAc" data-id="${c.id}" aria-label="Assistant coordinator">${opt('', '— None')}${acs.map(a => opt(a.id, a.name + (acUsed.has(a.id) && a.id !== c.acId ? ' (Co ' + (Object.values(C).find(x => x.acId === a.id) || {}).num + ')' : ''), a.id === c.acId)).join('')}</select>` : esc(sName(c.acId) || '—');
       return `<section class="company"><div class="co-head"><div class="co-title"><h2>Company ${c.num}</h2><div class="inline"><span class="chip band">${BANDS[c.band]}</span><span class="chip F">${gs.filter(g => g.gender === 'F').length} YW</span><span class="chip M">${gs.filter(g => g.gender === 'M').length} YM</span>${adm ? `<button class="btn small danger" data-act="delCo" data-id="${c.id}">Remove</button>` : ''}</div></div>
       <div class="co-meta"><span class="muted">AC</span>${acSel}<span class="muted">In now</span><span class="num">${ps.filter(p => p.s === 'in').length} / ${ps.length}</span></div></div>
-      ${gs.map(g => grpBlock(g, mem[g.id])).join('') || '<p class="note" style="padding:0 14px">No groups yet.</p>'}</section>`;
+      ${only && only[c.id] !== 'all' ? `<p class="note" style="padding:6px 14px 0;margin:0">Showing ${gs.length} of ${Object.values(G).filter(g => g.companyId === c.id).length} groups</p>` : ''}${gs.map(g => grpBlock(g, mem[g.id], hits && hits.has(g.id))).join('') || '<p class="note" style="padding:0 14px">No groups yet.</p>'}</section>`;
     };
     let html = comps.map(coCard).join('');
-    const loose = Object.values(G).filter(g => !g.companyId || !C[g.companyId]);
+    const loose = Object.values(G).filter(g => (!g.companyId || !C[g.companyId]) && (!only || (only._loose && only._loose.has(g.id))));
     if (loose.length && UI.band !== 'mine' && !lim) html += `<section class="company"><div class="co-head"><div class="co-title"><h2>Groups without a company</h2><span class="chip warn">${loose.length}</span></div></div>${loose.map(g => grpBlock(g, mem[g.id])).join('')}</section>`;
-    $('#coGrid').innerHTML = html || `<div class="empty" style="grid-column:1/-1"><h3>No companies yet</h3>${adm ? 'Companies are formed from the assistant coordinators on the Staff tab. Press Regenerate all once participants, counselors and ACs are in.' : 'The registration admin will generate companies.'}</div>`;
+    $('#coGrid').innerHTML = html || (q ? '' : `<div class="empty" style="grid-column:1/-1"><h3>No companies yet</h3>${adm ? 'Companies are formed from the assistant coordinators on the Staff tab. Press Regenerate all once participants, counselors and ACs are in.' : 'The registration admin will generate companies.'}</div>`);
   }
 };
-function grpBlock(g, mem) {
+function grpBlock(g, mem, hit) {
   const adm = can.orgEdit(), open = UI.open.has(g.id), size = +S.config.groupSize || 10;
   const cn = g.counselorId && S.staffMap[g.counselorId];
   const counsSel = adm ? `<select data-act="grpCoun" data-id="${g.id}" aria-label="Counselor for G${g.num}">${opt('', '— No counselor')}${S.staffList.filter(s => s.role === 'counselor' && (s.gender === g.gender || s.id === g.counselorId)).map(s => { const other = Object.values(S.org.groups).find(x => x.counselorId === s.id && x.id !== g.id); const a = staffAge(s, S.config); return opt(s.id, `${s.name}${a != null ? ' (' + a + ')' : ''}${other ? ' · G' + other.num : ''}${cPref(s, g.band, S.config) === 2 ? ' · other age pref' : ''}`, s.id === g.counselorId); }).join('')}</select>` : '';
   const coSel = adm ? `<select data-act="grpCo" data-id="${g.id}" aria-label="Company for G${g.num}">${opt('', '— No company')}${Object.values(S.org.companies).sort((a, b) => a.num - b.num).map(c => opt(c.id, `Company ${c.num} · ${BANDS[c.band]}${c.band !== g.band ? ' ⚠' : ''}`, c.id === g.companyId)).join('')}</select>` : '';
-  return `<div class="grp"><div class="grp-row" data-act="toggleGrp" data-id="${g.id}" role="button" tabindex="0" aria-expanded="${open}"><span class="gnum">G${g.num}</span>${chipG(g.gender)}<span class="cn">${cn ? esc(cn.name) : '<span class="chip bad">No counselor</span>'}</span><span class="num ${mem.length > size ? '' : 'muted'}" style="${mem.length > size ? 'color:var(--warn)' : ''}">${mem.length}/${size}</span><span class="num muted" title="Checked in">✓${mem.filter(p => p.s === 'in').length}</span><span class="muted">${open ? '▾' : '▸'}</span></div>
+  return `<div class="grp${hit ? ' hit' : ''}"><div class="grp-row" data-act="toggleGrp" data-id="${g.id}" role="button" tabindex="0" aria-expanded="${open}"><span class="gnum">G${g.num}</span>${chipG(g.gender)}<span class="cn">${cn ? esc(cn.name) : '<span class="chip bad">No counselor</span>'}</span><span class="num ${mem.length > size ? '' : 'muted'}" style="${mem.length > size ? 'color:var(--warn)' : ''}">${mem.length}/${size}</span><span class="num muted" title="Checked in">✓${mem.filter(p => p.s === 'in').length}</span><span class="muted">${open ? '▾' : '▸'}</span></div>
   ${open ? `<div class="grp-body">${adm ? `<div class="form" style="margin-bottom:6px"><label>Counselor${counsSel}</label><label>Company${coSel}</label></div>` : ''}
    ${mem.sort((a, b) => a.name.localeCompare(b.name)).map(p => `<div class="mem"><span class="sdot ${p.s}" title="${p.s === 'in' ? 'Checked in' : p.s === 'out' ? 'Checked out' : 'Not arrived'}"></span><span class="mn"><a href="#" data-act="detail" data-id="${esc(p.id)}">${esc(p.name)}</a> <small class="muted">${p.age ?? '?'} · ${esc(p.unit)}</small>${(p.medIssue || p.dietIssue) && seesPrivate(p) ? ' <span class="chip warn">!</span>' : ''}</span>${moveSelect(p)}</div>`).join('') || '<span class="muted">Empty group</span>'}
    ${adm ? `<div><button class="btn small danger" data-act="delGrp" data-id="${g.id}">Remove group</button></div>` : ''}</div>` : ''}</div>`;
@@ -1865,6 +1886,20 @@ function notifyRequest(note) {
   fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body }).catch(() => { });
 }
 
+/* Page width follows the menu: wide enough for every tab plus some breathing room, never narrower than 1280px. */
+let fitKey = '';
+function fitWidth() {
+  const nav = $('#nav'); if (!nav) return;
+  const key = nav.children.length + ':' + window.innerWidth; if (key === fitKey) return; fitKey = key;
+  requestAnimationFrame(() => {
+    let w = 0; for (const b of nav.children) w += b.getBoundingClientRect().width; w += Math.max(0, nav.children.length - 1) * 4;
+    if (!w) { document.documentElement.style.removeProperty('--wrapmax'); fitKey = ''; return; }
+    const target = Math.round(Math.min(1680, Math.max(1280, w * 1.12 + 96)));
+    document.documentElement.style.setProperty('--wrapmax', target + 'px');
+  });
+}
+window.addEventListener('resize', () => { fitKey = ''; fitWidth(); });
+
 /* ---------- health concerns (reported by counselors, followed up by wellness coordinators) ---------- */
 const REP_KINDS = [['medical', 'Medical'], ['dietary', 'Dietary'], ['injury', 'Injury or illness'], ['emotional', 'Emotional wellbeing'], ['other', 'Other']];
 const repKind = k => (REP_KINDS.find(x => x[0] === k) || [k, k])[1];
@@ -1948,7 +1983,7 @@ PAGE_IMPL.staff = {
       <input type="file" id="sfFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div id="sfBox"></div></section>` : ''}
     <div id="stK" class="kpis"></div>
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
-    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stView" class="stview"></div><div id="stList"></div></section>
+    <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><input id="stQ" type="search" placeholder="Search staff by name, phone, email, ward or stake" autocomplete="off" value="${esc(UI.stQ || '')}" style="width:100%;margin-bottom:10px"><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stView" class="stview"></div><div id="stList"></div></section>
     <details class="panel adm"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a Session Directing Couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
       <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></details>
     ${can.reset() ? resetPanel() : ''}`;
@@ -1958,8 +1993,12 @@ PAGE_IMPL.staff = {
     const PL = ROLE_PLURAL;
     $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
     $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics', wellness: 'Wellness' })[r]]), 'openStaff');
-    $('#stTabs').innerHTML = STAFF_ROLES.map(r => `<button data-act="stTab" data-v="${r}" aria-pressed="${UI.staffTab === r}">${esc(ROLES[r])} · ${cnt(r)}</button>`).join('');
-    const list = S.staffList.filter(s => s.role === UI.staffTab);
+    const sq = (UI.stQ || '').toLowerCase().trim();
+    const sm = s => !sq || [s.name, s.phone, s.email, s.unit, s.stake, s.unitRaw].join(' ').toLowerCase().includes(sq) || String(s.phone || '').replace(/\D/g, '').includes(sq.replace(/\D/g, '') || '~');
+    const qc = r => S.staffList.filter(s => s.role === r && sm(s)).length;
+    if (sq && !qc(UI.staffTab)) { const other = STAFF_ROLES.find(r => qc(r)); if (other) UI.staffTab = other; }
+    $('#stTabs').innerHTML = STAFF_ROLES.map(r => `<button data-act="stTab" data-v="${r}" aria-pressed="${UI.staffTab === r}">${esc(ROLES[r])} · ${sq ? qc(r) + ' found' : cnt(r)}</button>`).join('');
+    const list = S.staffList.filter(s => s.role === UI.staffTab && sm(s));
     const byArea = UI.staffView === 'area';
     const plural = PL[UI.staffTab] || ROLES[UI.staffTab] + 's';
     $('#stView').innerHTML = list.length ? `<div class="chips"><button data-act="stView" data-v="az" aria-pressed="${!byArea}">A–Z</button><button data-act="stView" data-v="area" aria-pressed="${byArea}">By stake and unit</button></div><button class="btn small" data-act="stPdf" data-v="">Print ${esc(plural.toLowerCase())} list (PDF)</button>` : '';
@@ -1976,7 +2015,7 @@ PAGE_IMPL.staff = {
         for (const un of Object.keys(units).sort(areaSort)) body += `<tr class="un-h"><td colspan="${ncol}">${esc(un)} <span class="muted">· ${units[un].length}</span></td></tr>` + units[un].map(row).join('');
       }
     } else body = list.map(row).join('');
-    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
+    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
     renderSf();
   }
 };
@@ -2512,6 +2551,7 @@ document.addEventListener('click', async e => {
     case 'repResolve': { const note = await askText('Mark as resolved', 'What was done? (optional)'); if (note === null) break; await updateReport(id, v, { status: 'resolved', resNote: note, resAt: Date.now(), resBy: S.uid, resByName: S.meName || S.email }); toast('Marked resolved'); break; }
     case 'repNote': { const note = await askText('Add a follow-up', 'Follow-up note'); if (!note) break; await updateReport(id, v, { resNote: note, resAt: Date.now(), resBy: S.uid, resByName: S.meName || S.email }); toast('Saved'); break; }
     case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
+    case 'coQClear': UI.coQ = ''; { const i = $('#coQ'); if (i) i.value = ''; } render(); break;
     case 'wlRep': UI.wlRep = v; render(); break;
     case 'wlGo': { const map = { open: ['wl-rep', () => UI.wlRep = 'open'], urgent: ['wl-rep', () => UI.wlRep = 'urgent'], med: ['wl-youth', () => { UI.wlY = 'med'; UI.wlMore = false; }], diet: ['wl-youth', () => { UI.wlY = 'diet'; UI.wlMore = false; }], staff: ['wl-staff', () => { }] }[v]; if (!map) break; map[1](); UI.wlOpenSet = Object.assign(UI.wlOpenSet || {}, { [map[0]]: true }); render(); const d = document.getElementById(map[0]); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } break; }
     case 'wlY': UI.wlY = v; UI.wlMore = false; render(); break;
@@ -2611,6 +2651,8 @@ let qT = null;
 document.addEventListener('input', e => { if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'coQ') { UI.coQ = t.value; clearTimeout(UI.coT); UI.coT = setTimeout(() => PAGE_IMPL.companies.update(), 200); return; }
+  if (t.id === 'stQ') { UI.stQ = t.value; clearTimeout(UI.stT); UI.stT = setTimeout(() => PAGE_IMPL.staff.update(), 200); return; }
   if (t.id === 'wlQ') { UI.wlQ = t.value; clearTimeout(UI.wlT); UI.wlT = setTimeout(() => { PAGE_IMPL.wellness.update(); }, 200); return; }
   if (t.dataset && t.dataset.hcreason) { const g = t.dataset.g, id = t.dataset.hcreason; clearTimeout(hcNoteT[id]); hcNoteT[id] = setTimeout(() => { const cur = hcDoc(hcDay(), g) || {}; const next = Object.assign({}, cur, { reasons: Object.assign({}, cur.reasons || {}, { [id]: t.value.slice(0, 200) }) }); S.hc[hcDay() + '_' + g] = next; setDoc('headcount/' + hcDay() + '_' + g, Object.assign(next, { by: S.uid, byName: S.meName || '', updatedAt: Date.now() })).catch(fail); }, 700); }
 });

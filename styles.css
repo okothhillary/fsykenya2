@@ -60,7 +60,7 @@ small{font-size:.82rem}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88em}
 button,select,input,textarea{font:inherit;color:inherit}
 :focus-visible{outline:3px solid var(--yellow);outline-offset:2px}
-.wrap{max-width:2400px;margin:0 auto;padding-left:max(clamp(16px,2.4vw,48px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,2.4vw,48px),env(safe-area-inset-right,0px))}
+.wrap{max-width:var(--wrapmax,1440px);margin:0 auto;padding-left:max(clamp(16px,2.4vw,48px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,2.4vw,48px),env(safe-area-inset-right,0px))}
 .eyebrow,.th{font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;font-weight:800;margin:0}
 .th{color:var(--link)}
 
@@ -548,3 +548,11 @@ details.fold[open] > summary{margin-bottom:12px}
 .kpi-btn:focus-visible{outline:3px solid var(--blue25);outline-offset:2px}
 details.fold>summary::before{display:none}
 details.fold{scroll-margin-top:96px}
+
+/* search on companies */
+.co-q{flex:1 1 320px;min-width:0}
+.findbar{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 14px;margin:10px 0;padding:10px 14px;border-radius:14px;background:var(--blue5t);border:1px solid var(--line)}
+.findbar ul{flex:1 1 100%;margin:2px 0 0;padding-left:18px;font-size:.92rem;order:2}
+.findbar .btn{margin-left:auto}
+.grp.hit > .grp-row{background:#fff3d6;box-shadow:inset 4px 0 0 #fcb449}
+.grid2{align-items:start}
