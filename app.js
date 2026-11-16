@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16n · explains spare counselors';
+const APP_VERSION = '2026-11-16o · logistics sees wellness';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -965,7 +965,9 @@ const can = {
   // regenerate, rebalance, add or remove companies and groups, change who leads them
   orgEdit: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
   logistics: () => !!role() && role() !== 'wellness',
-  wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness'].includes(role()),
+  wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness', 'logistics'].includes(role()),
+  // resolving and following up on health concerns (logistics only looks)
+  wellnessEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness'].includes(role()),
   report: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'wellness'].includes(role()),
   accounts: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
   // the real account must be allowed to split, and a preview of another role hides it, so previews show exactly what that role sees
@@ -1110,7 +1112,7 @@ async function runAdminSync() {
   // 3. each person's copy of the medical and dietary notes they are allowed to see
   const uids = uniq(Object.keys(S.access).concat(Object.keys(S.members)));
   for (const uid of uids) {
-    const a = accountOf(uid); if (!a || a.role === 'regadmin' || a.role === 'wellness') continue;
+    const a = accountOf(uid); if (!a || ['regadmin', 'wellness', 'logistics'].includes(a.role)) continue;
     const p = {}; S.P.forEach(x => { if ((x.medIssue || x.dietIssue) && inScopeFor(x, a.role, a.staffId)) p[x.id] = { med: x.medIssue || '', diet: x.dietIssue || '' }; });
     const h = fnv(JSON.stringify(p)).toString(36); if (S.shares[uid] === h) continue; S.shares[uid] = h;
     await setDoc('share/' + uid, { p, h });
@@ -1222,7 +1224,7 @@ async function boot() {
     let pick = null; try { pick = localStorage.getItem('fsy.session.' + u.uid); } catch (e) { }
     S.sid = S.mySessions.includes(pick) ? pick : (S.mySessions[0] || 'main');
     S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy', 'loghead'].includes(inv.role));
-    S.medRead = S.medAdmin || !!(inv && inv.role === 'wellness');
+    S.medRead = S.medAdmin || !!(inv && ['wellness', 'logistics'].includes(inv.role)); S.myRole = inv ? inv.role : (S.isOwner ? 'regadmin' : null);
     if (!S.isOwner && !inv) { subscribeGuest(); render(); return; }
     subscribe(); render();
   });
@@ -1264,7 +1266,7 @@ const ICONS = {
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
+const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'], ac: ['checkin', 'companies', 'logistics', 'exceptions', 'tally'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -1999,13 +2001,13 @@ function repHistory(p) {
   return `<div class="rep-hist"><div class="panel-head" style="margin:0 0 6px"><b>Health concerns</b>${can.report() ? `<button class="btn small" data-act="repNew" data-id="${esc(p.id)}">+ Report a concern</button>` : ''}</div>${list.length ? list.map(repCard).join('') : '<p class="note" style="margin:0">None reported.</p>'}</div>`;
 }
 function repCard(r) {
-  const p = S.P.find(x => x.id === r.pid); const w = can.wellness();
+  const p = S.P.find(x => x.id === r.pid); const w = can.wellness(), we = can.wellnessEdit();
   return `<div class="rep ${r.status === 'open' ? 'open' : 'done'}${r.urgent && r.status === 'open' ? ' urgent' : ''}">
     <div class="rep-top">${r.urgent ? '<span class="chip bad">Urgent</span>' : ''}<span class="chip">${esc(repKind(r.kind))}</span>${r.status === 'open' ? '<span class="chip warn">Open</span>' : '<span class="chip good">Resolved</span>'}<small class="muted">${esc(fmtWhen(r.at))} · ${esc(r.byName || '')}</small></div>
     ${w ? `<div class="rep-who"><a href="#" data-act="detail" data-id="${esc(r.pid)}"><b>${esc(p ? p.name : r.pname || 'Participant')}</b></a> <small class="muted">${p ? `${p.age ?? '?'} yrs · ${p.gender === 'F' ? 'YW' : p.gender === 'M' ? 'YM' : '?'} · ${p.group ? 'G' + p.group.num + (p.counselor ? ' (' + esc(p.counselor.name) + ')' : '') + (p.company ? ' · Co ' + p.company.num : '') : 'no group'} · ${p.s === 'in' ? 'checked in' : p.s === 'out' ? 'checked out' : 'not arrived'}` : ''}</small></div>` : ''}
     <p class="rep-text">${esc(r.text)}</p>
     ${r.resNote || r.status !== 'open' ? `<p class="rep-res"><b>${r.status === 'open' ? 'Follow-up' : 'Resolved'}${r.resByName ? ' by ' + esc(r.resByName) : ''}${r.resAt ? ' · ' + esc(fmtWhen(r.resAt)) : ''}:</b> ${esc(r.resNote || '—')}</p>` : ''}
-    ${w ? `<div class="btnrow">${r.status === 'open' ? `<button class="btn small primary" data-act="repResolve" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Mark resolved</button><button class="btn small" data-act="repNote" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Add follow-up</button>` : `<button class="btn small" data-act="repReopen" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Reopen</button>`}</div>` : ''}</div>`;
+    ${we ? `<div class="btnrow">${r.status === 'open' ? `<button class="btn small primary" data-act="repResolve" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Mark resolved</button><button class="btn small" data-act="repNote" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Add follow-up</button>` : `<button class="btn small" data-act="repReopen" data-id="${esc(r.owner)}" data-v="${esc(r.id)}">Reopen</button>`}</div>` : ''}</div>`;
 }
 function fmtWhen(t) { if (!t) return ''; const d = new Date(t); return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
 function openReportForm(pid) {
@@ -2483,7 +2485,7 @@ PAGE_IMPL.access = {
       <tr><td>Head of Logistics</td><td>Every session</td><td>Everything logistics can see and do, in every session, plus splitting and reorganising sessions.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, rebalance or regenerate groups and companies, add or remove companies, choose counselors and ACs, manage staff, logistics for everyone.</td></tr>
       <tr><td>Wellness coordinator</td><td>Whole session</td><td>Sees the Wellness page: every medical and dietary note for youth and staff, and the health concerns counselors report. Can view check-in and the tally, but checks nobody in and has no group.</td></tr>
-      <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
+      <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff, wellness (view only) and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
       <tr><td>Assistant coordinator</td><td>Their company</td><td>Check in, move participants inside their company, logistics for their company.</td></tr>
       <tr><td>Counselor</td><td>Their group and company</td><td>Check in, undo and check out, add walk-ins, logistics for their company.</td></tr></tbody></table></div>
       <p class="note">These limits are enforced by the database's security rules, not only by the screens. Medical and dietary notes are stored apart; counselors, ACs, coordinators and logistics only receive the notes for the youth they are allowed to see.</p></div>`;
