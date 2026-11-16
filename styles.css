@@ -603,3 +603,6 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 .fit-hint ul{margin:0 0 6px;padding-left:18px;max-height:none}
 .size-form{grid-template-columns:repeat(auto-fit,minmax(160px,220px));align-items:end}
 .size-go{display:flex;align-items:end}
+.lockline{margin:0 0 10px;font-weight:600}
+.log{position:relative}
+.log-x{position:absolute;top:8px;right:8px;border:0;background:none;font-size:1.3rem;line-height:1;color:var(--muted);cursor:pointer}

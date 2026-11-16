@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16s · group sizes on Companies & groups';
+const APP_VERSION = '2026-11-16u · no renumber summary';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -571,7 +571,7 @@ function renumber(groups, companies) {
   const comps = Object.values(companies).sort((a, b) => (a.band > b.band ? -1 : a.band < b.band ? 1 : 0) || (a.num || 9999) - (b.num || 9999));
   comps.forEach((c, i) => c.num = i + 1);
   const order = {}; comps.forEach(c => order[c.id] = c.num);
-  const gs = Object.values(groups).sort((a, b) => (order[a.companyId] || 9999) - (order[b.companyId] || 9999) || (a.gender > b.gender ? 1 : -1) || (a.num || 9999) - (b.num || 9999));
+  const gs = Object.values(groups).sort((a, b) => (order[a.companyId] || 9999) - (order[b.companyId] || 9999) || (a.gender === b.gender ? 0 : a.gender > b.gender ? 1 : -1) || (a.num || 9999) - (b.num || 9999));
   gs.forEach((g, i) => g.num = i + 1);
 }
 /** The same person entered twice (same email, or the same full name) with a leadership role on one record and
@@ -842,9 +842,10 @@ function rebalance(P, staffList, org, cfg) {
   }
   if (freeAcs.length) log.push(`${freeAcs.length} assistant coordinator(s) still unassigned`);
   assignCoordinators(companies, staffList.filter(s => s.role === 'coordinator'));
-  // numbering: keep existing, give new ones next numbers
-  let maxG = Math.max(0, ...Object.values(groups).filter(g => g.num && g.num < 9000).map(g => g.num));
-  Object.values(groups).forEach(g => { if (!g.num || g.num >= 9000) g.num = ++maxG; });
+  // numbering: existing groups keep their number; a new group takes the lowest free number (a gap left by a removed group) first
+  const takenG = new Set(Object.values(groups).filter(g => g.num && g.num < 9000).map(g => g.num)); let nextG = 1;
+  const seenG = new Set(); Object.values(groups).forEach(g => { if (g.num && g.num < 9000 && seenG.has(g.num)) g.num = 0; else if (g.num) seenG.add(g.num); }); // repair any duplicate
+  Object.values(groups).sort((a, b) => (a.gender > b.gender ? 1 : -1)).forEach(g => { if (!g.num || g.num >= 9000) { while (takenG.has(nextG)) nextG++; g.num = nextG; takenG.add(nextG); } });
   let maxC = Math.max(0, ...Object.values(companies).filter(c => c.num && c.num < 9000).map(c => c.num));
   Object.values(companies).forEach(c => { if (!c.num || c.num >= 9000) c.num = ++maxC; });
   const changes = {}; for (const p of P) if ((p.g || null) !== (cur[p.id] || null)) changes[p.id] = cur[p.id] || null;
@@ -1093,7 +1094,7 @@ async function setStates(map) { // pid -> patch
   recompute(true);
   for (const b in byB) { const ex = S.stateEx.has(b); S.stateEx.add(b); await upd('state/' + b, { p: byB[b] }, ex); }
 }
-function saveOrg(org, gen) { S.org = { groups: org.groups, companies: org.companies }; S.orgEx = true; recompute(true); return setDoc('org/structure', { groups: org.groups, companies: org.companies, gen: gen || null }).catch(fail); }
+function saveOrg(org, gen) { S.org = { groups: org.groups, companies: org.companies }; S.orgEx = true; recompute(true); return setDoc('org/structure', { groups: org.groups, companies: org.companies, gen: gen || null, lock: S.orgLock || null }).catch(fail); }
 function patchOrg(patch) { // {groups:{id:{...}}} merge
   const o = { groups: Object.assign({}, S.org.groups), companies: Object.assign({}, S.org.companies) };
   for (const k of ['groups', 'companies']) for (const id in (patch[k] || {})) o[k][id] = Object.assign({}, o[k][id] || {}, patch[k][id]);
@@ -1212,7 +1213,7 @@ function subscribe() {
   db.collection('roster').onSnapshot(sn => { const r = {}; S.rosterEx = new Set(); sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.rosterEx.add(d.id); }); S.roster = r; mark('roster', sn.metadata); recompute(); }, onErr);
   db.collection('state').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.stateEx.add(d.id); }); S.state = r; mark('state', sn.metadata); recompute(); }, onErr);
   db.doc('staff/all').onSnapshot(d => { S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
-  db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
+  db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
   db.collection('headcount').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.hc = r; S.hcLoaded = true; recompute(); }, onErr);
   db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
   S.access = {}; S.loaded.access = true;
@@ -1758,7 +1759,7 @@ PAGE_IMPL.companies = {
   frame() {
     const adm = can.orgEdit();
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${gsize(S.config, 'F') === gsize(S.config, 'M') ? esc(gsize(S.config, 'F')) : `${gsize(S.config, 'F')} young women or ${gsize(S.config, 'M')} young men`} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
-    <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
+    <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber">Renumber groups by company</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     ${adm ? foldSec('co-sizes', 'Group sizes', 'coSizeN', '', '<div id="coSizes"></div>') : ''}
     <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
     <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '13–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
@@ -1767,7 +1768,7 @@ PAGE_IMPL.companies = {
   },
   update() {
     const G = S.org.groups, C = S.org.companies, adm = can.orgEdit();
-    $('#coLog').innerHTML = UI.genLog ? `<div class="log"><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
+    $('#coLog').innerHTML = (S.orgLock && adm ? `<p class="note lockline">Group numbers are locked${S.orgLock.at ? ' since ' + esc(fmtWhen(S.orgLock.at)) : ''}. Rebalance keeps them; new groups take free numbers first.</p>` : '') + (UI.genLog ? `<div class="log"><button class="x log-x" data-act="logClose" aria-label="Dismiss">×</button><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '');
     const by = r => S.staffList.filter(s => s.role === r);
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
     const acs = by('ac'), acUsed = new Set(Object.values(C).map(c => c.acId));
@@ -2610,9 +2611,22 @@ async function runRebalance() {
   const ch = {}; for (const id in r.changes) ch[id] = { g: r.changes[id] };
   await setStates(ch).catch(fail); toast('Groups and companies updated');
 }
+async function runRenumber() {
+  const gs = Object.values(S.org.groups); if (!gs.length) { toast('There are no groups to number yet.', true); return; }
+  const inN = S.P.filter(p => p.s).length;
+  const ok = await confirmBox('Renumber groups by company?', `Groups are numbered in company order: Company 1's groups first (young women, then young men), then Company 2, and so on. Companies are numbered 13–15 first, then 16–18. Nobody changes group or counselor, only the numbers.${inN ? ` <br><br><b>${inN} youth have already checked in.</b> Counselors and printed rosters may already use the old numbers.` : ''}<br><br>Numbers are then <b>locked</b>: Rebalance keeps them, and new groups fill free numbers first.`, 'Renumber and lock', !!inN);
+  if (!ok) return;
+  const o = JSON.parse(JSON.stringify(S.org)); const before = {}; Object.values(o.groups).forEach(g => before[g.id] = g.num);
+  renumber(o.groups, o.companies);
+  const changed = Object.values(o.groups).filter(g => before[g.id] !== g.num).length;
+  S.orgLock = { at: Date.now(), by: S.meName || S.email || '' };
+  await saveOrg(o, Object.assign({}, S.orgGen || {}, { renumbered: Date.now() }));
+  UI.genLog = null;
+  render(); toast(`Groups renumbered by company: ${changed} of ${gs.length} got a new number. Numbers are now locked.`);
+}
 async function runRegen() {
   if (!S.staffList.some(s => s.role === 'counselor')) { toast('Add counselors on the Staff tab first (or generate test staff).', true); return; }
-  const ok = await confirmBox('Regenerate all groups and companies?', 'Every participant is placed again from scratch. Check-ins are kept, but group and company assignments, including manual moves, are replaced. To keep current groups, use Rebalance instead.', 'Regenerate', true);
+  const ok = await confirmBox('Regenerate all groups and companies?', `Every participant is placed again from scratch. Check-ins are kept, but group and company assignments, including manual moves, are replaced.${S.orgLock ? ' <b>Group numbers are locked: regenerating gives every group a new number</b>, so rosters and what counselors were told will no longer match.' : ''} To keep current groups and numbers, use Rebalance instead.`, 'Regenerate', true);
   if (!ok) return;
   const r = fullGenerate(S.P, S.staffList, S.config);
   UI.genLog = { title: 'Generated new groups and companies', lines: r.log };
@@ -2659,6 +2673,8 @@ document.addEventListener('click', async e => {
     case 'coBand': UI.band = v; UI.frameKey = ''; render(); break;
     case 'allWarn': UI.allWarn = true; render(); break;
     case 'rebalance': await runRebalance(); break;
+    case 'renumber': await runRenumber(); break;
+    case 'logClose': UI.genLog = null; render(); break;
     case 'regen': await runRegen(); break;
     case 'addCo': { const band = await new Promise(res => { openModal(`<div class="modal-head"><h2>Add a company</h2><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note">An empty company is created. Move groups into it with the Company picker inside each group, or press Rebalance to fill it automatically with a spare AC.</p><div class="btnrow"><button class="btn primary" id="aY">13–15 company</button><button class="btn primary" id="aO">16–18 company</button></div>`); $('#aY').onclick = () => { closeModal(); res('Y'); }; $('#aO').onclick = () => { closeModal(); res('O'); }; }); if (!band) break; const cid = rid('c'); const num = Math.max(0, ...Object.values(S.org.companies).map(c => c.num)) + 1; await patchOrg({ companies: { [cid]: { id: cid, band, acId: null, coordId: null, num } } }); toast('Company ' + num + ' added'); break; }
     case 'delCo': { const c = S.org.companies[id]; if (!await confirmBox(`Remove Company ${c.num}?`, 'Its groups stay together and move to "Groups without a company". Press Rebalance to place them in other companies.', 'Remove company', true)) break; const o = { groups: {}, companies: Object.assign({}, S.org.companies) }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = g.companyId === id ? Object.assign({}, g, { companyId: null }) : g; delete o.companies[id]; await saveOrg(o, S.orgGen); toast('Company removed'); break; }
