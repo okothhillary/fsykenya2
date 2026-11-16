@@ -60,7 +60,7 @@ small{font-size:.82rem}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88em}
 button,select,input,textarea{font:inherit;color:inherit}
 :focus-visible{outline:3px solid var(--yellow);outline-offset:2px}
-.wrap{max-width:1240px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:2400px;margin:0 auto;padding-left:max(clamp(16px,2.4vw,48px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,2.4vw,48px),env(safe-area-inset-right,0px))}
 .eyebrow,.th{font-size:.68rem;letter-spacing:.2em;text-transform:uppercase;font-weight:800;margin:0}
 .th{color:var(--link)}
 
