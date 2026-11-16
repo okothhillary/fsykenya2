@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16i · ACs and coordinators never lead groups';
+const APP_VERSION = '2026-11-16j · checks scoped for counselors and ACs';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1731,8 +1731,16 @@ PAGE_IMPL.companies = {
     $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Assistant coordinators</div><div class="tier"><div class="node"><b class="num">${acs.length}</b><small class="muted">${Object.keys(C).length} companies · ${acs.filter(a => !acUsed.has(a.id)).length} spare</small></div><div class="node"><b class="num">${by('counselor').length}</b><small class="muted">counselors · ${Object.keys(G).length} groups</small></div></div></div>`;
-    const w = validate(S.P, S.org, S.staffMap, S.config);
+    let w = validate(S.P, S.org, S.staffMap, S.config);
+    const limW = ['counselor', 'ac'].includes(role());
+    if (limW) { // counselors and ACs only see checks about their own group or company, worded for passing on
+      const gs = role() === 'counselor' ? myGroups() : Object.values(G).filter(g => myCompanies().some(c => c.id === g.companyId));
+      const gn = new Set(gs.map(g => g.num)), cn = new Set(role() === 'ac' ? myCompanies().map(c => c.num) : []);
+      w = w.filter(([, t]) => { const gm = [...t.matchAll(/\b[Gg]roup (\d+)/g)].map(m => +m[1]); const cm = t.match(/^Company (\d+)/); return gm.some(n => gn.has(n)) || (cm && cn.has(+cm[1])); })
+        .map(([lv, t, x]) => [lv, t.replace(/\s*Press Rebalance[^.]*\.?(\s*then[^.]*\.)?/g, '').replace(/,\s*then delete[^.]*\./, '.').trim(), x]);
+    }
     $('#coWarnSum').innerHTML = Object.keys(G).length ? (w.length ? `${w.filter(x => x[0] === 'bad').length ? `<span class="chip bad">${w.filter(x => x[0] === 'bad').length} to fix</span>` : ''}${w.filter(x => x[0] !== 'bad').length ? `<span class="chip warn">${w.filter(x => x[0] !== 'bad').length} to check</span>` : ''}` : '<span class="chip good">All good</span>') : '';
+    if (limW && Object.keys(G).length) { $('#coWarn').innerHTML = (w.length ? `<p class="note" style="margin:0 0 8px">These affect your ${role() === 'counselor' ? 'group' : 'company'}. Let your coordinator know so they can fix them.</p>` + checksList(w) : `<p><span class="chip good">All good</span> Nothing to report for your ${role() === 'counselor' ? 'group' : 'company'}.</p>`); } else
     $('#coWarn').innerHTML = !Object.keys(G).length ? `<p class="note">No groups yet. ${adm ? 'Upload participants, add counselors and assistant coordinators on the Staff tab (or generate test staff), then press Regenerate all.' : 'The registration admin will generate them.'}</p>` : w.length ? checksList(w) : '<p><span class="chip good">All good</span> Every group and company follows the rules.</p>';
     const mem = {}; for (const id in G) mem[id] = []; S.P.forEach(p => { if (p.g && mem[p.g]) mem[p.g].push(p); });
     let comps = Object.values(C).sort((a, b) => a.num - b.num);
