@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16a · searches, width follows menu';
+const APP_VERSION = '2026-11-16b · accounts link to staff automatically';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1089,8 +1089,33 @@ async function runAdminSync() {
   for (const uid in S.shares) if (!uids.includes(uid) || !accountOf(uid)) { delete S.shares[uid]; await serial('share/' + uid, () => S.db.doc('share/' + uid).delete()); }
   // 4. logistics and Session Directing Couple accounts count as staff in this session (they rarely appear in the staff upload)
   await syncAccountStaff();
+  // 5. link accounts to staff records whose email matches (or, failing that, the same name and role)
+  await autoLinkStaff();
 }
 const ACCOUNT_STAFF_ROLES = ['logistics', 'sdc', 'wellness'];
+const LINK_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics', 'wellness'];
+let linkTried = {};
+/** After staff records are deleted, free their accounts so they can be linked again (automatically after the next upload). */
+async function unlinkDeleted(ids) {
+  for (const h in S.invites) { const v = S.invites[h]; if (v && v.staffId && ids.has(v.staffId)) { try { await FB.fs.doc('invites/' + h).set({ staffId: null, staffAuto: null, staffManual: false }, { merge: true }); } catch (e) { console.warn(e); } } }
+  linkTried = {};
+}
+async function autoLinkStaff() {
+  if (!(S.isOwner || ['regadmin', 'sdc', 'seventy'].includes(realRole())) || !S.loaded.inv || !S.loaded.staff) return;
+  const staff = S.staffList.filter(x => !x.test && !x.fromAccount);
+  const taken = new Set(Object.values(S.invites).map(v => v && v.staffId).filter(Boolean));
+  const norm = x => nameTokens(x).join(' ');
+  for (const h in S.invites) {
+    const v = S.invites[h]; if (!v || !LINK_ROLES.includes(v.role) || !invHere(v)) continue;
+    if (v.staffId && S.staff[v.staffId]) continue;      // already linked here
+    if (v.staffManual) continue; // chosen or removed by hand on the Accounts page
+    const key = h + '|' + S.sid + '|' + staff.length; if (linkTried[key]) continue; linkTried[key] = 1;
+    let m = staff.filter(x => x.email && x.email.toLowerCase() === h && !taken.has(x.id)), how = 'email';
+    if (m.length !== 1) { m = staff.filter(x => x.role === v.role && norm(x.name) && norm(x.name) === norm(v.name) && !taken.has(x.id)); how = 'name'; }
+    if (m.length !== 1) continue;
+    try { await FB.fs.doc('invites/' + h).set({ staffId: m[0].id, staffAuto: how, staffManual: false }, { merge: true }); taken.add(m[0].id); } catch (e) { console.warn('auto-link', h, e); }
+  }
+}
 async function syncAccountStaff() {
   if (!S.loaded.inv || !S.loaded.staff) return;
   const norm = x => String(x || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -1294,7 +1319,7 @@ function resetPanel() {
       <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${nG || nC ? '' : 'disabled'}>Undo groups</button></div>
       <div class="dz"><div><b>Delete test staff</b><small class="muted">${nT} staff marked Test.</small></div><button class="btn danger" data-act="resetTest" ${nT ? '' : 'disabled'}>Delete test staff</button></div>
       <div class="dz"><div><b>Delete staff of one type</b><small class="muted">For example every counselor, before uploading a corrected list. Everyone else stays. Logistics and Session Directing Couple members who have an account are always kept.</small><select id="rsType" style="margin-top:8px;max-width:280px">${STAFF_ROLES.map(r => { const n = S.staffList.filter(x => x.role === r && !x.fromAccount).length; return opt(r, `${ROLES[r]}s · ${n}`, r === (UI.rsType || 'counselor')); }).join('')}</select></div><button class="btn danger" data-act="resetType">Delete this type</button></div>
-      <div class="dz"><div><b>Delete all staff</b><small class="muted">All ${nS} staff, real and test. Groups and companies lose their counselors and ACs. Accounts stay, but need linking to the new staff records.</small></div><button class="btn danger" data-act="resetStaff" ${nS ? '' : 'disabled'}>Delete all staff</button></div>
+      <div class="dz"><div><b>Delete all staff</b><small class="muted">All ${nS} staff, real and test. Groups and companies lose their counselors and ACs. Accounts stay and link again automatically to the new list where the email or name matches.</small></div><button class="btn danger" data-act="resetStaff" ${nS ? '' : 'disabled'}>Delete all staff</button></div>
     </div></section>`;
 }
 function confirmTyped(title, body, word, okLabel) {
@@ -2393,7 +2418,7 @@ PAGE_IMPL.access = {
     if (!$('#invList')) return;
     if (!$('#accAllWrap') && can.split() && $('#invCount')) $('#invCount').insertAdjacentHTML('afterend', `<label class="inline note" id="accAllWrap" style="margin:0"><input type="checkbox" id="accAll" ${UI.accAll ? 'checked' : ''}> Show every session</label>`);
     $('#invCount').textContent = invs.length ? `${Object.keys(claimed).filter(h => S.invites[h]).length} of ${invs.length} signed in` : '';
-    $('#invList').innerHTML = invs.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Staff record</th>${S.mySessions.length > 1 || UI.accAll ? '<th>Sessions</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${invs.map(([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !v.staffId ? ' <span class="chip warn">Link needed</span>' : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No accounts yet. Create the first one above.</p>';
+    $('#invList').innerHTML = invs.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Staff record</th>${S.mySessions.length > 1 || UI.accAll ? '<th>Sessions</th>' : ''}<th>Status</th><th></th></tr></thead><tbody>${invs.map(([h, v]) => `<tr><td><b>${esc(v.name)}</b></td><td class="mono" style="font-size:.84rem">${esc(S.inviteEmails[h] || h)}</td><td><select data-act="invRole" data-id="${h}" aria-label="Role">${roleOpts(v.role)}</select></td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(v.role) ? `<select data-act="invStaff" data-id="${h}" aria-label="Staff record">${staffOpts(v.staffId)}</select>` : '<span class="muted">Not needed</span>'}${['counselor', 'ac'].includes(v.role) && !(v.staffId && S.staff[v.staffId]) ? ' <span class="chip warn">Link needed</span>' : v.staffId && S.staff[v.staffId] && v.staffAuto ? ` <span class="chip good" title="Linked automatically by matching ${v.staffAuto === 'email' ? 'email' : 'name and role'}">Auto${v.staffAuto === 'name' ? ' (name)' : ''}</span>` : ''}</td>${S.mySessions.length > 1 || UI.accAll ? `<td>${TOP_ROLES.includes(v.role) ? '<span class="muted">All sessions</span>' : `<button class="btn small" data-act="invSess" data-id="${h}">${esc(invSessions(v).map(sessName).join(', '))}</button>`}</td>` : ''}<td>${claimed[h] ? '<span class="chip good">Signed in</span>' : '<span class="chip">Waiting</span>'}</td><td><button class="btn small danger" data-act="invDel" data-id="${h}">Delete</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">No accounts yet. Create the first one above.</p>';
     const reqIds = Object.keys(S.requests).filter(id => !S.invites[emailKey(S.requests[id].email || '')]);
     const accIds = Object.keys(S.access);
     const ps = S.user ? await S.user.profiles(uniq(reqIds.concat(accIds))) : {};
@@ -2527,14 +2552,14 @@ document.addEventListener('click', async e => {
     case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
     case 'resetType': { if (!can.reset()) break; const r = ($('#rsType') || {}).value || 'counselor'; UI.rsType = r; const gone = S.staffList.filter(x => x.role === r && !x.fromAccount); if (!gone.length) { toast(`There are no ${ROLES[r].toLowerCase()}s to delete.`); break; }
       if (!await confirmTyped(`Delete all ${gone.length} ${ROLES[r].toLowerCase()}s?`, `Every ${esc(ROLES[r].toLowerCase())} record is deleted, real and test. Other staff types are kept.${r === 'counselor' ? ' Groups lose their counselors; press Rebalance after uploading the new list.' : r === 'ac' ? ' Companies lose their ACs; press Rebalance after uploading the new list.' : ''} Sign-in accounts are kept.`, 'DELETE', 'Delete ' + ROLES[r].toLowerCase() + 's')) break;
-      const ids = new Set(gone.map(x => x.id)); const s2 = {}; for (const k in S.staff) if (!ids.has(k)) s2[k] = S.staff[k]; S.staff = s2; recompute(true); await setDoc('staff/all', { s: s2 }).catch(fail);
+      const ids = new Set(gone.map(x => x.id)); unlinkDeleted(ids); const s2 = {}; for (const k in S.staff) if (!ids.has(k)) s2[k] = S.staff[k]; S.staff = s2; recompute(true); await setDoc('staff/all', { s: s2 }).catch(fail);
       const o = { groups: {}, companies: {} }; let ch = false;
       for (const g of Object.values(S.org.groups)) { const x = Object.assign({}, g); if (ids.has(g.counselorId)) { x.counselorId = null; ch = true; } o.groups[g.id] = x; }
       for (const c of Object.values(S.org.companies)) { const x = Object.assign({}, c); if (ids.has(c.acId)) { x.acId = null; ch = true; } if (ids.has(c.coordId)) { x.coordId = null; ch = true; } o.companies[c.id] = x; }
       if (ch) await saveOrg(o, S.orgGen);
       toast(`${gone.length} ${ROLES[r].toLowerCase()}s deleted`); break; }
-    case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and Session Directing Couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept but will need linking to the new staff records.', 'DELETE', 'Delete all staff')) break;
-      S.staff = {}; recompute(true); await setDoc('staff/all', { s: {} }).catch(fail);
+    case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and Session Directing Couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept and link again automatically when the new list is uploaded, wherever the email or name matches.', 'DELETE', 'Delete all staff')) break;
+      unlinkDeleted(new Set(Object.keys(S.staff))); S.staff = {}; recompute(true); await setDoc('staff/all', { s: {} }).catch(fail);
       const o = { groups: {}, companies: {} }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = Object.assign({}, g, { counselorId: null }); for (const c of Object.values(S.org.companies)) o.companies[c.id] = Object.assign({}, c, { acId: null, coordId: null });
       if (Object.keys(o.groups).length || Object.keys(o.companies).length) await saveOrg(o, S.orgGen);
       toast(`All ${n} staff deleted`); break; }
@@ -2606,7 +2631,7 @@ document.addEventListener('change', async e => {
     case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
     case 'invRole': { await upd('invites/' + id, { role: t.value }, true).catch(fail); toast('Role changed'); break; }
-    case 'invStaff': { await upd('invites/' + id, { staffId: t.value || null }, true).catch(fail); toast('Staff record linked'); break; }
+    case 'invStaff': { await upd('invites/' + id, { staffId: t.value || null, staffAuto: null, staffManual: true }, true).catch(fail); toast(t.value ? 'Staff record linked' : 'Link removed'); break; }
     case 'acStaff': { await setAccess(id, { staffId: t.value || null }); toast('Linked'); break; }
   }
 });
