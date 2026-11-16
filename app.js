@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17a · tally for leaders only, gender on accounts';
+const APP_VERSION = '2026-11-17b · Head of Logistics has Area Seventy rights';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -979,7 +979,7 @@ function invSessions(i) { return i && Array.isArray(i.sessions) && i.sessions.le
 /** Does this account belong to the session being viewed? Registration admins and the Area Seventy belong to all. */
 function invHere(i) { return !!i && (TOP_ROLES.includes(i.role) || invSessions(i).includes(S.sid)); }
 /** Registration admins hand out any role; the Area Seventy any but registration admin; a Session Directing Couple only session roles. */
-function roleAssignable(r) { const me = realRole(); if (me === 'regadmin') return true; if (me === 'seventy') return r !== 'regadmin'; return !['regadmin', 'seventy', 'loghead'].includes(r); }
+function roleAssignable(r) { const me = realRole(); if (me === 'regadmin') return true; if (me === 'seventy' || me === 'loghead') return r !== 'regadmin'; return !['regadmin', 'seventy', 'loghead'].includes(r); }
 function sessName(sid) { const x = S.sessions[sid]; return (x && x.name) || (sid === 'main' ? 'FSY Kenya 2nd 2026' : 'Session'); }
 function inviteFor(uid) { const m = S.members[uid]; const i = m && m.h && S.invites[m.h] ? S.invites[m.h] : null; return invHere(i) ? i : null; }
 function accountOf(uid) { if (S.access[uid]) return S.access[uid]; const i = inviteFor(uid); return i ? { role: i.role, staffId: i.staffId || null, via: 'invite' } : null; }
@@ -990,23 +990,23 @@ function scopeCompanyIds(r, sid) { const G = Object.values(S.org.groups), C = Ob
 function inScopeFor(p, r, sid) { if (!['counselor', 'ac'].includes(r)) return true; const ids = scopeCompanyIds(r, sid); return (!!p.company && ids.includes(p.company.id)) || (r === 'counselor' && !!p.group && !!sid && p.group.counselorId === sid); }
 function seesPrivate(p) { return inScopeFor(p, role(), myStaffId()); }
 const can = {
-  admin: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
+  admin: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
   deleteP: () => role() === 'regadmin',
   checkin: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role()),
   viewAll: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'logistics'].includes(role()),
-  readOnly: () => ['logistics', 'loghead'].includes(role()),
-  staff: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
-  reset: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
-  moveAny: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
+  readOnly: () => role() === 'logistics',
+  staff: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator'].includes(role()),
+  reset: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator'].includes(role()),
+  moveAny: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator'].includes(role()),
   moveOwn: () => role() === 'ac',
   // regenerate, rebalance, add or remove companies and groups, change who leads them
-  orgEdit: () => ['regadmin', 'sdc', 'seventy', 'coordinator'].includes(role()),
+  orgEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator'].includes(role()),
   logistics: () => !!role() && role() !== 'wellness',
   wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness', 'logistics'].includes(role()),
   // resolving and following up on health concerns (logistics only looks)
   wellnessEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness'].includes(role()),
-  report: () => ['regadmin', 'sdc', 'seventy', 'coordinator', 'ac', 'counselor', 'wellness'].includes(role()),
-  accounts: () => ['regadmin', 'sdc', 'seventy'].includes(role()),
+  report: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'wellness'].includes(role()),
+  accounts: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
   // the real account must be allowed to split, and a preview of another role hides it, so previews show exactly what that role sees
   split: () => TOP_ROLES.includes(realRole()) && TOP_ROLES.includes(role()),
   headcount: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator', 'ac', 'counselor', 'logistics'].includes(role())
@@ -1171,7 +1171,7 @@ async function unlinkDeleted(ids) {
   linkTried = {};
 }
 async function autoLinkStaff() {
-  if (!(S.isOwner || ['regadmin', 'sdc', 'seventy'].includes(realRole())) || !S.loaded.inv || !S.loaded.staff) return;
+  if (!(S.isOwner || ['regadmin', 'sdc', 'seventy', 'loghead'].includes(realRole())) || !S.loaded.inv || !S.loaded.staff) return;
   const staff = S.staffList.filter(x => !x.test && !x.fromAccount);
   const taken = new Set(Object.values(S.invites).map(v => v && v.staffId).filter(Boolean));
   const norm = x => nameTokens(x).join(' ');
@@ -1306,7 +1306,7 @@ const ICONS = {
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
-const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], loghead: ['checkin', 'logistics', 'exceptions', 'tally', 'sessions', 'companies', 'headcount', 'staff', 'data'], counselor: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'], ac: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'] };
+const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], counselor: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'], ac: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
@@ -2276,7 +2276,7 @@ function openStaffForm(id) {
 /* page: headcount (nightly, Dec 7–11) */
 /** Who each role reports the headcount to. The Session Directing Couple, Area Seventy and logistics only view. */
 function hcChain() { const r = role(); return r === 'counselor' ? 'your AC' : r === 'ac' ? 'your coordinator' : r === 'coordinator' ? 'the Session Directing Couple' : ''; }
-function hcViewOnly() { return can.readOnly() || ['sdc', 'seventy'].includes(role()); }
+function hcViewOnly() { return can.readOnly() || ['sdc', 'seventy', 'loghead'].includes(role()); }
 const DAYNAME = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function isoUTC(d) { return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
 /** Tonight's date in Kenya time. Reports made after midnight but before 6 am count for the night before. */
@@ -2541,7 +2541,7 @@ PAGE_IMPL.access = {
       <tr><td>Registration admin</td><td>Whole session</td><td>Everything, including deleting participants and managing accounts. Only a registration admin can make someone else a registration admin.</td></tr>
       <tr><td>Session Directing Couple</td><td>Whole session</td><td>Everything except deleting participants, including creating accounts.</td></tr>
       <tr><td>Area Seventy</td><td>Every session</td><td>The same as the Session Directing Couple, in every session, plus splitting and reorganising sessions.</td></tr>
-      <tr><td>Head of Logistics</td><td>Every session</td><td>Everything logistics can see and do, in every session, plus splitting and reorganising sessions.</td></tr>
+      <tr><td>Head of Logistics</td><td>Every session</td><td>The same as the Area Seventy: everything, in every session, including accounts, staff, groups and companies, and splitting and reorganising sessions.</td></tr>
       <tr><td>Coordinator</td><td>Whole session</td><td>Check in, move participants between any groups, rebalance or regenerate groups and companies, add or remove companies, choose counselors and ACs, manage staff, logistics for everyone.</td></tr>
       <tr><td>Wellness coordinator</td><td>Whole session</td><td>Sees the Wellness page: every medical and dietary note for youth and staff, and the health concerns counselors report. Can view check-in and the tally, but checks nobody in and has no group.</td></tr>
       <tr><td>Logistics</td><td>Whole session</td><td>Sees every page except Accounts: check-in, tally, companies, walk-ins, medical and dietary lists, T-shirts, headcount, staff, wellness (view only) and data. Can check youth in and add walk-ins. Cannot change companies, staff, settings or records.</td></tr>
