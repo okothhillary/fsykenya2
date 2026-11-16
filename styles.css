@@ -590,3 +590,12 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 .spare-list{margin-top:10px;text-align:left;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:.88rem}
 .spare-list ul{margin:0;padding-left:18px;max-height:260px;overflow:auto}
 .spare-list li{margin:3px 0}
+.stat-tier{gap:10px}
+.statnode{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-width:200px;text-align:left}
+.sn-top{display:flex;align-items:baseline;gap:8px;border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:6px}
+.sn-top b{font-size:1.5rem;line-height:1;color:var(--blue50)}
+.sn-top span{font-weight:700;color:var(--ink2)}
+.statnode ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;font-size:.88rem;color:var(--ink2)}
+.statnode li b{display:inline-block;min-width:2.2ch;text-align:right;margin-right:4px;color:var(--ink)}
+.statnode li.warn b{color:#a85d00}
+.linkbtn{border:0;background:none;padding:0 0 0 6px;font:inherit;font-weight:700;color:var(--blue25);text-decoration:underline;cursor:pointer}

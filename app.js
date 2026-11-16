@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16o · logistics sees wellness';
+const APP_VERSION = '2026-11-16p · clearer leadership counts';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1744,7 +1744,9 @@ PAGE_IMPL.companies = {
     }).sort((a, b) => a[1].localeCompare(b[1]) || a[0].name.localeCompare(b[0].name));
     $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
-      <div class="tierlabel">Assistant coordinators</div><div class="tier"><div class="node"><b class="num">${acs.length}</b><small class="muted">${Object.keys(C).length} companies · ${acs.filter(a => !acUsed.has(a.id)).length} spare</small></div><div class="node"><b class="num">${by('counselor').length}</b><small class="muted">counselors · ${Object.keys(G).length} groups</small>${spare.length && can.orgEdit() ? `<small><a href="#" data-act="spareToggle">${spare.length} without a group ${UI.spareOpen ? '▾' : '▸'}</a></small>` : ''}</div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list"><p class="note" style="margin:0 0 6px">Why these counselors have no group:</p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
+      <div class="tierlabel">Assistant coordinators and counselors</div><div class="tier stat-tier">
+        <div class="statnode"><div class="sn-top"><b>${acs.length}</b><span>assistant coordinators</span></div><ul><li><b>${acs.filter(a => acUsed.has(a.id)).length}</b> lead a company</li><li class="${acs.filter(a => !acUsed.has(a.id)).length ? 'warn' : ''}"><b>${acs.filter(a => !acUsed.has(a.id)).length}</b> spare</li></ul></div>
+        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list"><p class="note" style="margin:0 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
     let w = validate(S.P, S.org, S.staffMap, S.config);
     const limW = ['counselor', 'ac'].includes(role());
     if (limW) { // counselors and ACs only see checks about their own group or company, worded for passing on
