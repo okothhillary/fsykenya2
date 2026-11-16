@@ -587,3 +587,6 @@ details.fold{scroll-margin-top:96px}
 .acc-tools .chips{flex-wrap:wrap}
 tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 .fold-tools{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-bottom:10px}
+.spare-list{margin-top:10px;text-align:left;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:.88rem}
+.spare-list ul{margin:0;padding-left:18px;max-height:260px;overflow:auto}
+.spare-list li{margin:3px 0}

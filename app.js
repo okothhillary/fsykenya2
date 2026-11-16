@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16m · logistics lists fold';
+const APP_VERSION = '2026-11-16n · explains spare counselors';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -579,10 +579,12 @@ function renumber(groups, companies) {
 const LEAD_ROLES = ['ac', 'coordinator', 'sdc'];
 function shadowedCounselors(staffList) {
   const out = {}; const lead = staffList.filter(s => LEAD_ROLES.includes(s.role) && !s.test);
-  const key = s => nameTokens(s.name).join(' ');
+  const key = s => String(s.name || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).sort().join(' ');
+  const em = s => String(s.email || '').toLowerCase();
   for (const c of staffList) {
     if (c.role !== 'counselor') continue;
-    const o = lead.find(l => l.id !== c.id && ((c.email && l.email && c.email.toLowerCase() === l.email.toLowerCase()) || (key(c).split(' ').length >= 2 && key(c) === key(l))));
+    // same email, or the same full name when the emails do not say they are different people
+    const o = lead.find(l => l.id !== c.id && ((em(c) && em(c) === em(l)) || (key(c).split(' ').length >= 2 && key(c) === key(l) && !(em(c) && em(l) && em(c) !== em(l)))));
     if (o) out[c.id] = o;
   }
   return out;
@@ -1728,9 +1730,19 @@ PAGE_IMPL.companies = {
     const by = r => S.staffList.filter(s => s.role === r);
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
     const acs = by('ac'), acUsed = new Set(Object.values(C).map(c => c.acId));
+    // counselors without a group, and why
+    const ledIds = new Set(Object.values(G).map(g => g.counselorId).filter(Boolean)), shadowC = shadowedCounselors(S.staffList), sizeN = +S.config.groupSize || 10;
+    const memN = {}; S.P.forEach(p => { if (p.g) memN[p.g] = (memN[p.g] || 0) + 1; });
+    const spare = by('counselor').filter(c => !ledIds.has(c.id)).map(c => {
+      if (c.test) return [c, 'test record'];
+      if (shadowC[c.id]) return [c, `extra record: also listed as ${ROLES[shadowC[c.id].role].toLowerCase()}. Delete this record on the Staff page`];
+      if (!c.gender) return [c, 'no gender on their record, so they cannot be matched to a group. Add it on the Staff page'];
+      const over = Object.values(G).filter(g => g.gender === c.gender && (memN[g.id] || 0) > sizeN).length;
+      return [c, over ? `${over} ${c.gender === 'F' ? "young women's" : "young men's"} group(s) are over ${sizeN}. Press Rebalance to give them a group` : `spare: every ${c.gender === 'F' ? "young women's" : "young men's"} group already has ${sizeN} or fewer. Available as a reserve or to swap in`];
+    }).sort((a, b) => a[1].localeCompare(b[1]) || a[0].name.localeCompare(b[0].name));
     $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
-      <div class="tierlabel">Assistant coordinators</div><div class="tier"><div class="node"><b class="num">${acs.length}</b><small class="muted">${Object.keys(C).length} companies · ${acs.filter(a => !acUsed.has(a.id)).length} spare</small></div><div class="node"><b class="num">${by('counselor').length}</b><small class="muted">counselors · ${Object.keys(G).length} groups</small></div></div></div>`;
+      <div class="tierlabel">Assistant coordinators</div><div class="tier"><div class="node"><b class="num">${acs.length}</b><small class="muted">${Object.keys(C).length} companies · ${acs.filter(a => !acUsed.has(a.id)).length} spare</small></div><div class="node"><b class="num">${by('counselor').length}</b><small class="muted">counselors · ${Object.keys(G).length} groups</small>${spare.length && can.orgEdit() ? `<small><a href="#" data-act="spareToggle">${spare.length} without a group ${UI.spareOpen ? '▾' : '▸'}</a></small>` : ''}</div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list"><p class="note" style="margin:0 0 6px">Why these counselors have no group:</p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
     let w = validate(S.P, S.org, S.staffMap, S.config);
     const limW = ['counselor', 'ac'].includes(role());
     if (limW) { // counselors and ACs only see checks about their own group or company, worded for passing on
@@ -2657,6 +2669,7 @@ document.addEventListener('click', async e => {
     case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
     case 'coQClear': UI.coQ = ''; { const i = $('#coQ'); if (i) i.value = ''; } render(); break;
     case 'wlRep': UI.wlRep = v; render(); break;
+    case 'spareToggle': UI.spareOpen = !UI.spareOpen; render(); break;
     case 'lgGo': { if (v === 'blank') { UI.foldSet = Object.assign(UI.foldSet || {}, { 'sec-tee': true }); if (location.hash === '#tee-blank') openFold('sec-tee'); else location.hash = 'tee-blank'; break; } openFold({ med: 'sec-med', diet: 'sec-diet', tee: 'sec-tee', steee: 'sec-steee' }[v]); break; }
     case 'accToggle': { const o = UI.accOpen || (UI.accOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); render(); break; }
     case 'accAllOpen': { UI.accOpen = new Set(v ? Object.keys(ROLES) : []); render(); break; }
