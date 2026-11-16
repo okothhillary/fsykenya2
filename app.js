@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16f · rebalance fixes gender mismatches';
+const APP_VERSION = '2026-11-16g · one-company view uses the width';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1728,15 +1728,18 @@ PAGE_IMPL.companies = {
       comps = comps.filter(c => only[c.id]);
     }
     $('#coFind').innerHTML = find;
+    const looseN = Object.values(G).filter(g => (!g.companyId || !C[g.companyId]) && (!only || (only._loose && only._loose.has(g.id)))).length;
+    const solo = comps.length === 1 && !(looseN && UI.band !== 'mine' && !lim);
     const coCard = c => {
       const gs = Object.values(G).filter(g => g.companyId === c.id && (!only || only[c.id] === 'all' || (only[c.id] && only[c.id].has(g.id)))).sort((a, b) => a.gender.localeCompare(b.gender) || a.num - b.num);
       const ps = gs.flatMap(g => mem[g.id]);
       const acSel = adm ? `<select data-act="coAc" data-id="${c.id}" aria-label="Assistant coordinator">${opt('', '— None')}${acs.map(a => opt(a.id, a.name + (acUsed.has(a.id) && a.id !== c.acId ? ' (Co ' + (Object.values(C).find(x => x.acId === a.id) || {}).num + ')' : ''), a.id === c.acId)).join('')}</select>` : esc(sName(c.acId) || '—');
       return `<section class="company"><div class="co-head"><div class="co-title"><h2>Company ${c.num}</h2><div class="inline"><span class="chip band">${BANDS[c.band]}</span><span class="chip F">${gs.filter(g => g.gender === 'F').length} YW</span><span class="chip M">${gs.filter(g => g.gender === 'M').length} YM</span>${adm ? `<button class="btn small danger" data-act="delCo" data-id="${c.id}">Remove</button>` : ''}</div></div>
       <div class="co-meta"><span class="muted">AC</span>${acSel}<span class="muted">In now</span><span class="num">${ps.filter(p => p.s === 'in').length} / ${ps.length}</span></div></div>
-      ${only && only[c.id] !== 'all' ? `<p class="note" style="padding:6px 14px 0;margin:0">Showing ${gs.length} of ${Object.values(G).filter(g => g.companyId === c.id).length} groups</p>` : ''}${gs.map(g => grpBlock(g, mem[g.id], hits && hits.has(g.id))).join('') || '<p class="note" style="padding:0 14px">No groups yet.</p>'}</section>`;
+      ${only && only[c.id] !== 'all' ? `<p class="note" style="padding:6px 14px 0;margin:0">Showing ${gs.length} of ${Object.values(G).filter(g => g.companyId === c.id).length} groups</p>` : ''}${!gs.length ? '<p class="note" style="padding:0 14px">No groups yet.</p>' : solo ? `<div class="co-cols">${[['F', 'Young women'], ['M', 'Young men']].map(([gen, l]) => { const x = gs.filter(g => g.gender === gen); return x.length ? `<div class="co-col"><h3 class="co-colh">${l} <span class="muted">· ${x.length} group${x.length === 1 ? '' : 's'} · ${x.reduce((a, g) => a + mem[g.id].length, 0)} youth</span></h3>${x.map(g => grpBlock(g, mem[g.id], hits && hits.has(g.id))).join('')}</div>` : ''; }).join('')}</div>` : gs.map(g => grpBlock(g, mem[g.id], hits && hits.has(g.id))).join('')}</section>`;
     };
     let html = comps.map(coCard).join('');
+    $('#coGrid').classList.toggle('solo', solo);
     const loose = Object.values(G).filter(g => (!g.companyId || !C[g.companyId]) && (!only || (only._loose && only._loose.has(g.id))));
     if (loose.length && UI.band !== 'mine' && !lim) html += `<section class="company"><div class="co-head"><div class="co-title"><h2>Groups without a company</h2><span class="chip warn">${loose.length}</span></div></div>${loose.map(g => grpBlock(g, mem[g.id])).join('')}</section>`;
     $('#coGrid').innerHTML = html || (q ? '' : `<div class="empty" style="grid-column:1/-1"><h3>No companies yet</h3>${adm ? 'Companies are formed from the assistant coordinators on the Staff tab. Press Regenerate all once participants, counselors and ACs are in.' : 'The registration admin will generate companies.'}</div>`);

@@ -556,3 +556,14 @@ details.fold{scroll-margin-top:96px}
 .findbar .btn{margin-left:auto}
 .grp.hit > .grp-row{background:#fff3d6;box-shadow:inset 4px 0 0 #fcb449}
 .grid2{align-items:start}
+
+/* one company on screen (an AC's view, "Mine", or a search): use the full width */
+.companies.solo{grid-template-columns:1fr}
+.co-cols{display:grid;grid-template-columns:1fr;border-top:1px solid var(--line)}
+.co-colh{margin:0;padding:10px 14px;font-size:.92rem;background:var(--surface2);border-bottom:1px solid var(--line)}
+@media (min-width:900px){
+  .co-cols{grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+  .co-col + .co-col{border-left:1px solid var(--line)}
+  .companies.solo .co-head{flex-direction:row;flex-wrap:wrap;gap:6px 28px;align-items:center;justify-content:space-between}
+  .companies.solo .co-meta{grid-template-columns:auto minmax(180px,320px) auto auto;gap:4px 12px}
+}
