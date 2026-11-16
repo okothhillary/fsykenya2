@@ -47,7 +47,7 @@ const downloadShim = {
 /* ===== Core logic ===== */
 /* ===== FSY Check-in core logic (pure functions, no DOM) ===== */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-16p · clearer leadership counts';
+const APP_VERSION = '2026-11-16r · group sizes per gender, every counselor used';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -589,6 +589,20 @@ function shadowedCounselors(staffList) {
   }
   return out;
 }
+/** Participants per group, which can differ for young women and young men (e.g. more men counselors than needed). */
+function gsize(cfg, gender) { const g = gender === 'F' ? cfg && cfg.groupSizeF : gender === 'M' ? cfg && cfg.groupSizeM : null; return +g || +(cfg && cfg.groupSize) || 10; }
+/** For each gender: how many youth per counselor would give every usable counselor a group. */
+function fitSizes() {
+  const sh = shadowedCounselors(S.staffList), out = {};
+  for (const g of ['F', 'M']) { const y = S.P.filter(p => p.elig && p.gender === g).length, c = S.staffList.filter(x => x.role === 'counselor' && x.gender === g && !x.test && !sh[x.id]).length; const now = gsize(S.config, g), f = c ? Math.max(6, Math.ceil(y / c)) : null; out[g] = { y, c, fit: f && f < now ? f : null, now, short: !!(c && Math.ceil(y / c) > now) }; }
+  return out;
+}
+function fitHint() {
+  if (!S.P.length) return '';
+  const f = fitSizes(), line = (g, l) => { const x = f[g]; if (!x.c) return `<li><b>${l}:</b> ${x.y} youth, no counselors yet</li>`; const per = x.y / x.c; return `<li><b>${l}:</b> ${x.y} youth ÷ ${x.c} counselors = about <b>${per.toFixed(1)}</b> each. ${x.fit ? `More counselors than groups of ${x.now} need: a size of <b>${x.fit}</b> gives every counselor a group.` : x.short ? `Not enough counselors for groups of ${x.now}: groups stay bigger until more join (keep the size at ${x.now}).` : 'The current size fits.'}</li>`; };
+  const differ = ['F', 'M'].some(g => f[g].fit);
+  return `<div class="fit-hint"><p class="note" style="margin:0 0 4px"><b>Fit group sizes to your counselors</b></p><ul>${line('F', 'Young women')}${line('M', 'Young men')}</ul>${differ && can.orgEdit() ? `<button type="button" class="btn small" data-act="fitSizes">Use ${f.F.fit || f.F.now} for young women and ${f.M.fit || f.M.now} for young men</button> <small class="muted">then press Rebalance</small>` : ''}</div>`;
+}
 function fullGenerate(P, staffList, cfg) {
   cfg = Object.assign({}, DEFAULT_CONFIG, cfg || {});
   const size = +cfg.groupSize || 10;
@@ -599,7 +613,7 @@ function fullGenerate(P, staffList, cfg) {
   // there is one group per counselor and groups run larger until more counselors are added (then Rebalance).
   for (const gender of ['F', 'M']) {
     const lists = { Y: elig.filter(p => p.band === 'Y' && p.gender === gender).sort(sortForDeal), O: elig.filter(p => p.band === 'O' && p.gender === gender).sort(sortForDeal) };
-    const ideal = { Y: Math.ceil(lists.Y.length / size), O: Math.ceil(lists.O.length / size) };
+    const size = gsize(cfg, gender); const ideal = { Y: Math.ceil(lists.Y.length / size), O: Math.ceil(lists.O.length / size) };
     const C = counselors.filter(c => c.gender === gender);
     let n = { Y: ideal.Y, O: ideal.O }, short = false;
     if (C.length && C.length < ideal.Y + ideal.O) {
@@ -683,7 +697,7 @@ function rebalance(P, staffList, org, cfg) {
       const n = { Y: led('Y').length, O: led('O').length };
       const load = b => tot[b] ? (n[b] ? tot[b] / n[b] : Infinity) : 0;
       const H = load('Y') >= load('O') ? 'Y' : 'O', L = H === 'Y' ? 'O' : 'Y';
-      if (load(H) <= size || n[L] < 2) break;
+      if (load(H) <= gsize(cfg, gender) || n[L] < 2) break;
       if (Math.max(tot[H] / (n[H] + 1), tot[L] / (n[L] - 1)) >= load(H)) break;
       const d = led(L).sort((a, b) => cPref(staffMap[a.counselorId], H, cfg) - cPref(staffMap[b.counselorId], H, cfg) || members[a.id].length - members[b.id].length)[0];
       members[d.id].forEach(p => cur[p.id] = null);
@@ -705,7 +719,7 @@ function rebalance(P, staffList, org, cfg) {
       const key = [n, same];
       if (!bk || key[0] < bk[0] || (key[0] === bk[0] && key[1] < bk[1])) { bk = key; best = g; }
     }
-    if (!best || members[best.id].length >= size) {
+    if (!best || members[best.id].length >= gsize(cfg, p.gender)) {
       const c = counselors.find(c => !used.has(c.id) && c.gender === p.gender && cPref(c, p.band, cfg) === 0) || counselors.find(c => !used.has(c.id) && c.gender === p.gender && cPref(c, p.band, cfg) === 1) || counselors.find(c => !used.has(c.id) && c.gender === p.gender);
       if (c || !best) {
         const id = rid('g'); groups[id] = { id, band: p.band, gender: p.gender, counselorId: c ? c.id : null, companyId: null, num: 0 }; members[id] = [];
@@ -721,7 +735,7 @@ function rebalance(P, staffList, org, cfg) {
     const gs = () => Object.values(groups).filter(g => g.gender === gender && g.band === band && g.counselorId).sort((a, b) => members[b.id].length - members[a.id].length);
     for (let guard = 0; guard < 5000; guard++) {
       const l = gs(); if (l.length < 2) break; const big = l[0], small = l[l.length - 1];
-      if (members[big.id].length <= size || members[big.id].length - members[small.id].length <= 1) break;
+      if (members[big.id].length <= gsize(cfg, gender) || members[big.id].length - members[small.id].length <= 1) break;
       const m = members[big.id]; const pick = m.slice().sort((a, b) => members[small.id].filter(x => x.unitKey === b.unitKey).length - members[small.id].filter(x => x.unitKey === a.unitKey).length).pop();
       m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id; evened++;
     }
@@ -736,7 +750,7 @@ function rebalance(P, staffList, org, cfg) {
       if (used.has(c.id)) continue;
       for (const band of ['Y', 'O']) {
         const gs = Object.values(groups).filter(g => g.band === band && g.gender === c.gender);
-        const over = gs.reduce((a, g) => a + Math.max(0, members[g.id].length - size), 0); if (!over) continue;
+        const over = gs.reduce((a, g) => a + Math.max(0, members[g.id].length - gsize(cfg, c.gender)), 0); if (!over) continue;
         const key = [cPref(c, band, cfg), -over];
         if (!best || key[0] < best.key[0] || (key[0] === best.key[0] && key[1] < best.key[1])) best = { c, band, key };
       }
@@ -746,15 +760,37 @@ function rebalance(P, staffList, org, cfg) {
     const sibs = () => Object.values(groups).filter(g => g.id !== id && g.band === band && g.gender === c.gender);
     for (;;) {
       const big = sibs().sort((a, b) => members[b.id].length - members[a.id].length)[0];
-      if (!big || members[big.id].length <= members[id].length + 1 || members[id].length >= size) break;
+      if (!big || members[big.id].length <= members[id].length + 1 || members[id].length >= gsize(cfg, c.gender)) break;
       // move someone who is not checked in to a different group yet, preferring the unit least shared with the new group
       const m = members[big.id]; const pick = m.slice().sort((a, b) => members[id].filter(x => x.unitKey === b.unitKey).length - members[id].filter(x => x.unitKey === a.unitKey).length).pop();
       m.splice(m.indexOf(pick), 1); members[id].push(pick); cur[pick.id] = id;
     }
-    opened++; log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants moved from groups over ${size}`);
+    opened++; log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants moved from groups over ${gsize(cfg, c.gender)}`);
   }
-  const still = Object.values(groups).filter(g => members[g.id].length > size).length;
-  if (still) log.push(`${still} group(s) are still over the size of ${size}: add counselors and press Rebalance again`);
+  // "fit sizes to counselors": spare counselors still get a group by taking a share from the biggest groups of their gender,
+  // as long as groups stay at a sensible size
+  if (cfg.useAll) for (let guard = 0; guard < 300; guard++) {
+    let best = null;
+    for (const c of counselors) { if (used.has(c.id)) continue;
+      for (const band of ['Y', 'O']) { const gs = Object.values(groups).filter(g => g.band === band && g.gender === c.gender && g.counselorId); if (!gs.length) continue;
+        const tot = gs.reduce((a, g) => a + members[g.id].length, 0), avg = tot / (gs.length + 1); if (avg < 6) continue;
+        const key = [cPref(c, band, cfg), -tot / gs.length]; if (!best || key[0] < best.key[0] || (key[0] === best.key[0] && key[1] < best.key[1])) best = { c, band, key }; } }
+    if (!best) break;
+    const { c, band } = best; const id = rid('g'); groups[id] = { id, band, gender: c.gender, counselorId: c.id, companyId: null, num: 0 }; members[id] = []; used.add(c.id);
+    for (;;) { const big = Object.values(groups).filter(g => g.id !== id && g.band === band && g.gender === c.gender).sort((a, b) => members[b.id].length - members[a.id].length)[0];
+      if (!big || members[big.id].length <= members[id].length + 1) break;
+      const m = members[big.id]; const pick = m.slice().sort((a, b) => members[id].filter(x => x.unitKey === b.unitKey).length - members[id].filter(x => x.unitKey === a.unitKey).length).pop();
+      m.splice(m.indexOf(pick), 1); members[id].push(pick); cur[pick.id] = id; }
+    log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants, one or two from each of the biggest groups`);
+  }
+  if (cfg.useAll) for (const gender of ['F', 'M']) for (const band of ['Y', 'O']) for (let guard = 0; guard < 2000; guard++) {
+    const l = Object.values(groups).filter(g => g.gender === gender && g.band === band && g.counselorId).sort((a, b) => members[b.id].length - members[a.id].length);
+    if (l.length < 2) break; const big = l[0], small = l[l.length - 1]; if (members[big.id].length - members[small.id].length <= 1) break;
+    const m = members[big.id]; const pick = m.slice().sort((a, b) => members[small.id].filter(x => x.unitKey === b.unitKey).length - members[small.id].filter(x => x.unitKey === a.unitKey).length).pop();
+    m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id;
+  }
+  const still = Object.values(groups).filter(g => members[g.id].length > gsize(cfg, g.gender)).length;
+  if (still) log.push(`${still} group(s) are still over their group size: add counselors and press Rebalance again`);
   else if (overfull && !opened) log.push(`${overfull} placement(s) went over the group size of ${size}: add counselors to open new groups`);
   // ACs
   const acs = staffList.filter(s => s.role === 'ac');
@@ -836,7 +872,7 @@ function validate(P, org, staffMap, cfg) {
     else if (c.gender && c.gender !== g.gender) w.push(['bad', `Group ${g.num}: counselor ${c.name} is not the same gender as the group`]);
     if (mem[g.id].some(p => p.gender !== g.gender)) w.push(['bad', `Group ${g.num} mixes young men and young women`]);
     if (mem[g.id].some(p => p.band && p.band !== g.band)) w.push(['bad', `Group ${g.num} mixes the 13–15 and 16–18 age groups`]);
-    if (mem[g.id].length > size) w.push(['warn', `Group ${g.num} has ${mem[g.id].length} participants (size is ${size})`]);
+    if (mem[g.id].length > gsize(cfg, g.gender)) w.push(['warn', `Group ${g.num} has ${mem[g.id].length} participants (size is ${gsize(cfg, g.gender)})`]);
     if (!g.companyId || !companies[g.companyId]) w.push(['warn', `Group ${g.num} is not in a company`]);
     else if (companies[g.companyId].band !== g.band) w.push(['bad', `Group ${g.num} is in a company of the other age group`]);
   }
@@ -1719,7 +1755,7 @@ function checksList(w) {
 PAGE_IMPL.companies = {
   frame() {
     const adm = can.orgEdit();
-    return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${esc(S.config.groupSize || 10)} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
+    return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${gsize(S.config, 'F') === gsize(S.config, 'M') ? esc(gsize(S.config, 'F')) : `${gsize(S.config, 'F')} young women or ${gsize(S.config, 'M')} young men`} share a gender and age group, each led by a counselor of the same gender. Companies keep 13–15 and 16–18 apart and mix young men and young women.</p></div>
     <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     <div id="coLog"></div><div class="grid2"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
     <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '13–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
@@ -1733,20 +1769,20 @@ PAGE_IMPL.companies = {
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
     const acs = by('ac'), acUsed = new Set(Object.values(C).map(c => c.acId));
     // counselors without a group, and why
-    const ledIds = new Set(Object.values(G).map(g => g.counselorId).filter(Boolean)), shadowC = shadowedCounselors(S.staffList), sizeN = +S.config.groupSize || 10;
+    const ledIds = new Set(Object.values(G).map(g => g.counselorId).filter(Boolean)), shadowC = shadowedCounselors(S.staffList);
     const memN = {}; S.P.forEach(p => { if (p.g) memN[p.g] = (memN[p.g] || 0) + 1; });
     const spare = by('counselor').filter(c => !ledIds.has(c.id)).map(c => {
       if (c.test) return [c, 'test record'];
       if (shadowC[c.id]) return [c, `extra record: also listed as ${ROLES[shadowC[c.id].role].toLowerCase()}. Delete this record on the Staff page`];
       if (!c.gender) return [c, 'no gender on their record, so they cannot be matched to a group. Add it on the Staff page'];
-      const over = Object.values(G).filter(g => g.gender === c.gender && (memN[g.id] || 0) > sizeN).length;
+      const sizeN = gsize(S.config, c.gender); const over = Object.values(G).filter(g => g.gender === c.gender && (memN[g.id] || 0) > sizeN).length;
       return [c, over ? `${over} ${c.gender === 'F' ? "young women's" : "young men's"} group(s) are over ${sizeN}. Press Rebalance to give them a group` : `spare: every ${c.gender === 'F' ? "young women's" : "young men's"} group already has ${sizeN} or fewer. Available as a reserve or to swap in`];
     }).sort((a, b) => a[1].localeCompare(b[1]) || a[0].name.localeCompare(b[0].name));
     $('#coChart').innerHTML = `<div class="orgchart"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Coordinators</div><div class="tier">${by('coordinator').map(s => node(s, '<small class="muted">All companies</small>')).join('') || '<span class="muted">Not added yet</span>'}</div>
       <div class="tierlabel">Assistant coordinators and counselors</div><div class="tier stat-tier">
         <div class="statnode"><div class="sn-top"><b>${acs.length}</b><span>assistant coordinators</span></div><ul><li><b>${acs.filter(a => acUsed.has(a.id)).length}</b> lead a company</li><li class="${acs.filter(a => !acUsed.has(a.id)).length ? 'warn' : ''}"><b>${acs.filter(a => !acUsed.has(a.id)).length}</b> spare</li></ul></div>
-        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list"><p class="note" style="margin:0 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
+        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list">${fitHint()}<p class="note" style="margin:10px 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
     let w = validate(S.P, S.org, S.staffMap, S.config);
     const limW = ['counselor', 'ac'].includes(role());
     if (limW) { // counselors and ACs only see checks about their own group or company, worded for passing on
@@ -1801,7 +1837,7 @@ PAGE_IMPL.companies = {
   }
 };
 function grpBlock(g, mem, hit) {
-  const adm = can.orgEdit(), open = UI.open.has(g.id), size = +S.config.groupSize || 10;
+  const adm = can.orgEdit(), open = UI.open.has(g.id), size = gsize(S.config, g.gender);
   const cn = g.counselorId && S.staffMap[g.counselorId];
   const counsSel = adm ? `<select data-act="grpCoun" data-id="${g.id}" aria-label="Counselor for G${g.num}">${opt('', '— No counselor')}${S.staffList.filter(s => s.role === 'counselor' && (s.gender === g.gender || s.id === g.counselorId)).map(s => { const other = Object.values(S.org.groups).find(x => x.counselorId === s.id && x.id !== g.id); const a = staffAge(s, S.config); return opt(s.id, `${s.name}${a != null ? ' (' + a + ')' : ''}${other ? ' · G' + other.num : ''}${cPref(s, g.band, S.config) === 2 ? ' · other age pref' : ''}`, s.id === g.counselorId); }).join('')}</select>` : '';
   const coSel = adm ? `<select data-act="grpCo" data-id="${g.id}" aria-label="Company for G${g.num}">${opt('', '— No company')}${Object.values(S.org.companies).sort((a, b) => a.num - b.num).map(c => opt(c.id, `Company ${c.num} · ${BANDS[c.band]}${c.band !== g.band ? ' ⚠' : ''}`, c.id === g.companyId)).join('')}</select>` : '';
@@ -2401,7 +2437,9 @@ PAGE_IMPL.data = {
       <label>First day of session<input id="cfStart" type="date" value="${esc(S.config.sessionStart || '')}"></label>
       <label>First headcount night<input id="cfHcStart" type="date" value="${esc(S.config.hcStart || '')}"></label>
       <label>Last headcount night<input id="cfHcEnd" type="date" value="${esc(S.config.hcEnd || '')}"></label>
-      <label>Participants per group<input id="cfSize" type="number" min="4" max="20" value="${esc(S.config.groupSize)}"></label>
+      <label>Young women per group<input id="cfSizeF" type="number" min="4" max="25" value="${esc(gsize(S.config, 'F'))}"></label>
+      <label>Young men per group<input id="cfSizeM" type="number" min="4" max="25" value="${esc(gsize(S.config, 'M'))}"></label>
+      <div class="span2" id="fitRow"></div>
       <p class="note span2" style="margin:0">With a first day set, ages are worked out from birthdays on that day. Without it, the Age column from the upload is used.</p>
       <div class="span2 adm"><button class="btn primary" type="submit">Save settings</button></div></form>
       <h3 style="margin:16px 0 6px">Registration statuses</h3><div id="dStat"></div></div>
@@ -2409,6 +2447,7 @@ PAGE_IMPL.data = {
     <div class="panel"><div class="panel-head"><h2>Stakes, wards and branches in this session</h2><span class="note">Untick an area to leave its youth out of the expected list and the groups.</span></div><div id="dAreas" class="arealist"></div></div>`;
   },
   update() {
+    if ($('#fitRow')) $('#fitRow').innerHTML = fitHint();
     const P = S.P, ex = new Set(S.config.excludedStatuses || []);
     const statuses = uniq(P.map(p => p.status).filter(Boolean)).sort();
     $('#dStat').innerHTML = statuses.length ? statuses.map(s => `<label class="inline" style="padding:3px 0"><input type="checkbox" data-act="stat" data-v="${esc(s)}" ${ex.has(s) ? '' : 'checked'}> ${esc(s.replace(/_/g, ' ').toLowerCase())} <span class="muted num">${P.filter(p => p.status === s).length}</span></label>`).join('') + '<p class="note">Ticked statuses count as registered. Unticked ones show up as exceptions if they check in.</p>' : '<p class="note">Statuses appear after the first upload.</p>';
@@ -2674,6 +2713,7 @@ document.addEventListener('click', async e => {
     case 'coQClear': UI.coQ = ''; { const i = $('#coQ'); if (i) i.value = ''; } render(); break;
     case 'wlRep': UI.wlRep = v; render(); break;
     case 'spareToggle': UI.spareOpen = !UI.spareOpen; render(); break;
+    case 'fitSizes': { const f = fitSizes(); const F = f.F.fit || f.F.now, M = f.M.fit || f.M.now; if (!await confirmBox('Change group sizes?', `Young women: <b>${F}</b> per group (now ${f.F.now}). Young men: <b>${M}</b> per group (now ${f.M.now}). Press <b>Rebalance</b> afterwards: every counselor who is free gets a group, made from one or two youth from each of the biggest groups of the same gender and age band. Groups never drop below 6.`, 'Change sizes')) break; await saveConfig({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: true }); UI.frameKey = ''; render(); toast('Group sizes changed. Press Rebalance to apply them.'); break; }
     case 'lgGo': { if (v === 'blank') { UI.foldSet = Object.assign(UI.foldSet || {}, { 'sec-tee': true }); if (location.hash === '#tee-blank') openFold('sec-tee'); else location.hash = 'tee-blank'; break; } openFold({ med: 'sec-med', diet: 'sec-diet', tee: 'sec-tee', steee: 'sec-steee' }[v]); break; }
     case 'accToggle': { const o = UI.accOpen || (UI.accOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); render(); break; }
     case 'accAllOpen': { UI.accOpen = new Set(v ? Object.keys(ROLES) : []); render(); break; }
@@ -2765,7 +2805,7 @@ document.addEventListener('submit', async e => {
     const chosen = [...document.querySelectorAll('.invSessChk:checked')].map(x => x.value); const sessions = chosen.length ? chosen : [S.sid];
     try { await setDoc('invites/' + h, { name, role: r, staffId: sid, sessions, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
   }
-  if (f.id === 'cfgForm') { if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, groupSize: Math.max(4, Math.min(20, parseInt(val('cfSize'), 10) || 10)) }); toast('Settings saved'); }
+  if (f.id === 'cfgForm') { if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, useAll: false, groupSizeF: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)), groupSizeM: Math.max(4, Math.min(25, parseInt(val('cfSizeM'), 10) || 10)), groupSize: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)) }); toast('Settings saved. Press Rebalance on Companies & groups to apply group sizes.'); }
   if (f.id === 'edForm') {
     const id = f.dataset.id, b = bucketOf(id); const age = parseInt(val('edAge'), 10);
     const patch = { first: titleCase(val('edFirst')), last: titleCase(val('edLast')), gender: val('edGender'), bday: val('edBday'), ageCsv: isNaN(age) ? null : age, tshirt: val('edSize'), stake: clean(val('edStake')), unit: clean(val('edUnit')) }; const md = { med: val('edMed'), diet: val('edDiet') };
