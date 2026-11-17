@@ -1052,7 +1052,7 @@ const PAGES = [
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()],
   ['sessions', 'Sessions', () => can.split()],
-  ['audit', 'Audit log', () => (S.isOwner || realRole() === 'regadmin') && role() === 'regadmin']
+  ['audit', 'Log', () => (S.isOwner || realRole() === 'regadmin') && role() === 'regadmin']
 ];
 function allowedPages() { return PAGES.filter(p => p[2]()); }
 function currentPage() {
@@ -1115,8 +1115,6 @@ function serial(path, fn) { const p = (Q[path] || Promise.resolve()).catch(() =>
 function upd(path, data, exists) { return serial(path, () => exists ? S.db.doc(path).update(data) : S.db.doc(path).set(data)); }
 function setDoc(path, data) { return serial(path, () => S.db.doc(path).set(data)); }
 
-/* Audit log: every change anyone makes, written as one short line. Only registration admins can read it.
-   Entries are only ever added, never edited or removed (the database rules enforce that). */
 const AUDIT_KINDS = { checkin: 'Check-in', groups: 'Groups & companies', staff: 'Staff', accounts: 'Accounts', settings: 'Settings & data', health: 'Health', headcount: 'Headcount', session: 'Sessions', signin: 'Sign-in' };
 function audit(kind, text, extra) {
   try {
@@ -1399,7 +1397,7 @@ function openAccount() {
   <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
   ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
   ${S.mySessions.length > 1 ? `<div><p class="th" style="margin-bottom:6px">Session</p><div class="sheetlist">${S.mySessions.map(id => `<button data-act="switchSession" data-v="${esc(id)}" ${id === S.sid ? 'aria-current="page"' : ''}>${ICONS.checkin}${esc(sessName(id))}${id === S.sid ? ' · open now' : ''}</button>`).join('')}</div></div>` : ''}
-  <div class="sheetlist">${allowedPages().some(p => p[0] === 'audit') ? `<button data-act="nav" data-v="audit" ${currentPage() === 'audit' ? 'aria-current="page"' : ''}>${ICONS.audit}Audit log</button>` : ''}<button data-act="signOut">${ICONS.signout}Sign out</button></div>
+  <div class="sheetlist">${allowedPages().some(p => p[0] === 'audit') ? `<button data-act="nav" data-v="audit" ${currentPage() === 'audit' ? 'aria-current="page"' : ''}>${ICONS.audit}Log</button>` : ''}<button data-act="signOut">${ICONS.signout}Sign out</button></div>
   <p class="note" style="margin:0;text-align:center">App version ${esc(APP_VERSION)}</p>`);
 }
 function gateView() {
