@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17h · see newest staff';
+const APP_VERSION = '2026-11-17i · singular and plural wording';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -97,6 +97,8 @@ function normType(t) {
   if (/PARTIC|YOUTH/.test(t)) return 'participant';
   return '';
 }
+/** "1 group" / "3 groups": a number with the right singular or plural word. */
+function nn(n, one, many) { return `${n} ${n === 1 ? one : (many || one + 's')}`; }
 function pad2(n) { return String(n).padStart(2, '0'); }
 function parseDate(v) {
   if (v == null || v === '') return '';
@@ -677,7 +679,7 @@ function fullGenerate(P, staffList, cfg) {
   assignCoordinators(companies, staffList.filter(s => s.role === 'coordinator'));
   renumber(groups, companies);
   log.push(`${Object.keys(companies).length} companies formed from ${A} assistant coordinators`);
-  if (A - ai > 0) log.push(`${A - ai} assistant coordinator(s) left spare: not enough groups of both genders for more companies`);
+  if (A - ai > 0) log.push(`${nn(A - ai, 'assistant coordinator')} left spare: not enough groups of both genders for more companies`);
   return { org: { groups, companies }, assign, log };
 }
 
@@ -695,7 +697,7 @@ function rebalance(P, staffList, org, cfg) {
     if (p.g && groups[p.g] && p.elig) { cur[p.id] = p.g; members[p.g].push(p); }
     else { cur[p.id] = null; if (p.g) removed++; }
   }
-  if (removed) log.push(`${removed} participant(s) taken out of groups (deleted, excluded or group gone)`);
+  if (removed) log.push(`${nn(removed, 'participant')} taken out of groups (deleted, excluded or group gone)`);
   // counselors still valid?
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
@@ -757,7 +759,7 @@ function rebalance(P, staffList, org, cfg) {
     }
     members[best.id].push(p); cur[p.id] = best.id; placed++;
   }
-  if (placed) log.push(`${placed} participant(s) placed into groups`);
+  if (placed) log.push(`${nn(placed, 'participant')} placed into groups`);
   // even out group sizes inside each gender and age band (only where a group is over the size)
   let evened = 0;
   for (const gender of ['F', 'M']) for (const band of ['Y', 'O']) {
@@ -769,8 +771,8 @@ function rebalance(P, staffList, org, cfg) {
       m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id; evened++;
     }
   }
-  if (evened) log.push(`${evened} participant(s) moved to even out group sizes`);
-  if (created) log.push(`${created} new group(s) created`);
+  if (evened) log.push(`${nn(evened, 'participant')} moved to even out group sizes`);
+  if (created) log.push(`${nn(created, 'new group')} created`);
   // free counselors open new groups and take people from groups that are over the size
   let opened = 0;
   for (;;) {
@@ -819,8 +821,8 @@ function rebalance(P, staffList, org, cfg) {
     m.splice(m.indexOf(pick), 1); members[small.id].push(pick); cur[pick.id] = small.id;
   }
   const still = Object.values(groups).filter(g => members[g.id].length > gsize(cfg, g.gender)).length;
-  if (still) log.push(`${still} group(s) are still over their group size: add counselors and press Rebalance again`);
-  else if (overfull && !opened) log.push(`${overfull} placement(s) went over the group size of ${size}: add counselors to open new groups`);
+  if (still) log.push(`${still === 1 ? '1 group is' : still + ' groups are'} still over the group size: add counselors and press Rebalance again`);
+  else if (overfull && !opened) log.push(`${nn(overfull, 'placement')} went over the group size: add counselors to open new groups`);
   // ACs
   const acs = staffList.filter(s => s.role === 'ac');
   for (const c of Object.values(companies)) {
@@ -845,7 +847,7 @@ function rebalance(P, staffList, org, cfg) {
   }
   const stakeOfR = {}; for (const gid in members) { const o = stakeOfR[gid] = {}; members[gid].forEach(p => o[p.stake || ''] = (o[p.stake || ''] || 0) + 1); }
   let lp = 0; for (const g of loose) if (placeGroupInCompany(g, companies, groups, stakeOfR)) lp++;
-  if (lp) log.push(`${lp} group(s) added to companies`);
+  if (lp) log.push(`${nn(lp, 'group')} added to ${lp === 1 ? 'a company' : 'companies'}`);
   // spare ACs open new companies and pull whole groups from the largest companies
   while (freeAcs.length) {
     let pick = null, ratio = -1;
@@ -870,7 +872,7 @@ function rebalance(P, staffList, org, cfg) {
     }
     log.push(`New ${BANDS[pick]} company opened with ${moved} groups moved whole from the largest companies`);
   }
-  if (freeAcs.length) log.push(`${freeAcs.length} assistant coordinator(s) still unassigned`);
+  if (freeAcs.length) log.push(`${nn(freeAcs.length, 'assistant coordinator')} still without a company`);
   assignCoordinators(companies, staffList.filter(s => s.role === 'coordinator'));
   // numbering: existing groups keep their number; a new group takes the lowest free number (a gap left by a removed group) first
   const takenG = new Set(Object.values(groups).filter(g => g.num && g.num < 9000).map(g => g.num)); let nextG = 1;
@@ -890,13 +892,13 @@ function validate(P, org, staffMap, cfg) {
   const mem = {}; for (const id in groups) mem[id] = [];
   P.forEach(p => { if (p.g && mem[p.g]) mem[p.g].push(p); });
   const un = P.filter(p => p.elig && (!p.g || !groups[p.g])).length;
-  if (un) w.push(['warn', `${un} eligible participant(s) are not in a group`, 'unassigned']);
+  if (un) w.push(['warn', `${un === 1 ? '1 eligible participant is' : un + ' eligible participants are'} not in a group`, 'unassigned']);
   const shadow = shadowedCounselors(Object.values(staffMap));
   for (const g of Object.values(groups)) { const c = g.counselorId && staffMap[g.counselorId]; if (!c) continue;
     if (c.role !== 'counselor') w.push(['bad', `Group ${g.num} is led by ${c.name}, who is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}. Press Rebalance.`]);
     else if (shadow[c.id]) { const co = Object.values(companies).find(x => x.acId === shadow[c.id].id); w.push(['bad', `${c.name} leads group ${g.num} but is also listed as ${ROLES[shadow[c.id].role].toLowerCase()}${co ? ' (Company ' + co.num + ')' : ''}. Press Rebalance, then delete the extra counselor record on the Staff page.`]); } }
   const noCoun = Object.values(groups).filter(g => !(g.counselorId && staffMap[g.counselorId])).length;
-  if (noCoun) w.push(['bad', `${noCoun} group(s) have no counselor. Press Rebalance: their youth move into same-gender groups of the same age that have a counselor, and those groups grow until you add counselors.`]);
+  if (noCoun) w.push(['bad', `${noCoun === 1 ? '1 group has' : noCoun + ' groups have'} no counselor. Press Rebalance: ${noCoun === 1 ? 'its' : 'their'} youth move into groups of the same gender and age that have a counselor, and those groups grow until you add counselors.`]);
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
     if (!c) w.push(['bad', `Group ${g.num} has no counselor`]);
@@ -908,7 +910,7 @@ function validate(P, org, staffMap, cfg) {
     else if (companies[g.companyId].band !== g.band) w.push(['bad', `Group ${g.num} is in a company of the other age group`]);
   }
   const noG = Object.values(staffMap).filter(s => s.role === 'counselor' && !s.gender).length;
-  if (noG) w.push(['warn', `${noG} counselor(s) have no gender, so they cannot lead a group. Open them on the Staff page to fix.`]);
+  if (noG) w.push(['warn', `${noG === 1 ? '1 counselor has' : noG + ' counselors have'} no gender, so ${noG === 1 ? 'they cannot' : 'they cannot'} lead a group. Add it on the Staff page.`]);
   for (const c of Object.values(companies)) {
     const gs = Object.values(groups).filter(g => g.companyId === c.id);
     if (!c.acId || !staffMap[c.acId]) w.push(['bad', `Company ${c.num} has no assistant coordinator`]);
@@ -1842,7 +1844,7 @@ PAGE_IMPL.companies = {
       if (shadowC[c.id]) return [c, `extra record: also listed as ${ROLES[shadowC[c.id].role].toLowerCase()}. Delete this record on the Staff page`];
       if (!c.gender) return [c, 'no gender on their record, so they cannot be matched to a group. Add it on the Staff page'];
       const sizeN = gsize(S.config, c.gender); const over = Object.values(G).filter(g => g.gender === c.gender && (memN[g.id] || 0) > sizeN).length;
-      return [c, over ? `${over} ${c.gender === 'F' ? "young women's" : "young men's"} group(s) are over ${sizeN}. Press Rebalance to give them a group` : `spare: every ${c.gender === 'F' ? "young women's" : "young men's"} group already has ${sizeN} or fewer. Available as a reserve or to swap in`];
+      return [c, over ? `${over} ${c.gender === 'F' ? "young women's" : "young men's"} ${over === 1 ? 'group is' : 'groups are'} over ${sizeN}. Press Rebalance to give them a group` : `spare: every ${c.gender === 'F' ? "young women's" : "young men's"} group already has ${sizeN} or fewer. Available as a reserve or to swap in`];
     }).sort((a, b) => a[1].localeCompare(b[1]) || a[0].name.localeCompare(b[0].name));
     $('#coChart').innerHTML = `<div class="orgchart lead-grid"><div class="lead-col"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
 </div>
@@ -2721,7 +2723,7 @@ function openDetail(id) {
 /* generator actions */
 async function runRebalance() {
   const r = rebalance(S.P, S.staffList, S.org, S.config);
-  UI.genLog = { title: 'Rebalanced. Existing groups were kept.', lines: r.log }; audit('groups', `Pressed Rebalance: ${Object.keys(r.changes).length} participant(s) moved`);
+  UI.genLog = { title: 'Rebalanced. Existing groups were kept.', lines: r.log }; audit('groups', `Pressed Rebalance: ${nn(Object.keys(r.changes).length, 'participant')} moved`);
   await saveOrg(r.org, { at: Date.now(), mode: 'rebalance' });
   const ch = {}; for (const id in r.changes) ch[id] = { g: r.changes[id] };
   await setStates(ch).catch(fail); toast('Groups and companies updated');
