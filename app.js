@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17i · singular and plural wording';
+const APP_VERSION = '2026-11-17j · one expected count everywhere';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1511,9 +1511,9 @@ PAGE_IMPL.checkin = {
   },
   update() {
     const P = S.P;
-    const exp = P.filter(p => p.elig && p.src !== 'walkin').length;
-    const inn = P.filter(p => p.s === 'in').length, out = P.filter(p => p.s === 'out').length, wk = P.filter(p => p.src === 'walkin' && p.s).length;
-    const arrived = P.filter(p => p.elig && p.src !== 'walkin' && p.s).length;
+    const exp = P.filter(isExpected).length;
+    const inn = P.filter(p => p.s === 'in').length, out = P.filter(p => p.s === 'out').length, wk = P.filter(p => p.src === 'walkin').length;
+    const arrived = P.filter(p => isExpected(p) && p.s).length;
     const mineGs = role() === 'counselor' ? myGroups() : role() === 'ac' ? Object.values(S.org.groups).filter(g => myCompanies().some(c => c.id === g.companyId)) : [];
     if (mineGs.length) { // counselors and ACs: live numbers for their own group or company first
       const ids = new Set(mineGs.map(g => g.id)), M = P.filter(p => p.g && ids.has(p.g) && (p.inc || p.s));
@@ -1771,13 +1771,13 @@ PAGE_IMPL.tally = {
   frame() { return `<section class="pagehead"><div><h1>Tally</h1><p class="note" style="margin:4px 0 0">Live counts for the session, each stake and each ward or branch. Tap a stake to see its units.</p></div><button class="btn" data-act="tallyCsv">Export CSV</button></section><div id="tK" class="kpis"></div><div class="panel"><div class="panel-head"><h2>Everyone at the session</h2></div><div id="tAll"></div></div><div class="grid2"><div class="panel"><h2>By age group and gender</h2><div id="tBG"></div></div><div class="panel"><h2>By company</h2><div id="tCo"></div></div></div><div class="panel"><h2>By stake, ward and branch</h2><div id="tSt"></div></div>`; },
   update() {
     const P = S.P;
-    const exp = p => p.elig && p.src !== 'walkin';
-    const T = { exp: P.filter(exp).length, inn: P.filter(p => p.s === 'in').length, out: P.filter(p => p.s === 'out').length, arrived: P.filter(p => exp(p) && p.s).length, wk: P.filter(p => p.src === 'walkin' && p.s).length, exc: P.filter(p => !p.inc && p.s).length };
-    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin' && p.s)).length + S.staffList.filter(x => !x.test).length}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
+    const exp = isExpected;
+    const T = { exp: P.filter(exp).length, inn: P.filter(p => p.s === 'in').length, out: P.filter(p => p.s === 'out').length, arrived: P.filter(p => exp(p) && p.s).length, wk: P.filter(p => p.src === 'walkin').length, exc: P.filter(p => !p.inc && p.s).length };
+    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin')).length + S.staffList.filter(x => !x.test).length}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
     const ST = S.staffList.filter(x => !x.test);
     const gc = (list, g) => list.filter(x => x.gender === g).length;
-    const yp = P.filter(p => exp(p) || (p.src === 'walkin' && p.s));
-    const rowsAll = [['Participants expected', P.filter(exp)], ['Walk-ins checked in', P.filter(p => p.src === 'walkin' && p.s)]].map(([l, L]) => [l, gc(L, 'F'), gc(L, 'M'), L.length])
+    const yp = P.filter(p => exp(p) || (p.src === 'walkin'));
+    const rowsAll = [['Participants expected', P.filter(exp)], ['Walk-ins', P.filter(p => p.src === 'walkin')]].map(([l, L]) => [l, gc(L, 'F'), gc(L, 'M'), L.length])
       .concat(STAFF_ROLES.map(r => { const L = ST.filter(x => x.role === r); return [ROLE_PLURAL[r], gc(L, 'F'), gc(L, 'M'), L.length]; }));
     const stN = ST.length, allN = yp.length + stN;
     $('#tAll').innerHTML = `<div class="tablewrap"><table><thead><tr><th></th><th class="n">Women</th><th class="n">Men</th><th class="n">Total</th></tr></thead><tbody>${rowsAll.map(([l, f, m, t], i) => `<tr${i === 2 ? ' class="divide"' : ''}><td>${esc(l)}</td><td class="n">${f}</td><td class="n">${m}</td><td class="n"><b>${t}</b></td></tr>`).join('')}
@@ -1994,6 +1994,8 @@ function exRow(p) {
 /* page: logistics */
 function lgHash() { const h = (location.hash || '').slice(1); return /^(med|diet|tee)-[a-z0-9-]+$/.test(h) ? h : ''; }
 function registered() { return S.P.filter(p => p.inc || p.s); }
+/** Expected youth: everyone counted in this session (ticked statuses and areas), not walk-ins. The same number on every page. */
+function isExpected(p) { return !!p.inc && p.src !== 'walkin'; }
 PAGE_IMPL.logistics = {
   frame() { return `<section class="pagehead"><div><p class="th">Logistics${role() === 'counselor' ? ' · your group only' : role() === 'ac' ? ' · your company only' : ' · whole session'}</p><h1>Medical, dietary and T-shirts</h1><p class="note" style="margin:4px 0 0">Built from the upload, before anyone checks in. Notes such as "none", "N/A", "nil" or "fit" are left out. Tap an issue to see exactly who has it.</p></div><div class="seg" role="group" aria-label="Who to count">${[['all', 'Everyone registered'], ['in', 'Checked in now']].map(([v, l]) => `<button data-act="logScope" data-v="${v}" aria-pressed="${UI.logScope === v}">${l}</button>`).join('')}</div></section>
   <div id="lgK" class="kpis"></div>
@@ -2007,7 +2009,8 @@ PAGE_IMPL.logistics = {
     const med = L.filter(p => p.medIssue), diet = L.filter(p => p.dietIssue), blanks = L.filter(p => !p.tshirt);
     const href = h => '#' + h;
     const kb = (v, cls, l, n) => `<button class="kpi kpi-btn ${cls}" data-act="lgGo" data-v="${v}"><span>${l}</span><b>${n}</b><small>Show list ›</small></button>`;
-    $('#lgK').innerHTML = `<div class="kpi"><span>${UI.logScope === 'in' ? 'Checked in' : 'Registered'}${['counselor', 'ac'].includes(role()) ? ' (yours)' : ''}</span><b>${L.length}</b></div>` + kb('med', 'hero', 'Medical needs', med.length) + kb('diet', 'hero', 'Dietary needs', diet.length) + kb('tee', '', 'Sizes given', L.length - blanks.length) + kb('blank', '', 'Blank sizes', blanks.length) + ($('#sec-steee') ? kb('steee', '', 'Staff T-shirts', S.staffList.filter(x => !x.test).length) : '');
+    const lWk = L.filter(p => p.src === 'walkin').length;
+    $('#lgK').innerHTML = `<div class="kpi"><span>${UI.logScope === 'in' ? 'Checked in' : 'Expected'}${['counselor', 'ac'].includes(role()) ? ' (yours)' : ''}</span><b>${L.length - lWk}</b>${lWk ? `<small>+ ${nn(lWk, 'walk-in')} · ${L.length} in all</small>` : ''}</div>` + kb('med', 'hero', 'Medical needs', med.length) + kb('diet', 'hero', 'Dietary needs', diet.length) + kb('tee', '', 'Sizes given', L.length - blanks.length) + kb('blank', '', 'Blank sizes', blanks.length) + ($('#sec-steee') ? kb('steee', '', 'Staff T-shirts', S.staffList.filter(x => !x.test).length) : '');
     $('#lgMedN').textContent = med.length; $('#lgDietN').textContent = diet.length; $('#lgTeeN').textContent = `${L.length - blanks.length} given · ${blanks.length} blank`; if ($('#lgStN')) $('#lgStN').textContent = S.staffList.filter(x => !x.test).length;
     const block = (list, field, CATS, kind, pre) => {
       if (!S.P.length) return '<p class="note">Upload participants on the Data & areas tab and this fills in straight away.</p>';
@@ -2476,8 +2479,8 @@ PAGE_IMPL.sessions = {
   },
   update() {
     if (!UI.sessCounts) { UI.sessCounts = {}; loadSessionCounts(); }
-    $('#sessList').innerHTML = Object.keys(S.sessions).filter(id => S.mySessions.includes(id)).map(id => { const cur = id === S.sid; const n = cur ? registered().length : UI.sessCounts[id], left = cur ? S.P.length - registered().length : (UI.sessLeft || {})[id]; const x = S.sessions[id];
-      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${left ? ` <span class="muted">(+${left} cancelled or left out)</span>` : ''}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div>${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}</div>`; }).join('');
+    $('#sessList').innerHTML = Object.keys(S.sessions).filter(id => S.mySessions.includes(id)).map(id => { const cur = id === S.sid; const n = cur ? S.P.filter(isExpected).length : UI.sessCounts[id], left = cur ? S.P.filter(p => !p.inc && p.src !== 'walkin').length : (UI.sessLeft || {})[id], wk = cur ? S.P.filter(p => p.src === 'walkin').length : (UI.sessWalk || {})[id]; const x = S.sessions[id];
+      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${wk ? ` <span class="muted">+ ${nn(wk, 'walk-in')}</span>` : ''}${left ? ` <span class="muted">(+${left} cancelled or left out)</span>` : ''}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div>${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}</div>`; }).join('');
     const sp = UI.split, others = S.mySessions.filter(id => id !== S.sid);
     const T = {}; S.P.forEach(p => { const { st, un } = areaOf(p); const x = T[st] = T[st] || { n: 0, u: {} }; x.n++; const u = x.u[un] = x.u[un] || { n: 0, inn: 0 }; u.n++; if (p.s === 'in') u.inn++; });
     const picked = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)), pIn = picked.filter(p => p.s === 'in').length;
@@ -2505,9 +2508,9 @@ async function loadSessionCounts() {
     // count the way the open session does: cancelled statuses and left-out areas are not participants
     const cd = await FB.fs.doc(rawPath(id, 'config/session')).get(); const cfg = Object.assign({}, DEFAULT_CONFIG, cd.exists ? cd.data() : {});
     const exS = new Set(cfg.excludedStatuses || []), exSt = new Set(cfg.excludedStakes || []), exU = new Set(cfg.excludedUnits || []);
-    const sn = await FB.fs.collection(rawPath(id, 'roster')).get(); let n = 0, out = 0;
-    sn.docs.forEach(d => { const m = (d.data() || {}).p || {}; for (const k in m) { const r = m[k]; if (!r) continue; const st = normStatus(r.status); if ((st && exS.has(st)) || exSt.has(r.stake) || exU.has((r.stake || '') + '|' + (r.unit || ''))) out++; else n++; } });
-    UI.sessCounts[id] = n; UI.sessLeft[id] = out;
+    const sn = await FB.fs.collection(rawPath(id, 'roster')).get(); let n = 0, out = 0, wk = 0;
+    sn.docs.forEach(d => { const m = (d.data() || {}).p || {}; for (const k in m) { const r = m[k]; if (!r) continue; const st = normStatus(r.status); if (r.src === 'walkin') wk++; else if ((st && exS.has(st)) || exSt.has(r.stake) || exU.has((r.stake || '') + '|' + (r.unit || ''))) out++; else n++; } });
+    UI.sessCounts[id] = n; UI.sessLeft[id] = out; (UI.sessWalk = UI.sessWalk || {})[id] = wk;
   } catch (e) { UI.sessCounts[id] = '?'; } }
   if (currentPage() === 'sessions') render();
 }
@@ -2797,7 +2800,7 @@ document.addEventListener('click', async e => {
     case 'delCo': { const c = S.org.companies[id]; if (!await confirmBox(`Remove Company ${c.num}?`, 'Its groups stay together and move to "Groups without a company". Press Rebalance to place them in other companies.', 'Remove company', true)) break; audit('groups', `Removed Company ${c.num}`); const o = { groups: {}, companies: Object.assign({}, S.org.companies) }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = g.companyId === id ? Object.assign({}, g, { companyId: null }) : g; delete o.companies[id]; await saveOrg(o, S.orgGen); toast('Company removed'); break; }
     case 'delGrp': { const g = S.org.groups[id]; if (!await confirmBox(`Remove group G${g.num}?`, 'Its participants become unassigned. Press Rebalance to place them in other groups.', 'Remove group', true)) break; audit('groups', `Removed group G${g.num}`); const o = { groups: Object.assign({}, S.org.groups), companies: S.org.companies }; delete o.groups[id]; await saveOrg(o, S.orgGen); const ch = {}; S.P.filter(p => p.g === id).forEach(p => ch[p.id] = { g: null }); await setStates(ch).catch(fail); toast('Group removed'); break; }
     case 'rosterCsv': { const rows = [['Company', 'Age group', 'AC', 'Group', 'Counselor', 'Participant', 'Gender', 'Age', 'Ward/branch', 'Stake', 'T-shirt', 'Status']]; S.P.filter(p => p.group).sort((a, b) => (a.company ? a.company.num : 999) - (b.company ? b.company.num : 999) || a.group.num - b.group.num || a.name.localeCompare(b.name)).forEach(p => rows.push([p.company ? p.company.num : '', BANDS[p.group.band], p.company ? sName(p.company.acId) : '', 'G' + p.group.num, p.counselor ? p.counselor.name : '', p.name, p.gender, p.age, p.unit, p.stake, p.tshirt, p.s || 'not arrived'])); exportCSV('fsy-rosters.csv', rows); break; }
-    case 'tallyCsv': { const rows = [['Stake', 'Ward/branch', 'Expected', 'Checked in', 'Checked out']]; const m = {}; S.P.forEach(p => { const k = p.stake + '|' + p.unit; const x = m[k] = m[k] || [p.stake, p.unit, 0, 0, 0]; if (p.elig && p.src !== 'walkin') x[2]++; if (p.s === 'in') x[3]++; if (p.s === 'out') x[4]++; }); Object.values(m).sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])).forEach(r => rows.push(r)); exportCSV('fsy-tally.csv', rows); break; }
+    case 'tallyCsv': { const rows = [['Stake', 'Ward/branch', 'Expected', 'Checked in', 'Checked out']]; const m = {}; S.P.forEach(p => { const k = p.stake + '|' + p.unit; const x = m[k] = m[k] || [p.stake, p.unit, 0, 0, 0]; if (isExpected(p)) x[2]++; if (p.s === 'in') x[3]++; if (p.s === 'out') x[4]++; }); Object.values(m).sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])).forEach(r => rows.push(r)); exportCSV('fsy-tally.csv', rows); break; }
     case 'logScope': UI.logScope = v; UI.frameKey = ''; render(); break;
     case 'lgCsv': { const L = PAGE_IMPL.logistics.scope(); let rows; if (v === 'staffsize') { const { ST, est, perPerson } = staffTee(); const R = teeRedistribute(L); const giv = {}; ST.forEach(x => { if (x.tshirt) giv[x.tshirt] = (giv[x.tshirt] || 0) + 1; });
       rows = [['Size', 'Youth to order', 'Staff given', 'Staff blanks estimated', 'Staff to order', 'Total to order']]; sizesIn(giv, est, R.totals).forEach(s => { const y = R.totals[s] ? R.totals[s].given + R.totals[s].est : 0, a = giv[s] || 0, b = est[s] || 0; if (y || a || b) rows.push([SIZE_LABEL[s] || s, y, a, b, a + b, y + a + b]); });
