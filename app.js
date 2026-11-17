@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17f · audit log';
+const APP_VERSION = '2026-11-17g · audit log in the account menu';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1365,7 +1365,7 @@ const ICONS = {
 };
 const SHORT = { audit: 'Audit', wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
 const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], counselor: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'], ac: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'] };
-function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
+function navPages() { const ok = allowedPages().map(p => p[0]).filter(k => k !== 'audit'); /* the audit log opens from the account menu */ const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
   $('#sessName').textContent = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
@@ -1399,7 +1399,7 @@ function openAccount() {
   <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
   ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
   ${S.mySessions.length > 1 ? `<div><p class="th" style="margin-bottom:6px">Session</p><div class="sheetlist">${S.mySessions.map(id => `<button data-act="switchSession" data-v="${esc(id)}" ${id === S.sid ? 'aria-current="page"' : ''}>${ICONS.checkin}${esc(sessName(id))}${id === S.sid ? ' · open now' : ''}</button>`).join('')}</div></div>` : ''}
-  <div class="sheetlist"><button data-act="signOut">${ICONS.signout}Sign out</button></div>
+  <div class="sheetlist">${allowedPages().some(p => p[0] === 'audit') ? `<button data-act="nav" data-v="audit" ${currentPage() === 'audit' ? 'aria-current="page"' : ''}>${ICONS.audit}Audit log</button>` : ''}<button data-act="signOut">${ICONS.signout}Sign out</button></div>
   <p class="note" style="margin:0;text-align:center">App version ${esc(APP_VERSION)}</p>`);
 }
 function gateView() {
