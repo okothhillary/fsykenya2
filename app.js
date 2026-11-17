@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17g · audit log in the account menu';
+const APP_VERSION = '2026-11-17h · see newest staff';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -484,6 +484,7 @@ function intakeRecords(res, choices, role, existing) {
     out.push(Object.assign({}, old ? Object.assign({}, old) : {}, {
       id: old ? old.id : 'S' + fnv((p.email || p.toks.join(' ') + p.bday)).toString(36),
       name: p.name, gender: p.gender || (old && old.gender) || '', bday: p.bday || (old && old.bday) || '', ageCsv: p.bday ? null : (old ? old.ageCsv ?? null : null), role: r,
+      addedAt: (old && old.addedAt) || Date.now(), addedBy: (old && old.addedBy) || (typeof S !== 'undefined' && S.meName) || '',
       phone: p.phone || (old && old.phone) || '', email: p.email || (old && old.email) || '', unit, stake, unitRaw: p.unitRaw, tshirt: p.tshirt || (old && old.tshirt) || '', diet: p.diet, med: p.med || '', src: 'form', test: false
     }));
     for (const k of ['toks', 'phoneOk', 'uc', 'isUpdate']) delete out[out.length - 1][k];
@@ -1052,7 +1053,7 @@ const PAGES = [
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()],
   ['sessions', 'Sessions', () => can.split()],
-  ['audit', 'Log', () => (S.isOwner || realRole() === 'regadmin') && role() === 'regadmin']
+  ['audit', 'Audit log', () => (S.isOwner || realRole() === 'regadmin') && role() === 'regadmin']
 ];
 function allowedPages() { return PAGES.filter(p => p[2]()); }
 function currentPage() {
@@ -1115,6 +1116,8 @@ function serial(path, fn) { const p = (Q[path] || Promise.resolve()).catch(() =>
 function upd(path, data, exists) { return serial(path, () => exists ? S.db.doc(path).update(data) : S.db.doc(path).set(data)); }
 function setDoc(path, data) { return serial(path, () => S.db.doc(path).set(data)); }
 
+/* Audit log: every change anyone makes, written as one short line. Only registration admins can read it.
+   Entries are only ever added, never edited or removed (the database rules enforce that). */
 const AUDIT_KINDS = { checkin: 'Check-in', groups: 'Groups & companies', staff: 'Staff', accounts: 'Accounts', settings: 'Settings & data', health: 'Health', headcount: 'Headcount', session: 'Sessions', signin: 'Sign-in' };
 function audit(kind, text, extra) {
   try {
@@ -1253,7 +1256,7 @@ async function syncAccountStaff() {
     if (!cur && S.staffList.some(s => !s.fromAccount && s.role === v.role && norm(s.name) && norm(s.name) === norm(v.name))) continue;
     const name = titleCase(v.name || h.split('@')[0]);
     const gender = v.gender || (cur && cur.gender) || '';
-    if (!cur || cur.name !== name || cur.role !== v.role || (cur.gender || '') !== gender) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '' }, cur || {}, { id, name, role: v.role, gender, fromAccount: 1 });
+    if (!cur || cur.name !== name || cur.role !== v.role || (cur.gender || '') !== gender) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '', addedAt: Date.now(), addedBy: 'Accounts' }, cur || {}, { id, name, role: v.role, gender, fromAccount: 1 });
   }
   for (const id in S.staff) { const s = S.staff[id]; if (s && s.fromAccount && !want[id]) del.push(id); }
   if (!Object.keys(add).length && !del.length) return;
@@ -1397,7 +1400,7 @@ function openAccount() {
   <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
   ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
   ${S.mySessions.length > 1 ? `<div><p class="th" style="margin-bottom:6px">Session</p><div class="sheetlist">${S.mySessions.map(id => `<button data-act="switchSession" data-v="${esc(id)}" ${id === S.sid ? 'aria-current="page"' : ''}>${ICONS.checkin}${esc(sessName(id))}${id === S.sid ? ' · open now' : ''}</button>`).join('')}</div></div>` : ''}
-  <div class="sheetlist">${allowedPages().some(p => p[0] === 'audit') ? `<button data-act="nav" data-v="audit" ${currentPage() === 'audit' ? 'aria-current="page"' : ''}>${ICONS.audit}Log</button>` : ''}<button data-act="signOut">${ICONS.signout}Sign out</button></div>
+  <div class="sheetlist">${allowedPages().some(p => p[0] === 'audit') ? `<button data-act="nav" data-v="audit" ${currentPage() === 'audit' ? 'aria-current="page"' : ''}>${ICONS.audit}Audit log</button>` : ''}<button data-act="signOut">${ICONS.signout}Sign out</button></div>
   <p class="note" style="margin:0;text-align:center">App version ${esc(APP_VERSION)}</p>`);
 }
 function gateView() {
@@ -2206,13 +2209,15 @@ PAGE_IMPL.staff = {
     const list = S.staffList.filter(s => s.role === UI.staffTab && sm(s));
     const byArea = UI.staffView === 'area';
     const plural = PL[UI.staffTab] || ROLES[UI.staffTab] + 's';
-    $('#stView').innerHTML = list.length ? `<div class="chips"><button data-act="stView" data-v="az" aria-pressed="${!byArea}">A–Z</button><button data-act="stView" data-v="area" aria-pressed="${byArea}">By stake and unit</button></div><button class="btn small" data-act="stPdf" data-v="">Print ${esc(plural.toLowerCase())} list (PDF)</button>` : '';
+    $('#stView').innerHTML = list.length ? `<div class="chips"><button data-act="stView" data-v="az" aria-pressed="${!byArea}">A–Z</button><button data-act="stView" data-v="area" aria-pressed="${byArea}">By stake and unit</button><button data-act="stView" data-v="new" aria-pressed="${UI.staffView === 'new'}">Newest first</button></div><button class="btn small" data-act="stPdf" data-v="">Print ${esc(plural.toLowerCase())} list (PDF)</button>` : '';
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return 'All companies'; return '—'; };
     const isC = UI.staffTab === 'counselor', ncol = isC ? 7 : 6;
     const shadowS = shadowedCounselors(S.staffList);
     const linkedIds = new Set(Object.values(S.invites || {}).map(v => v && v.staffId).filter(Boolean));
-    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    const DAY = 86400000, newest = UI.staffView === 'new';
+    const addedTxt = s => s.addedAt ? `Added ${fmtWhen(s.addedAt)}${s.addedBy ? ' by ' + s.addedBy : ''}` : '';
+    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.addedAt && Date.now() - s.addedAt < DAY ? `<span class="chip good" title="${esc(addedTxt(s))}">New</span>` : ''}${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}${newest && s.addedAt ? '<br>' + esc(addedTxt(s)) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '13–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
     let body = '';
     if (byArea) {
       const T = staffByArea(list);
@@ -2221,8 +2226,10 @@ PAGE_IMPL.staff = {
         body += `<tr class="st-h"><td colspan="${ncol}"><b>${esc(st)}</b> <span class="muted">· ${n}</span> <button class="btn small" data-act="stPdf" data-v="${esc(st)}">Print</button></td></tr>`;
         for (const un of Object.keys(units).sort(areaSort)) body += `<tr class="un-h"><td colspan="${ncol}">${esc(un)} <span class="muted">· ${units[un].length}</span></td></tr>` + units[un].map(row).join('');
       }
-    } else body = list.map(row).join('');
-    $('#stList').innerHTML = list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`;
+    } else body = (newest ? list.slice().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0) || a.name.localeCompare(b.name)) : list).map(row).join('');
+    const withT = list.filter(x => x.addedAt).sort((a, b) => b.addedAt - a.addedAt), recent = withT.filter(x => Date.now() - x.addedAt < DAY);
+    const latestLine = withT.length ? `<p class="note st-latest">Latest ${esc((ROLES[UI.staffTab] || '').toLowerCase())} added: <b>${esc(withT[0].name)}</b> · ${esc(fmtWhen(withT[0].addedAt))}${withT[0].addedBy ? ' by ' + esc(withT[0].addedBy) : ''}${recent.length > 1 ? ` · <b>${recent.length}</b> added in the last 24 hours` : ''}${newest ? '' : ' · <a href="#" data-act="stView" data-v="new">See newest first</a>'}</p>` : '';
+    $('#stList').innerHTML = latestLine + (list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`);
     renderSf();
   }
 };
@@ -2612,7 +2619,7 @@ async function doImport() {
     const byB = {}, medB = {}; rec.participants.forEach(p => { const id = p.id; const b = bucketOf(id); const r = Object.assign({}, p); delete r.id; (medB[b] = medB[b] || {})[id] = { med: r.med || '', diet: r.diet || '' }; delete r.med; delete r.diet; (byB[b] = byB[b] || {})[id] = r; });
     const bs = Object.keys(byB); let n = 0;
     for (const b of bs) { const mx = S.medicalEx.has(b); S.medicalEx.add(b); await upd('medical/' + b, { p: medB[b] }, mx); const ex = S.rosterEx.has(b); S.rosterEx.add(b); await upd('roster/' + b, { p: byB[b] }, ex); n++; I.busy = `Saving ${n} of ${bs.length}…`; renderImport(); }
-    if (rec.staff.length) { const s = {}; rec.staff.forEach(x => s[x.id] = x); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex); }
+    if (rec.staff.length) { const s = {}; rec.staff.forEach(x => { if (!S.staff[x.id]) { x.addedAt = Date.now(); x.addedBy = S.meName || ''; } else if (S.staff[x.id].addedAt) x.addedAt = S.staff[x.id].addedAt; s[x.id] = x; }); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex); }
     if (!S.configEx) await saveConfig({});
     audit('settings', `Uploaded ${I.name}: ${rec.participants.length} participants and ${rec.staff.length} staff`);
     UI.imp = { done: `Imported ${rec.participants.length} participants and ${rec.staff.length} staff. Next: untick excluded areas below, then generate companies on the Companies & groups tab.` };
@@ -2799,7 +2806,7 @@ document.addEventListener('click', async e => {
     case 'flagIssue': { const p = S.P.find(x => x.id === id); const on = v === 'mo' ? !!p.medIssue : !!p.dietIssue; await setState(id, { [v]: on ? 'n' : 'y' }); openDetail(id); break; }
     case 'ovr': await setState(id, { ov: v || null }); if ($('#mbg')) openDetail(id); toast(v === 'inc' ? 'Included in the session' : v === 'exc' ? 'Excluded from the session' : 'Area rules apply again'); break;
     case 'delP': { const p = S.P.find(x => x.id === id); if (!await confirmBox(`Delete ${p.name}?`, 'The record and check-in are removed from the app. A later upload of the same file would bring them back unless you also remove them from the file.', 'Delete participant', true)) break; const b = bucketOf(id); const m = Object.assign({}, S.roster[b]); delete m[id]; S.roster = Object.assign({}, S.roster, { [b]: m }); await setState(id, { del: true, g: null }); await setDoc('roster/' + b, { p: m }).catch(fail); toast('Participant deleted'); break; }
-    case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); audit('staff', `Generated ${list.length} test staff`); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
+    case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); list.forEach(x => { x.addedAt = Date.now(); x.addedBy = S.meName || ''; }); audit('staff', `Generated ${list.length} test staff`); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
     case 'testDel': { const tests = S.staffList.filter(s => s.test); if (!tests.length) { toast('There are no test staff.'); break; } if (!await confirmBox(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their leader. Press Rebalance afterwards to hand them to real staff.', 'Delete test staff', true)) break; audit('staff', `Deleted ${tests.length} test staff`); const s = {}; S.staffList.filter(x => !x.test).forEach(x => s[x.id] = x); S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Test staff deleted'); break; }
     case 'stTab': UI.staffTab = v; render(); break;
     case 'invSess': { const inv0 = S.invites[id]; if (!inv0) break; const cur = invSessions(inv0);
@@ -2934,7 +2941,7 @@ document.addEventListener('submit', async e => {
     const age = parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
     const email = sfEmail(val('stEmail')); if (email && !okEmail(email)) { toast('That email does not look right', true); return; }
     const dupE = email && S.staffList.find(x => x.id !== sid && (x.email || '').toLowerCase() === email); if (dupE) { toast(`${dupE.name} already has that email`, true); return; }
-    const rec = Object.assign({}, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: val('stRole'), phone: sfPhone(val('stPhone')) || clean(val('stPhone')), email, tshirt: val('stSize'), stake: clean(val('stStake')), unit: clean(val('stUnit')) });
+    const rec = Object.assign({ addedAt: Date.now(), addedBy: S.meName || S.email || '' }, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: val('stRole'), phone: sfPhone(val('stPhone')) || clean(val('stPhone')), email, tshirt: val('stSize'), stake: clean(val('stStake')), unit: clean(val('stUnit')) });
     await saveStaffRec(rec); linkTried = {}; UI.staffTab = rec.role; closeModal(); toast(sid ? 'Saved' : name + ' added');
   }
   if (f.id === 'invForm') {

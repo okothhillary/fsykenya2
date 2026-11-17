@@ -630,3 +630,4 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
   .aud-t tr{display:block;padding:10px 12px;border-bottom:1px solid var(--line)}
   .aud-t td{display:block;padding:2px 0;border:0}
 }
+.st-latest{margin:0 0 10px;padding:8px 12px;background:var(--surface2);border-radius:10px}
