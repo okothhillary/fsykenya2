@@ -4,7 +4,7 @@ function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
 /* Each session keeps its own participants, check-ins, groups, staff, headcounts and medical notes.
    The first session ("main") lives at the top level; sessions made by splitting live under sessions/<id>/.
    Accounts, profiles, requests and the session list are shared by all sessions. */
-const SCOPED = new Set(['roster', 'state', 'staff', 'org', 'config', 'headcount', 'medical', 'share', 'intake', 'reports']);
+const SCOPED = new Set(['roster', 'state', 'staff', 'org', 'config', 'headcount', 'medical', 'share', 'intake', 'reports', 'audit']);
 function rawPath(sid, p) { return !sid || sid === 'main' ? p : `sessions/${sid}/${p}`; }
 function scoped(p) { return SCOPED.has(String(p).split('/')[0]) ? rawPath(S.sid, p) : p; }
 function fbErr(cb) { return e => { console.error(e); if (cb) cb({ code: e && e.code === 'permission-denied' ? 'invalid_argument' : 'unavailable', message: String(e && e.message) }); }; }
@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17e · groups mix districts';
+const APP_VERSION = '2026-11-17f · audit log';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1051,7 +1051,8 @@ const PAGES = [
   ['wellness', 'Wellness', () => can.wellness()],
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()],
-  ['sessions', 'Sessions', () => can.split()]
+  ['sessions', 'Sessions', () => can.split()],
+  ['audit', 'Audit log', () => (S.isOwner || realRole() === 'regadmin') && role() === 'regadmin']
 ];
 function allowedPages() { return PAGES.filter(p => p[2]()); }
 function currentPage() {
@@ -1113,7 +1114,34 @@ const Q = {};
 function serial(path, fn) { const p = (Q[path] || Promise.resolve()).catch(() => { }).then(fn); Q[path] = p; return p; }
 function upd(path, data, exists) { return serial(path, () => exists ? S.db.doc(path).update(data) : S.db.doc(path).set(data)); }
 function setDoc(path, data) { return serial(path, () => S.db.doc(path).set(data)); }
+
+/* Audit log: every change anyone makes, written as one short line. Only registration admins can read it.
+   Entries are only ever added, never edited or removed (the database rules enforce that). */
+const AUDIT_KINDS = { checkin: 'Check-in', groups: 'Groups & companies', staff: 'Staff', accounts: 'Accounts', settings: 'Settings & data', health: 'Health', headcount: 'Headcount', session: 'Sessions', signin: 'Sign-in' };
+function audit(kind, text, extra) {
+  try {
+    if (!S.uid || !FB.fs || S.noDb) return;
+    const rec = { at: Date.now(), uid: S.uid, email: S.email || '', name: S.meName || '', role: realRole() || '', kind, text: String(text || '').slice(0, 400) };
+    if (S.viewAs) rec.preview = S.viewAs;
+    if (extra) rec.ref = String(extra).slice(0, 120);
+    FB.fs.collection(rawPath(S.sid, 'audit')).add(rec).catch(e => console.warn('audit', e));
+  } catch (e) { console.warn('audit', e); }
+}
+const pName = id => { const p = S.P.find(x => x.id === id); return p ? p.name : 'a participant'; };
+const gName = gid => { const g = gid && S.org.groups[gid]; return g ? 'G' + g.num : 'no group'; };
+const stName = id => (S.staffMap[id] && S.staffMap[id].name) || 'nobody';
+/** Describe a change to one participant's state (check-in, group, include/exclude, medical flags). */
+function auditState(pid, before, patch) {
+  const n = pName(pid), b = before || {};
+  if ('s' in patch && (patch.s || '') !== (b.s || '')) audit('checkin', patch.s === 'in' ? `Checked in ${n}` : patch.s === 'out' ? `Checked out ${n}` : `Undid the check-in of ${n}`, pid);
+  if ('g' in patch && (patch.g || null) !== (b.g || null)) audit('groups', `Moved ${n} from ${gName(b.g)} to ${gName(patch.g)}`, pid);
+  if ('ov' in patch && (patch.ov || null) !== (b.ov || null)) audit('settings', patch.ov === 'inc' ? `Included ${n} in the session` : patch.ov === 'exc' ? `Excluded ${n} from the session` : `Put ${n} back under the area rules`, pid);
+  if ('mo' in patch) audit('health', patch.mo === 'n' ? `Marked ${n}'s medical note as not an issue` : `Counted ${n}'s medical note as an issue`, pid);
+  if ('do' in patch) audit('health', patch.do === 'n' ? `Marked ${n}'s dietary note as not an issue` : `Counted ${n}'s dietary note as an issue`, pid);
+  if (patch.del) audit('settings', `Deleted participant ${n}`, pid);
+}
 function setState(pid, patch) {
+  try { const b0 = bucketOf(pid); auditState(pid, (S.state[b0] || {})[pid], patch); } catch (e) { }
   const b = bucketOf(pid); S.state[b] = Object.assign({}, S.state[b] || {}); S.state[b][pid] = Object.assign({}, S.state[b][pid] || {}, patch);
   recompute(true); const ex = S.stateEx.has(b); S.stateEx.add(b);
   return upd('state/' + b, { p: { [pid]: patch } }, ex).catch(fail);
@@ -1129,9 +1157,9 @@ function patchOrg(patch) { // {groups:{id:{...}}} merge
   for (const k of ['groups', 'companies']) for (const id in (patch[k] || {})) o[k][id] = Object.assign({}, o[k][id] || {}, patch[k][id]);
   S.org = o; recompute(true); const ex = S.orgEx; S.orgEx = true; return upd('org/structure', patch, ex).catch(fail);
 }
-function saveStaffRec(rec) { S.staff = Object.assign({}, S.staff, { [rec.id]: rec }); recompute(true); const ex = S.staffEx; S.staffEx = true; return upd('staff/all', { s: { [rec.id]: rec } }, ex).catch(fail); }
+function saveStaffRec(rec) { const was = S.staff[rec.id]; audit('staff', !was ? `Added staff member ${rec.name} (${ROLES[rec.role] || rec.role})` : was.role !== rec.role ? `Changed ${rec.name}'s role from ${ROLES[was.role] || was.role} to ${ROLES[rec.role] || rec.role}` : `Edited staff record of ${rec.name}`, rec.id); S.staff = Object.assign({}, S.staff, { [rec.id]: rec }); recompute(true); const ex = S.staffEx; S.staffEx = true; return upd('staff/all', { s: { [rec.id]: rec } }, ex).catch(fail); }
 /* Only the size fields change, so coordinators (who may not change other settings) can save them. */
-function saveSizes(patch) { S.config = Object.assign({}, S.config, patch); recompute(true); return (S.configEx ? upd('config/session', patch, true) : setDoc('config/session', S.config)).catch(fail); }
+function saveSizes(patch) { audit('groups', `Changed group sizes to ${patch.groupSizeF} young women and ${patch.groupSizeM} young men${patch.useAll ? ' (every counselor gets a group)' : ''}`); S.config = Object.assign({}, S.config, patch); recompute(true); return (S.configEx ? upd('config/session', patch, true) : setDoc('config/session', S.config)).catch(fail); }
 function saveConfig(patch) { S.config = Object.assign({}, S.config, patch); recompute(true); S.configEx = true; return setDoc('config/session', S.config).catch(fail); }
 
 /* data load */
@@ -1295,7 +1323,7 @@ async function boot() {
     S.medAdmin = S.isOwner || !!(inv && ['regadmin', 'sdc', 'seventy', 'loghead'].includes(inv.role));
     S.medRead = S.medAdmin || !!(inv && ['wellness', 'logistics'].includes(inv.role)); S.myRole = inv ? inv.role : (S.isOwner ? 'regadmin' : null);
     if (!S.isOwner && !inv) { subscribeGuest(); render(); return; }
-    subscribe(); render();
+    subscribe(); render(); setTimeout(() => { try { const k = 'fsy.seen.' + S.uid + '.' + S.sid, d = new Date().toISOString().slice(0, 10); if (localStorage.getItem(k) !== d) { localStorage.setItem(k, d); audit('signin', 'Opened the app'); } } catch (e) { audit('signin', 'Opened the app'); } }, 3000);
   });
 }
 function subscribeGuest() {
@@ -1329,12 +1357,13 @@ const ICONS = {
   access: I('<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M16 7l3 3M18 5l2 2"/>'),
   headcount: I('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><path d="m10 13 2 2 4-4"/>'),
   more: I('<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>'),
+  audit: I('<path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M10 12h6M10 15h6M10 18h4"/>'),
   sessions: I('<rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>'),
   print: I('<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
-const SHORT = { wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
+const SHORT = { audit: 'Audit', wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
 const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], counselor: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'], ac: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'] };
 function navPages() { const ok = allowedPages().map(p => p[0]); const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
@@ -2110,9 +2139,9 @@ async function saveReport(form) {
   const id = rid('r'); const rec = { pid: p.id, pname: p.name, kind: ($('#repKind') || {}).value || 'other', text: text.slice(0, 600), urgent: !!($('#repUrgent') || {}).checked, at: Date.now(), by: S.uid, byName: S.meName || S.email, status: 'open' };
   const mine = Object.assign({}, (S.reports || {})[S.uid] || {}, { [id]: rec }); S.reports = Object.assign({}, S.reports, { [S.uid]: mine });
   closeModal(); recompute(true);
-  try { await S.db.doc('reports/' + S.uid).set({ r: { [id]: rec } }, { merge: true }); toast('Sent to the wellness team'); } catch (e) { fail(e); }
+  try { await S.db.doc('reports/' + S.uid).set({ r: { [id]: rec } }, { merge: true }); audit('health', `Reported a ${repKind(rec.kind).toLowerCase()} concern for ${p.name}${rec.urgent ? ' (urgent)' : ''}`, p.id); toast('Sent to the wellness team'); } catch (e) { fail(e); }
 }
-async function updateReport(owner, id, patch) {
+async function updateReport(owner, id, patch) { const r0 = ((S.reports || {})[owner] || {})[id]; if (r0) audit('health', patch.status === 'resolved' ? `Resolved the health concern for ${r0.pname}` : patch.status === 'open' ? `Reopened the health concern for ${r0.pname}` : `Added a follow-up to the health concern for ${r0.pname}`, r0.pid);
   const cur = ((S.reports || {})[owner] || {})[id]; if (!cur) return;
   S.reports = Object.assign({}, S.reports, { [owner]: Object.assign({}, S.reports[owner], { [id]: Object.assign({}, cur, patch) }) }); recompute(true);
   try { await S.db.doc('reports/' + owner).set({ r: { [id]: patch } }, { merge: true }); } catch (e) { fail(e); }
@@ -2275,6 +2304,7 @@ async function sfImport() {
     const al = Object.assign({}, S.config.unitAliases || {}); let n = 0;
     for (const k in F.choices) { const core = k.split('|')[0]; if (core && al[core] !== F.choices[k]) { al[core] = F.choices[k]; n++; } }
     if (n && can.admin()) await saveConfig({ unitAliases: al }); else recompute(true);
+    audit('staff', `Imported ${recs.length} staff from ${F.name} (${recs.length - nUpd} new, ${nUpd} updated)`);
     const role = F.role === 'column' ? 'counselor' : F.role; UI.staffTab = role; UI.staffView = 'area';
     const merged = R.subs - R.people.length;
     UI.sf = { done: `Imported ${recs.length} ${F.role === 'column' ? 'staff' : esc(ROLES[F.role].toLowerCase()) + 's'}: ${recs.length - nUpd} new${nUpd ? `, ${nUpd} updated` : ''}.${merged ? ` ${merged} duplicate submission${merged === 1 ? ' was' : 's were'} merged.` : ''} The list below is sorted by stake and unit. Use <b>Choose a file to import</b> above to import another file.` };
@@ -2396,6 +2426,40 @@ async function hcWrite(gid, patch, submit) {
 }
 
 /* page: sessions (split and move participants) */
+/* Audit log page: registration admins only */
+let audUnsub = null, audKey = '';
+function audSubscribe() {
+  const key = S.sid + '|' + (UI.audLimit || 500); if (audKey === key) return; audKey = key;
+  if (audUnsub) { try { audUnsub(); } catch (e) { } }
+  UI.audRows = null;
+  audUnsub = FB.fs.collection(rawPath(S.sid, 'audit')).orderBy('at', 'desc').limit(UI.audLimit || 500).onSnapshot(sn => { UI.audRows = sn.docs.map(d => Object.assign({ id: d.id }, d.data())); if (currentPage() === 'audit') PAGE_IMPL.audit.update(); }, e => { console.error(e); UI.audRows = []; UI.audErr = true; if (currentPage() === 'audit') PAGE_IMPL.audit.update(); });
+}
+function audFiltered() {
+  const rows = UI.audRows || [], q = (UI.audQ || '').toLowerCase().trim(), k = UI.audK || 'all', who = UI.audWho || '', day = UI.audDay || '';
+  return rows.filter(r => (k === 'all' || r.kind === k) && (!who || r.uid === who) && (!day || new Date(r.at).toISOString().slice(0, 10) === day) && (!q || [r.text, r.name, r.email, ROLES[r.role] || r.role].join(' ').toLowerCase().includes(q)));
+}
+PAGE_IMPL.audit = {
+  frame() {
+    return `<section class="pagehead"><div><p class="th">Audit log · registration admins only</p><h1>Who did what, and when</h1><p class="note" style="margin:4px 0 0">Every change made in this session: check-ins, groups, staff, accounts, settings, health concerns and headcounts. Entries cannot be edited or deleted, not even by an admin.</p></div><button class="btn" data-act="audCsv">Export CSV</button></section>
+    <section class="panel"><div class="acc-tools"><input id="audQ" type="search" placeholder="Search by name, email or what was done" autocomplete="off" value="${esc(UI.audQ || '')}"><select id="audWho" aria-label="Person"></select><select id="audDay" aria-label="Day"></select></div><div class="chips aud-kinds" id="audKinds"></div><div id="audList" style="margin-top:10px"></div></section>`;
+  },
+  update() {
+    audSubscribe();
+    const rows = UI.audRows;
+    if (!rows) { $('#audList').innerHTML = '<p class="note">Loading…</p>'; return; }
+    if (UI.audErr) { $('#audList').innerHTML = '<div class="callout">The audit log could not be read. Check that the latest security rules are published in Firebase.</div>'; return; }
+    const people = {}; rows.forEach(r => { if (!people[r.uid]) people[r.uid] = r.name || r.email; });
+    const days = uniq(rows.map(r => new Date(r.at).toISOString().slice(0, 10)));
+    const w = $('#audWho'); if (w && document.activeElement !== w) w.innerHTML = opt('', 'Everyone') + Object.entries(people).sort((a, b) => a[1].localeCompare(b[1])).map(([u, n]) => opt(u, n, UI.audWho === u)).join('');
+    const d = $('#audDay'); if (d && document.activeElement !== d) d.innerHTML = opt('', 'Any day') + days.map(x => opt(x, new Date(x + 'T12:00:00').toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }), UI.audDay === x)).join('');
+    const k = UI.audK || 'all'; const cnt = kk => rows.filter(r => r.kind === kk).length;
+    $('#audKinds').innerHTML = [['all', 'All · ' + rows.length]].concat(Object.keys(AUDIT_KINDS).filter(kk => cnt(kk)).map(kk => [kk, AUDIT_KINDS[kk] + ' · ' + cnt(kk)])).map(([v, l]) => `<button data-act="audK" data-v="${v}" aria-pressed="${k === v}">${esc(l)}</button>`).join('');
+    const list = audFiltered();
+    const fmt = t => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    $('#audList').innerHTML = list.length ? `<div class="tablewrap"><table class="aud-t"><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${list.map(r => `<tr><td class="nowrap" data-l="When">${esc(fmt(r.at))}</td><td data-l="Who"><b>${esc(r.name || r.email)}</b><br><small class="muted">${esc(ROLES[r.role] || r.role || '')}${r.preview ? ' · previewing as ' + esc(ROLES[r.preview] || r.preview) : ''}</small></td><td data-l="What"><span class="chip">${esc(AUDIT_KINDS[r.kind] || r.kind)}</span> ${esc(r.text)}</td></tr>`).join('')}</tbody></table></div>
+      ${rows.length >= (UI.audLimit || 500) ? `<button class="btn small" data-act="audMore" style="margin-top:10px">Load older entries</button>` : ''}<p class="note">Showing ${list.length} of the latest ${rows.length} entries.</p>` : '<p class="note">Nothing matches.</p>';
+  }
+};
 PAGE_IMPL.sessions = {
   frame() {
     UI.split = UI.split || { dest: 'new', name: '', team: 'same', sel: new Set() };
@@ -2441,6 +2505,7 @@ async function loadSessionCounts() {
   if (currentPage() === 'sessions') render();
 }
 async function moveParticipants(list, target, opts) {
+  audit('session', `Moved ${list.length} participants from ${sessName(S.sid)} to ${opts.isNew ? 'a new session, ' + opts.name : sessName(target)}`);
   const src = S.sid, del = firebase.firestore.FieldValue.delete;
   const isSdc = realRole() === 'sdc', myKey = emailKey(S.email || '');
   const byB = {}; list.forEach(p => (byB[bucketOf(p.id)] = byB[bucketOf(p.id)] || []).push(p.id));
@@ -2551,6 +2616,7 @@ async function doImport() {
     for (const b of bs) { const mx = S.medicalEx.has(b); S.medicalEx.add(b); await upd('medical/' + b, { p: medB[b] }, mx); const ex = S.rosterEx.has(b); S.rosterEx.add(b); await upd('roster/' + b, { p: byB[b] }, ex); n++; I.busy = `Saving ${n} of ${bs.length}…`; renderImport(); }
     if (rec.staff.length) { const s = {}; rec.staff.forEach(x => s[x.id] = x); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex); }
     if (!S.configEx) await saveConfig({});
+    audit('settings', `Uploaded ${I.name}: ${rec.participants.length} participants and ${rec.staff.length} staff`);
     UI.imp = { done: `Imported ${rec.participants.length} participants and ${rec.staff.length} staff. Next: untick excluded areas below, then generate companies on the Companies & groups tab.` };
   } catch (e) { fail(e); I.busy = null; }
   renderImport();
@@ -2650,7 +2716,7 @@ function openDetail(id) {
 /* generator actions */
 async function runRebalance() {
   const r = rebalance(S.P, S.staffList, S.org, S.config);
-  UI.genLog = { title: 'Rebalanced. Existing groups were kept.', lines: r.log };
+  UI.genLog = { title: 'Rebalanced. Existing groups were kept.', lines: r.log }; audit('groups', `Pressed Rebalance: ${Object.keys(r.changes).length} participant(s) moved`);
   await saveOrg(r.org, { at: Date.now(), mode: 'rebalance' });
   const ch = {}; for (const id in r.changes) ch[id] = { g: r.changes[id] };
   await setStates(ch).catch(fail); toast('Groups and companies updated');
@@ -2663,7 +2729,7 @@ async function runRenumber() {
   const o = JSON.parse(JSON.stringify(S.org)); const before = {}; Object.values(o.groups).forEach(g => before[g.id] = g.num);
   renumber(o.groups, o.companies);
   const changed = Object.values(o.groups).filter(g => before[g.id] !== g.num).length;
-  S.orgLock = { at: Date.now(), by: S.meName || S.email || '' };
+  S.orgLock = { at: Date.now(), by: S.meName || S.email || '' }; audit('groups', `Renumbered groups by company (${changed} of ${gs.length} got a new number) and locked the numbers`);
   await saveOrg(o, Object.assign({}, S.orgGen || {}, { renumbered: Date.now() }));
   UI.genLog = null;
   render(); toast(`Groups renumbered by company: ${changed} of ${gs.length} got a new number. Numbers are now locked.`);
@@ -2673,7 +2739,7 @@ async function runRegen() {
   const ok = await confirmBox('Regenerate all groups and companies?', `Every participant is placed again from scratch. Check-ins are kept, but group and company assignments, including manual moves, are replaced.${S.orgLock ? ' <b>Group numbers are locked: regenerating gives every group a new number</b>, so rosters and what counselors were told will no longer match.' : ''} To keep current groups and numbers, use Rebalance instead.`, 'Regenerate', true);
   if (!ok) return;
   const r = fullGenerate(S.P, S.staffList, S.config);
-  UI.genLog = { title: 'Generated new groups and companies', lines: r.log };
+  UI.genLog = { title: 'Generated new groups and companies', lines: r.log }; audit('groups', `Regenerated all groups and companies: ${Object.keys(r.org.groups).length} groups, ${Object.keys(r.org.companies).length} companies`);
   await saveOrg(r.org, { at: Date.now(), mode: 'full' });
   const ch = {}; S.P.forEach(p => { const g = r.assign[p.id] || null; if ((p.g || null) !== g) ch[p.id] = { g }; });
   await setStates(ch).catch(fail); toast('Companies generated');
@@ -2693,9 +2759,9 @@ document.addEventListener('click', async e => {
     case 'acct': openAccount(); break;
     case 'toggleArea': { const set = UI[t.dataset.set] || (UI[t.dataset.set] = new Set()); set.has(v) ? set.delete(v) : set.add(v); render(); break; }
     case 'close': closeModal(); break;
-    case 'request': { const note = ($('#reqNote') || {}).value || ''; try { await S.db.doc('requests/' + S.uid).set({ at: now, note: note.slice(0, 200), email: S.email, name: S.meName }); notifyRequest(note); toast('Request sent'); UI.frameKey = ''; } catch (err) { toast('Could not send the request. Try again.', true); } break; }
+    case 'request': { const note = ($('#reqNote') || {}).value || ''; try { await S.db.doc('requests/' + S.uid).set({ at: now, note: note.slice(0, 200), email: S.email, name: S.meName }); audit('accounts', 'Asked for access'); notifyRequest(note); toast('Request sent'); UI.frameKey = ''; } catch (err) { toast('Could not send the request. Try again.', true); } break; }
     case 'signIn': await signIn(); break;
-    case 'signOut': closeModal(); await FB.auth.signOut(); break;
+    case 'signOut': audit('signin', 'Signed out'); closeModal(); await FB.auth.signOut(); break;
     case 'ciF': UI.filter = v; UI.limit = 40; UI.frameKey = ''; render(); break;
     case 'ciToggle': { const o = UI.ciOpen || (UI.ciOpen = new Set()); const st = t.dataset.stake; o.has(st) ? o.delete(st) : o.add(st); render(); break; }
     case 'ciPick': UI.stake = t.dataset.stake; UI.unit = t.dataset.unit || ''; UI.limit = 40; render(); pinSearch(); break;
@@ -2721,8 +2787,8 @@ document.addEventListener('click', async e => {
     case 'logClose': UI.genLog = null; render(); break;
     case 'regen': await runRegen(); break;
     case 'addCo': { const band = await new Promise(res => { openModal(`<div class="modal-head"><h2>Add a company</h2><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note">An empty company is created. Move groups into it with the Company picker inside each group, or press Rebalance to fill it automatically with a spare AC.</p><div class="btnrow"><button class="btn primary" id="aY">13–15 company</button><button class="btn primary" id="aO">16–18 company</button></div>`); $('#aY').onclick = () => { closeModal(); res('Y'); }; $('#aO').onclick = () => { closeModal(); res('O'); }; }); if (!band) break; const cid = rid('c'); const num = Math.max(0, ...Object.values(S.org.companies).map(c => c.num)) + 1; await patchOrg({ companies: { [cid]: { id: cid, band, acId: null, coordId: null, num } } }); toast('Company ' + num + ' added'); break; }
-    case 'delCo': { const c = S.org.companies[id]; if (!await confirmBox(`Remove Company ${c.num}?`, 'Its groups stay together and move to "Groups without a company". Press Rebalance to place them in other companies.', 'Remove company', true)) break; const o = { groups: {}, companies: Object.assign({}, S.org.companies) }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = g.companyId === id ? Object.assign({}, g, { companyId: null }) : g; delete o.companies[id]; await saveOrg(o, S.orgGen); toast('Company removed'); break; }
-    case 'delGrp': { const g = S.org.groups[id]; if (!await confirmBox(`Remove group G${g.num}?`, 'Its participants become unassigned. Press Rebalance to place them in other groups.', 'Remove group', true)) break; const o = { groups: Object.assign({}, S.org.groups), companies: S.org.companies }; delete o.groups[id]; await saveOrg(o, S.orgGen); const ch = {}; S.P.filter(p => p.g === id).forEach(p => ch[p.id] = { g: null }); await setStates(ch).catch(fail); toast('Group removed'); break; }
+    case 'delCo': { const c = S.org.companies[id]; if (!await confirmBox(`Remove Company ${c.num}?`, 'Its groups stay together and move to "Groups without a company". Press Rebalance to place them in other companies.', 'Remove company', true)) break; audit('groups', `Removed Company ${c.num}`); const o = { groups: {}, companies: Object.assign({}, S.org.companies) }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = g.companyId === id ? Object.assign({}, g, { companyId: null }) : g; delete o.companies[id]; await saveOrg(o, S.orgGen); toast('Company removed'); break; }
+    case 'delGrp': { const g = S.org.groups[id]; if (!await confirmBox(`Remove group G${g.num}?`, 'Its participants become unassigned. Press Rebalance to place them in other groups.', 'Remove group', true)) break; audit('groups', `Removed group G${g.num}`); const o = { groups: Object.assign({}, S.org.groups), companies: S.org.companies }; delete o.groups[id]; await saveOrg(o, S.orgGen); const ch = {}; S.P.filter(p => p.g === id).forEach(p => ch[p.id] = { g: null }); await setStates(ch).catch(fail); toast('Group removed'); break; }
     case 'rosterCsv': { const rows = [['Company', 'Age group', 'AC', 'Group', 'Counselor', 'Participant', 'Gender', 'Age', 'Ward/branch', 'Stake', 'T-shirt', 'Status']]; S.P.filter(p => p.group).sort((a, b) => (a.company ? a.company.num : 999) - (b.company ? b.company.num : 999) || a.group.num - b.group.num || a.name.localeCompare(b.name)).forEach(p => rows.push([p.company ? p.company.num : '', BANDS[p.group.band], p.company ? sName(p.company.acId) : '', 'G' + p.group.num, p.counselor ? p.counselor.name : '', p.name, p.gender, p.age, p.unit, p.stake, p.tshirt, p.s || 'not arrived'])); exportCSV('fsy-rosters.csv', rows); break; }
     case 'tallyCsv': { const rows = [['Stake', 'Ward/branch', 'Expected', 'Checked in', 'Checked out']]; const m = {}; S.P.forEach(p => { const k = p.stake + '|' + p.unit; const x = m[k] = m[k] || [p.stake, p.unit, 0, 0, 0]; if (p.elig && p.src !== 'walkin') x[2]++; if (p.s === 'in') x[3]++; if (p.s === 'out') x[4]++; }); Object.values(m).sort((a, b) => (a[0] + a[1]).localeCompare(b[0] + b[1])).forEach(r => rows.push(r)); exportCSV('fsy-tally.csv', rows); break; }
     case 'logScope': UI.logScope = v; UI.frameKey = ''; render(); break;
@@ -2730,17 +2796,17 @@ document.addEventListener('click', async e => {
       rows = [['Size', 'Youth to order', 'Staff given', 'Staff blanks estimated', 'Staff to order', 'Total to order']]; sizesIn(giv, est, R.totals).forEach(s => { const y = R.totals[s] ? R.totals[s].given + R.totals[s].est : 0, a = giv[s] || 0, b = est[s] || 0; if (y || a || b) rows.push([SIZE_LABEL[s] || s, y, a, b, a + b, y + a + b]); });
       rows.push([]); rows.push(['Staff member', 'Role', 'Gender', 'Size given', 'Estimated size', 'Ward/branch', 'Stake']); ST.slice().sort((a, b) => a.name.localeCompare(b.name)).forEach(x => rows.push([x.name, ROLES[x.role] || x.role, x.gender || '', x.tshirt || '', x.tshirt ? '' : perPerson[x.id] || '', x.unit || '', x.stake || '']));
       exportCSV('fsy-tshirts-staff-and-full-order.csv', rows); break; } if (v === 'size') { const R = teeRedistribute(L); rows = [['Size', 'Given', 'Blanks estimated', 'To order']]; sizesIn(R.totals).forEach(s => rows.push([SIZE_LABEL[s] || s, R.totals[s].given, R.totals[s].est, R.totals[s].given + R.totals[s].est])); } else if (v === 'blank') { const R = teeRedistribute(L); rows = [['Name', 'Age', 'Gender', 'Age group', 'Estimated size', 'Ward/branch', 'Stake', 'Contact', 'Contact phone']]; L.filter(p => !p.tshirt).forEach(p => rows.push([p.name, p.age, p.gender, p.band ? BANDS[p.band] : '', R.perPerson[p.id], p.unit, p.stake, p.c1n, p.c1p])); } else { const f = v === 'med' ? 'medIssue' : 'dietIssue', C = v === 'med' ? MED_CATS : DIET_CATS; rows = [['Name', 'Age', 'Gender', 'Note', 'Categories', 'Group', 'Counselor', 'Company', 'Ward/branch', 'Stake', 'Status', 'Contact', 'Contact phone']]; L.filter(p => p[f]).forEach(p => rows.push([p.name, p.age, p.gender, p[f], cats(p[f], C).join('; '), p.group ? 'G' + p.group.num : '', p.counselor ? p.counselor.name : '', p.company ? p.company.num : '', p.unit, p.stake, p.s || 'not arrived', p.c1n, p.c1p])); } exportCSV(`fsy-${({ med: 'medical', diet: 'dietary', size: 'tshirt-order', blank: 'tshirt-blanks' })[v]}.csv`, rows); break; }
-    case 'setTee': { const b = bucketOf(id); S.roster = Object.assign({}, S.roster, { [b]: Object.assign({}, S.roster[b], { [id]: Object.assign({}, S.roster[b][id], { tshirt: v }) }) }); recompute(true); await upd('roster/' + b, { p: { [id]: { tshirt: v } } }, true).catch(fail); toast('Size set to ' + (SIZE_LABEL[v] || v)); break; }
+    case 'setTee': { const b = bucketOf(id); audit('settings', `Set ${pName(id)}'s T-shirt size to ${SIZE_LABEL[v] || v}`, id); S.roster = Object.assign({}, S.roster, { [b]: Object.assign({}, S.roster[b], { [id]: Object.assign({}, S.roster[b][id], { tshirt: v }) }) }); recompute(true); await upd('roster/' + b, { p: { [id]: { tshirt: v } } }, true).catch(fail); toast('Size set to ' + (SIZE_LABEL[v] || v)); break; }
     case 'notIssue': setState(id, { [v]: 'n' }); toast('Removed from the count'); break;
     case 'flagIssue': { const p = S.P.find(x => x.id === id); const on = v === 'mo' ? !!p.medIssue : !!p.dietIssue; await setState(id, { [v]: on ? 'n' : 'y' }); openDetail(id); break; }
     case 'ovr': await setState(id, { ov: v || null }); if ($('#mbg')) openDetail(id); toast(v === 'inc' ? 'Included in the session' : v === 'exc' ? 'Excluded from the session' : 'Area rules apply again'); break;
     case 'delP': { const p = S.P.find(x => x.id === id); if (!await confirmBox(`Delete ${p.name}?`, 'The record and check-in are removed from the app. A later upload of the same file would bring them back unless you also remove them from the file.', 'Delete participant', true)) break; const b = bucketOf(id); const m = Object.assign({}, S.roster[b]); delete m[id]; S.roster = Object.assign({}, S.roster, { [b]: m }); await setState(id, { del: true, g: null }); await setDoc('roster/' + b, { p: m }).catch(fail); toast('Participant deleted'); break; }
-    case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
-    case 'testDel': { const tests = S.staffList.filter(s => s.test); if (!tests.length) { toast('There are no test staff.'); break; } if (!await confirmBox(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their leader. Press Rebalance afterwards to hand them to real staff.', 'Delete test staff', true)) break; const s = {}; S.staffList.filter(x => !x.test).forEach(x => s[x.id] = x); S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Test staff deleted'); break; }
+    case 'testGen': { const n = Math.max(1, Math.min(40, +($('#tsAcs') || {}).value || 2)); const list = makeTestStaff(S.P, S.config, n); audit('staff', `Generated ${list.length} test staff`); const s = {}; list.forEach(x => s[x.id] = x); S.staff = Object.assign({}, S.staff, s); recompute(true); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex).catch(fail); toast(`${list.length} test staff added`); break; }
+    case 'testDel': { const tests = S.staffList.filter(s => s.test); if (!tests.length) { toast('There are no test staff.'); break; } if (!await confirmBox(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their leader. Press Rebalance afterwards to hand them to real staff.', 'Delete test staff', true)) break; audit('staff', `Deleted ${tests.length} test staff`); const s = {}; S.staffList.filter(x => !x.test).forEach(x => s[x.id] = x); S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Test staff deleted'); break; }
     case 'stTab': UI.staffTab = v; render(); break;
     case 'invSess': { const inv0 = S.invites[id]; if (!inv0) break; const cur = invSessions(inv0);
       openModal(`<div class="modal-head"><div><h2>${esc(inv0.name)}</h2><small class="muted">${esc(id)} · ${esc(ROLES[inv0.role] || inv0.role)}</small></div><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note" style="margin:0">Sessions this account can open</p><div class="sheetlist">${S.mySessions.map(sid => `<label class="sess-pick"><input type="checkbox" class="pickSess" value="${esc(sid)}" ${cur.includes(sid) ? 'checked' : ''}> ${esc(sessName(sid))}</label>`).join('')}</div><button class="btn primary" data-act="invSessSave" data-id="${esc(id)}">Save</button>`); break; }
-    case 'invSessSave': { const inv0 = S.invites[id]; const mine = new Set(S.mySessions); const keepOther = invSessions(inv0).filter(x => !mine.has(x)); const picked = [...document.querySelectorAll('.pickSess:checked')].map(x => x.value); const sessions = uniq(keepOther.concat(picked)); if (!sessions.length) { toast('Choose at least one session', true); break; } await upd('invites/' + id, { sessions }, true).catch(fail); closeModal(); toast('Sessions updated'); break; }
+    case 'invSessSave': { const inv0 = S.invites[id]; const mine = new Set(S.mySessions); const keepOther = invSessions(inv0).filter(x => !mine.has(x)); const picked = [...document.querySelectorAll('.pickSess:checked')].map(x => x.value); const sessions = uniq(keepOther.concat(picked)); if (!sessions.length) { toast('Choose at least one session', true); break; } audit('accounts', `Changed which sessions ${inv0.name} can open: ${sessions.map(x => sessName(x)).join(', ')}`, id); await upd('invites/' + id, { sessions }, true).catch(fail); closeModal(); toast('Sessions updated'); break; }
     case 'switchSession': { try { localStorage.setItem('fsy.session.' + S.uid, v); } catch (e) { } closeModal(); location.hash = ''; location.reload(); break; }
     case 'spGo': { if (!can.split()) break; const sp = UI.split; const list = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)); if (!list.length) break;
       const isNew = sp.dest === 'new', name = isNew ? clean(sp.name) : sessName(sp.dest); if (isNew && !name) { toast('Give the new session a name', true); break; }
@@ -2750,17 +2816,17 @@ document.addEventListener('click', async e => {
       try { await moveParticipants(list, target, { isNew, name, team: sp.team }); UI.split = { dest: 'new', name: '', team: 'same', sel: new Set() }; UI.sessCounts = null; render(); toast(`${list.length} participants moved to ${name}`, false, { label: 'Open', fn: () => { try { localStorage.setItem('fsy.session.' + S.uid, target); } catch (e) { } location.hash = ''; location.reload(); } }); }
       catch (e) { fail(e); }
       break; }
-    case 'resetOrg': { if (!can.reset()) break; if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; await resetOrg(); toast('Groups and companies removed'); break; }
-    case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
+    case 'resetOrg': { if (!can.reset()) break; if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; audit('groups', 'Undid all groups and companies'); await resetOrg(); toast('Groups and companies removed'); break; }
+    case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; audit('staff', `Deleted ${tests.length} test staff (Start over)`); const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
     case 'resetType': { if (!can.reset()) break; const r = ($('#rsType') || {}).value || 'counselor'; UI.rsType = r; const gone = S.staffList.filter(x => x.role === r && !x.fromAccount); if (!gone.length) { toast(`There are no ${ROLES[r].toLowerCase()}s to delete.`); break; }
       if (!await confirmTyped(`Delete all ${gone.length} ${ROLES[r].toLowerCase()}s?`, `Every ${esc(ROLES[r].toLowerCase())} record is deleted, real and test. Other staff types are kept.${r === 'counselor' ? ' Groups lose their counselors; press Rebalance after uploading the new list.' : r === 'ac' ? ' Companies lose their ACs; press Rebalance after uploading the new list.' : ''} Sign-in accounts are kept.`, 'DELETE', 'Delete ' + ROLES[r].toLowerCase() + 's')) break;
-      const ids = new Set(gone.map(x => x.id)); unlinkDeleted(ids); const s2 = {}; for (const k in S.staff) if (!ids.has(k)) s2[k] = S.staff[k]; S.staff = s2; recompute(true); await setDoc('staff/all', { s: s2 }).catch(fail);
+      audit('staff', `Deleted all ${gone.length} ${ROLES[r].toLowerCase()}s`); const ids = new Set(gone.map(x => x.id)); unlinkDeleted(ids); const s2 = {}; for (const k in S.staff) if (!ids.has(k)) s2[k] = S.staff[k]; S.staff = s2; recompute(true); await setDoc('staff/all', { s: s2 }).catch(fail);
       const o = { groups: {}, companies: {} }; let ch = false;
       for (const g of Object.values(S.org.groups)) { const x = Object.assign({}, g); if (ids.has(g.counselorId)) { x.counselorId = null; ch = true; } o.groups[g.id] = x; }
       for (const c of Object.values(S.org.companies)) { const x = Object.assign({}, c); if (ids.has(c.acId)) { x.acId = null; ch = true; } if (ids.has(c.coordId)) { x.coordId = null; ch = true; } o.companies[c.id] = x; }
       if (ch) await saveOrg(o, S.orgGen);
       toast(`${gone.length} ${ROLES[r].toLowerCase()}s deleted`); break; }
-    case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and Session Directing Couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept and link again automatically when the new list is uploaded, wherever the email or name matches.', 'DELETE', 'Delete all staff')) break;
+    case 'resetStaff': { if (!can.reset()) break; const n = S.staffList.length; if (!await confirmTyped(`Delete all ${n} staff?`, 'Every counselor, assistant coordinator, coordinator, logistics and Session Directing Couple record is deleted, real and test. Groups and companies lose their leaders. Sign-in accounts are kept and link again automatically when the new list is uploaded, wherever the email or name matches.', 'DELETE', 'Delete all staff')) break; audit('staff', `Deleted all ${n} staff records`);
       unlinkDeleted(new Set(Object.keys(S.staff))); S.staff = {}; recompute(true); await setDoc('staff/all', { s: {} }).catch(fail);
       const o = { groups: {}, companies: {} }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = Object.assign({}, g, { counselorId: null }); for (const c of Object.values(S.org.companies)) o.companies[c.id] = Object.assign({}, c, { acId: null, coordId: null });
       if (Object.keys(o.groups).length || Object.keys(o.companies).length) await saveOrg(o, S.orgGen);
@@ -2770,7 +2836,7 @@ document.addEventListener('click', async e => {
     case 'hcBack': UI.hcGroup = null; render(); break;
     case 'hcMark': { if (hcViewOnly()) break; const g = t.dataset.g; const cur = ((hcDoc(hcDay(), g) || {}).marks || {})[id]; await hcWrite(g, { marks: { [id]: cur === v ? null : v } }); break; }
     case 'hcAll': { if (hcViewOnly()) break; const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
-    case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
+    case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); audit('headcount', `Submitted the ${hcDay()} headcount for G${S.org.groups[g].num}: ${x.present.length} present, ${x.missing.length} missing`); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
     case 'stView': UI.staffView = v; render(); break;
@@ -2780,6 +2846,9 @@ document.addEventListener('click', async e => {
     case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
     case 'coQClear': UI.coQ = ''; { const i = $('#coQ'); if (i) i.value = ''; } render(); break;
     case 'wlRep': UI.wlRep = v; render(); break;
+    case 'audK': UI.audK = v; render(); break;
+    case 'audMore': UI.audLimit = (UI.audLimit || 500) + 1000; render(); break;
+    case 'audCsv': { const rows = [['When', 'Who', 'Email', 'Role', 'Kind', 'What']]; audFiltered().forEach(r => rows.push([new Date(r.at).toLocaleString(), r.name || '', r.email || '', ROLES[r.role] || r.role || '', AUDIT_KINDS[r.kind] || r.kind, r.text])); exportCSV('fsy-audit-log.csv', rows); break; }
     case 'spareToggle': UI.spareOpen = !UI.spareOpen; render(); break;
     case 'fitSizes': { const f = fitSizes(); const F = f.F.fit || f.F.now, M = f.M.fit || f.M.now; if (!await confirmBox('Change group sizes?', `Young women: <b>${F}</b> per group (now ${f.F.now}). Young men: <b>${M}</b> per group (now ${f.M.now}). Press <b>Rebalance</b> afterwards: every counselor who is free gets a group, made from one or two youth from each of the biggest groups of the same gender and age band. Groups never drop below 6.`, 'Change sizes')) break; await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: true }); UI.frameKey = ''; render(); toast('Group sizes changed. Press Rebalance to apply them.'); break; }
     case 'lgGo': { if (v === 'blank') { UI.foldSet = Object.assign(UI.foldSet || {}, { 'sec-tee': true }); if (location.hash === '#tee-blank') openFold('sec-tee'); else location.hash = 'tee-blank'; break; } openFold({ med: 'sec-med', diet: 'sec-diet', tee: 'sec-tee', steee: 'sec-steee' }[v]); break; }
@@ -2799,11 +2868,11 @@ document.addEventListener('click', async e => {
     case 'stEdit': if (can.staff()) openStaffForm(id); break;
     case 'stCsv': { const rows = [['Name', 'Role', 'Gender', 'Age', 'Ward/branch', 'Stake', 'Phone', 'Email', 'T-shirt', 'Food needs']]; S.staffList.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(s => rows.push([s.name, ROLES[s.role], s.gender, staffAge(s, S.config) ?? '', s.unit || '', s.stake || '', s.phone || '', s.email || '', s.tshirt || '', s.diet || ''])); exportCSV('fsy-staff.csv', rows); break; }
     case 'exCsv': { const L = PAGE_IMPL.exceptions.lists(); const rows = [['Type', 'Name', 'Age', 'Gender', 'Ward/branch', 'Stake', 'Status', 'Group']]; [['Walk-in', L.walk], ['Not on approved list', L.off], ['Checked in, no group', L.nog]].forEach(([t, list]) => list.forEach(p => rows.push([t, p.name, p.age ?? '', p.gender, p.unit, p.stake, p.s || 'not arrived', p.group ? 'G' + p.group.num : '']))); exportCSV('fsy-walkins-exceptions.csv', rows); break; }
-    case 'stDel': { const st = S.staffMap[id]; if (st && st.fromAccount) { toast('This person comes from Accounts. Delete or change their account there.', true); break; } if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
+    case 'stDel': { const st = S.staffMap[id]; if (st && st.fromAccount) { toast('This person comes from Accounts. Delete or change their account there.', true); break; } if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; audit('staff', `Deleted staff member ${st.name}`, id); const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
     case 'impGo': await doImport(); break;
     case 'impCancel': UI.imp = null; renderImport(); const f = $('#impFile'); if (f) f.value = ''; break;
-    case 'reqDel': await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(fail); break;
-    case 'invDel': { const v = S.invites[id]; if (!await confirmBox(`Delete ${v.name}'s account?`, 'They lose access to the app straight away. Their check-ins stay.', 'Delete account', true)) break; await serial('invites/' + id, () => S.db.doc('invites/' + id).delete()).catch(fail); toast('Account deleted'); break; }
+    case 'reqDel': audit('accounts', `Dismissed the sign-in request from ${(S.requests[id] || {}).name || (S.requests[id] || {}).email || 'someone'}`); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(fail); break;
+    case 'invDel': { const v = S.invites[id]; if (!await confirmBox(`Delete ${v.name}'s account?`, 'They lose access to the app straight away. Their check-ins stay.', 'Delete account', true)) break; audit('accounts', `Deleted the account of ${v.name} (${id})`, id); await serial('invites/' + id, () => S.db.doc('invites/' + id).delete()).catch(fail); toast('Account deleted'); break; }
     case 'acDel': { if (!await confirmBox('Remove this role?', 'The person keeps access to the page but can no longer use the app until given a role again.', 'Remove role', true)) break; const u = Object.assign({}, S.access); delete u[id]; S.access = u; recompute(true); await setDoc('access/roles', { u }).catch(fail); break; }
     case 'acAdd': { const r = ($('#hitRole-' + id) || {}).value; if (!r) { toast('Choose a role first', true); break; } await setAccess(id, { role: r }); toast('Role given'); $('#acHits').innerHTML = ''; $('#acSearch').value = ''; break; }
   }
@@ -2821,32 +2890,34 @@ document.addEventListener('change', async e => {
   if (t.id === 'impFile') { if (t.files[0]) readFile(t.files[0]).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }); return; }
   if (t.id === 'impMode') { UI.imp.mode = t.value; renderImport(); return; }
   if (t.id === 'sfFile') { const f = t.files[0]; if (f) sfRead(f).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }).finally(() => { t.value = ''; }); return; }
+  if (t.id === 'audWho') { UI.audWho = t.value; PAGE_IMPL.audit.update(); return; }
+  if (t.id === 'audDay') { UI.audDay = t.value; PAGE_IMPL.audit.update(); return; }
   if (t.id === 'rsType') { UI.rsType = t.value; return; }
   if (t.id === 'sfRole') { UI.sf.role = t.value; renderSf(); return; }
   if (act === 'sfUnit') { const F = UI.sf; if (t.value === '__new') F.adding = v; else if (t.value) { F.choices[v] = t.value; F.adding = null; } else delete F.choices[v]; t.blur(); renderSf(); if (F.adding) setTimeout(() => { const i = $('#sfNewStake'); if (i) i.focus(); }, 30); return; }
   if (!act) return;
   switch (act) {
     case 'moveP': { const g = t.value || null; t.blur(); await setState(id, { g }); toast(g ? 'Moved to G' + S.org.groups[g].num : 'Taken out of group'); break; }
-    case 'grpCoun': { const g = S.org.groups[id], c = t.value || null; t.blur(); const patch = { groups: { [id]: { counselorId: c } } }; const other = c && Object.values(S.org.groups).find(x => x.counselorId === c && x.id !== id); if (other) patch.groups[other.id] = { counselorId: g.counselorId || null }; await patchOrg(patch); toast(other ? `Swapped counselors with G${other.num}` : 'Counselor updated'); break; }
-    case 'grpCo': { t.blur(); await patchOrg({ groups: { [id]: { companyId: t.value || null } } }); toast('Group moved'); break; }
-    case 'coAc': { const c = S.org.companies[id], a = t.value || null; t.blur(); const patch = { companies: { [id]: { acId: a } } }; const other = a && Object.values(S.org.companies).find(x => x.acId === a && x.id !== id); if (other) patch.companies[other.id] = { acId: c.acId || null }; await patchOrg(patch); toast(other ? `Swapped ACs with Company ${other.num}` : 'Assistant coordinator updated'); break; }
+    case 'grpCoun': { const g = S.org.groups[id], c = t.value || null; t.blur(); audit('groups', `Set the counselor of G${g.num} to ${stName(c)}`); const patch = { groups: { [id]: { counselorId: c } } }; const other = c && Object.values(S.org.groups).find(x => x.counselorId === c && x.id !== id); if (other) patch.groups[other.id] = { counselorId: g.counselorId || null }; await patchOrg(patch); toast(other ? `Swapped counselors with G${other.num}` : 'Counselor updated'); break; }
+    case 'grpCo': { t.blur(); audit('groups', `Moved ${gName(id)} to ${t.value && S.org.companies[t.value] ? 'Company ' + S.org.companies[t.value].num : 'no company'}`); await patchOrg({ groups: { [id]: { companyId: t.value || null } } }); toast('Group moved'); break; }
+    case 'coAc': { const c = S.org.companies[id], a = t.value || null; t.blur(); audit('groups', `Set the assistant coordinator of Company ${c.num} to ${stName(a)}`); const patch = { companies: { [id]: { acId: a } } }; const other = a && Object.values(S.org.companies).find(x => x.acId === a && x.id !== id); if (other) patch.companies[other.id] = { acId: c.acId || null }; await patchOrg(patch); toast(other ? `Swapped ACs with Company ${other.num}` : 'Assistant coordinator updated'); break; }
     case 'coCoord': { t.blur(); await patchOrg({ companies: { [id]: { coordId: t.value || null } } }); toast('Coordinator updated'); break; }
-    case 'stat': { const ex = new Set(S.config.excludedStatuses || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStatuses: [...ex] }); break; }
-    case 'areaS': { const ex = new Set(S.config.excludedStakes || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStakes: [...ex] }); break; }
-    case 'areaU': { const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
+    case 'stat': { audit('settings', `${t.checked ? 'Counted' : 'Stopped counting'} the status ${v.replace(/_/g, ' ').toLowerCase()} as registered`); const ex = new Set(S.config.excludedStatuses || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStatuses: [...ex] }); break; }
+    case 'areaS': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the area ${v}`); const ex = new Set(S.config.excludedStakes || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStakes: [...ex] }); break; }
+    case 'areaU': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the unit ${v.replace('|', ' · ')}`); const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
     case 'impMap': { const i = +v; if (t.value) { for (const k in UI.imp.map) if (UI.imp.map[k] === t.value) delete UI.imp.map[k]; UI.imp.map[i] = t.value; } else delete UI.imp.map[i]; renderImport(); break; }
     case 'stRole': { t.blur(); await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
-    case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
+    case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } audit('accounts', `Gave ${rq.name || rq.email} (${rq.email}) access as ${ROLES[t.value] || t.value}`); await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
-    case 'invGender': { await upd('invites/' + id, { gender: t.value || '' }, true).catch(fail); toast('Gender saved'); break; }
-    case 'invRole': { await upd('invites/' + id, { role: t.value }, true).catch(fail); toast('Role changed'); break; }
-    case 'invStaff': { await upd('invites/' + id, { staffId: t.value || null, staffAuto: null, staffManual: true }, true).catch(fail); toast(t.value ? 'Staff record linked' : 'Link removed'); break; }
+    case 'invGender': { audit('accounts', `Set the gender on ${(S.invites[id] || {}).name || id}'s account to ${t.value === 'F' ? 'female' : t.value === 'M' ? 'male' : 'not given'}`, id); await upd('invites/' + id, { gender: t.value || '' }, true).catch(fail); toast('Gender saved'); break; }
+    case 'invRole': { audit('accounts', `Changed ${(S.invites[id] || {}).name || id}'s role from ${ROLES[(S.invites[id] || {}).role] || '?'} to ${ROLES[t.value] || t.value}`, id); await upd('invites/' + id, { role: t.value }, true).catch(fail); toast('Role changed'); break; }
+    case 'invStaff': { audit('accounts', t.value ? `Linked ${(S.invites[id] || {}).name || id}'s account to staff record ${stName(t.value)}` : `Removed the staff link from ${(S.invites[id] || {}).name || id}'s account`, id); await upd('invites/' + id, { staffId: t.value || null, staffAuto: null, staffManual: true }, true).catch(fail); toast(t.value ? 'Staff record linked' : 'Link removed'); break; }
     case 'acStaff': { await setAccess(id, { staffId: t.value || null }); toast('Linked'); break; }
   }
 });
 document.addEventListener('submit', async e => {
   e.preventDefault(); const f = e.target; const val = id => ($('#' + id) || {}).value || '';
-  if (f.id === 'wkForm') {
+  if (f.id === 'wkForm') { audit('checkin', `Added a walk-in: ${titleCase(val('wkFirst'))} ${titleCase(val('wkLast'))}`);
     const first = titleCase(val('wkFirst')), last = titleCase(val('wkLast')); const gender = val('wkGender');
     if (!first || !gender) { toast('Name and gender are needed', true); return; }
     const id = rid('W'); const b = bucketOf(id); const age = parseInt(val('wkAge'), 10);
@@ -2873,10 +2944,10 @@ document.addEventListener('submit', async e => {
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !r) { toast('Enter a name, a valid email and a role', true); return; }
     const h = emailKey(email); if (S.invites[h]) { toast('There is already an account for ' + email, true); return; }
     const chosen = [...document.querySelectorAll('.invSessChk:checked')].map(x => x.value); const sessions = chosen.length ? chosen : [S.sid];
-    try { await setDoc('invites/' + h, { name, role: r, gender: val('invGender') || '', staffId: sid, sessions, at: Date.now() }); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
+    try { await setDoc('invites/' + h, { name, role: r, gender: val('invGender') || '', staffId: sid, sessions, at: Date.now() }); audit('accounts', `Created an account for ${name} (${email}) as ${ROLES[r] || r}`, h); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
   }
-  if (f.id === 'cfgForm') { if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, useAll: false, groupSizeF: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)), groupSizeM: Math.max(4, Math.min(25, parseInt(val('cfSizeM'), 10) || 10)), groupSize: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)) }); toast('Settings saved. Press Rebalance on Companies & groups to apply group sizes.'); }
-  if (f.id === 'edForm') {
+  if (f.id === 'cfgForm') { audit('settings', 'Saved the session settings'); if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, useAll: false, groupSizeF: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)), groupSizeM: Math.max(4, Math.min(25, parseInt(val('cfSizeM'), 10) || 10)), groupSize: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)) }); toast('Settings saved. Press Rebalance on Companies & groups to apply group sizes.'); }
+  if (f.id === 'edForm') { audit('settings', `Edited the record of ${pName(f.dataset.id)}`, f.dataset.id);
     const id = f.dataset.id, b = bucketOf(id); const age = parseInt(val('edAge'), 10);
     const patch = { first: titleCase(val('edFirst')), last: titleCase(val('edLast')), gender: val('edGender'), bday: val('edBday'), ageCsv: isNaN(age) ? null : age, tshirt: val('edSize'), stake: clean(val('edStake')), unit: clean(val('edUnit')) }; const md = { med: val('edMed'), diet: val('edDiet') };
     S.roster = Object.assign({}, S.roster, { [b]: Object.assign({}, S.roster[b], { [id]: Object.assign({}, S.roster[b][id], patch) }) }); recompute(true);
@@ -2890,6 +2961,7 @@ document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'coQ') { UI.coQ = t.value; clearTimeout(UI.coT); UI.coT = setTimeout(() => PAGE_IMPL.companies.update(), 200); return; }
   if (t.id === 'stQ') { UI.stQ = t.value; clearTimeout(UI.stT); UI.stT = setTimeout(() => PAGE_IMPL.staff.update(), 200); return; }
+  if (t.id === 'audQ') { UI.audQ = t.value; clearTimeout(UI.audT); UI.audT = setTimeout(() => PAGE_IMPL.audit.update(), 200); return; }
   if (t.id === 'accQ') { UI.accQ = t.value; clearTimeout(UI.accT); UI.accT = setTimeout(() => PAGE_IMPL.access.update(), 200); return; }
   if (t.id === 'wlQ') { UI.wlQ = t.value; clearTimeout(UI.wlT); UI.wlT = setTimeout(() => { PAGE_IMPL.wellness.update(); }, 200); return; }
   if (t.dataset && t.dataset.hcreason) { const g = t.dataset.g, id = t.dataset.hcreason; clearTimeout(hcNoteT[id]); hcNoteT[id] = setTimeout(() => { const cur = hcDoc(hcDay(), g) || {}; const next = Object.assign({}, cur, { reasons: Object.assign({}, cur.reasons || {}, { [id]: t.value.slice(0, 200) }) }); S.hc[hcDay() + '_' + g] = next; setDoc('headcount/' + hcDay() + '_' + g, Object.assign(next, { by: S.uid, byName: S.meName || '', updatedAt: Date.now() })).catch(fail); }, 700); }

@@ -619,3 +619,14 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 }
 .inv-g{margin-top:6px;max-width:140px}
 .inv-g.missing{border-color:var(--yellow,#fcb449);background:#fff6e6}
+
+/* audit log */
+.aud-kinds{flex-wrap:wrap;margin-top:10px}
+.aud-t td{vertical-align:top}
+.aud-t .nowrap{white-space:nowrap;font-variant-numeric:tabular-nums}
+@media (max-width:640px){
+  .aud-t, .aud-t tbody{display:block;width:100%}
+  .aud-t thead{display:none}
+  .aud-t tr{display:block;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .aud-t td{display:block;padding:2px 0;border:0}
+}
