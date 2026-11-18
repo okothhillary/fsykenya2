@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18c · younger band labelled 14–15';
+const APP_VERSION = '2026-11-18e · export everything to Excel';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -192,6 +192,7 @@ function rowsToRecords(rows, mapping, mode, now) {
     const kind = mode === 'auto' ? (normType(o.type) || 'participant') : mode;
     const regId = clean(o.regId);
     if (kind === 'participant') {
+      rec.raw = row.map((c, i) => mapping[i] === 'med' || mapping[i] === 'diet' ? null : (c == null ? '' : String(c)));
       rec.id = regId ? regId.replace(/[^A-Za-z0-9_\-.~:@+]/g, '') : 'X' + fnv((first + last + bday + rec.unit).toLowerCase()).toString(36);
       rec.src = 'import'; rec.imp = now || Date.now();
       out.participants.push(rec);
@@ -460,7 +461,7 @@ function staffIntake(rows, opts) {
     const row = rows[r]; if (!row || row.every(c => clean(c) === '')) { blank++; continue; }
     const o = {}; for (const i in map) o[map[i]] = row[i];
     if (!clean(o.name)) { blank++; continue; }
-    const x = sfRow(o, opts.refDate || ''); x.row = r; subs.push(x);
+    const x = sfRow(o, opts.refDate || ''); x.row = r; x.raw = row.map(c => c == null ? '' : String(c)); subs.push(x);
   }
   const people = dedupeSubs(subs).sort((a, b) => a.name.localeCompare(b.name));
   const dir = unitDirectory(opts.units || [], opts.aliases || {});
@@ -486,7 +487,7 @@ function intakeRecords(res, choices, role, existing) {
     out.push(Object.assign({}, old ? Object.assign({}, old) : {}, {
       id: old ? old.id : 'S' + fnv((p.email || p.toks.join(' ') + p.bday)).toString(36),
       name: p.name, gender: p.gender || (old && old.gender) || '', bday: p.bday || (old && old.bday) || '', ageCsv: p.bday ? null : (old ? old.ageCsv ?? null : null), role: r,
-      addedAt: (old && old.addedAt) || Date.now(), addedBy: (old && old.addedBy) || (typeof S !== 'undefined' && S.meName) || '',
+      raw: p.raw || (old && old.raw) || null, addedAt: (old && old.addedAt) || Date.now(), addedBy: (old && old.addedBy) || (typeof S !== 'undefined' && S.meName) || '',
       phone: p.phone || (old && old.phone) || '', email: p.email || (old && old.email) || '', unit, stake, unitRaw: p.unitRaw, tshirt: p.tshirt || (old && old.tshirt) || '', diet: p.diet, med: p.med || '', src: 'form', test: false
     }));
     for (const k of ['toks', 'phoneOk', 'uc', 'isUpdate']) delete out[out.length - 1][k];
@@ -1273,7 +1274,7 @@ function subscribe() {
   setTimeout(() => { if (!loadedAll()) { S.slow = true; render(); } }, 10000);
   db.collection('roster').onSnapshot(sn => { const r = {}; S.rosterEx = new Set(); sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.rosterEx.add(d.id); }); S.roster = r; mark('roster', sn.metadata); recompute(); }, onErr);
   db.collection('state').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.stateEx.add(d.id); }); S.state = r; mark('state', sn.metadata); recompute(); }, onErr);
-  db.doc('staff/all').onSnapshot(d => { S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
+  db.doc('staff/all').onSnapshot(d => { S.staffCols = d.exists ? d.data().cols || null : null; S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
   db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
   db.collection('headcount').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.hc = r; S.hcLoaded = true; recompute(); }, onErr);
   db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
@@ -2345,7 +2346,7 @@ async function sfImport() {
   try {
     const s = {}; recs.forEach(r => { const x = Object.assign({}, r); delete x.isUpdate; s[x.id] = x; });
     S.staff = Object.assign({}, S.staff, s); const ex = S.staffEx; S.staffEx = true;
-    await upd('staff/all', { s }, ex);
+    await upd('staff/all', { s, cols: { headers: F.rows[0].map(h => String(h == null ? '' : h)), map: Object.fromEntries(Object.entries(F.map).map(([k, v]) => [String(k), v])) } }, ex);
     const al = Object.assign({}, S.config.unitAliases || {}); let n = 0;
     for (const k in F.choices) { const core = k.split('|')[0]; if (core && al[core] !== F.choices[k]) { al[core] = F.choices[k]; n++; } }
     if (n && can.admin()) await saveConfig({ unitAliases: al }); else recompute(true);
@@ -2592,6 +2593,7 @@ async function moveParticipants(list, target, opts) {
 PAGE_IMPL.data = {
   frame() {
     return `<section class="pagehead"><div><h1>Data & areas</h1><p class="note" style="margin:4px 0 0">Upload the FSY portal export, choose which stakes and units belong to this session, and clean up problem records.</p></div></section>
+    <div class="panel"><div class="panel-head"><h2>Export</h2><div class="btnrow"><button class="btn primary" data-act="expAll">Export everything (Excel)</button><button class="btn" data-act="expPart">Participants (CSV)</button><button class="btn" data-act="expStaff">Staff (CSV)</button></div></div><p class="note" style="margin:-4px 0 0"><b>Excel</b> has three tabs: <b>Everyone</b> (youth, walk-ins and staff in the same columns, with T-shirt, company, group and check-in), <b>Participants</b> and <b>Staff</b>. The <b>CSV</b> files keep exactly the columns you uploaded, so they can be edited and uploaded again. Company and Group are always the last two columns.</p></div>
     <div class="panel adm"><h2>Upload participants or staff</h2><p class="note">Excel (.xlsx, .xls) or .csv. Column headers are read from the first row and matched to fields. Rows are matched by Registration ID, so uploading a newer export updates people without losing check-ins or groups. The Type column decides who is a participant, counselor or assistant coordinator.</p>
       <input type="file" id="impFile" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div id="impBox" style="margin-top:12px"></div></div>
     <div class="grid2"><div class="panel"><h2>Session settings</h2><form id="cfgForm" class="form">
@@ -2652,6 +2654,90 @@ async function readFile(file) {
   UI.imp = { name: file.name, rows, map: autoMap(rows[0]), mode: 'auto' };
   renderImport();
 }
+/* Export in the same layout as the upload: the original columns, in order, then Company and Group. */
+const PORTAL_HEADERS = ['First Name', 'Last Name', 'Preferred Name', 'Birthday', 'Gender', 'Phone', 'Email', 'Medical Information', 'T-shirt Size', 'Dietary Information', 'Contact 1 Name', 'Contact 1 Email', 'Contact 1 Phone', 'Contact 2 Name', 'Contact 2 Email', 'Contact 2 Phone', 'Age', 'Date', 'Status', 'Type', 'Stake - District Name', 'Ward - Branch Name', "Bishop's Email", "Bishop's Name", 'Registration ID'];
+const FORM_HEADERS = ['Timestamp', 'Enter your name and surname. eg Jane Dore', 'Enter your date birth . eg 11/12/2004', 'Your phone number', 'Your email', 'Ward/branch', 'T-shirt size', 'Gender', 'Food allergies', 'Type'];
+const SIZE_WORD = { XS: 'Extra Small', S: 'Small', M: 'Medium', L: 'Large', XL: 'XL', XXL: 'XXL', '3XL': '3XL' };
+const dmy = iso => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+function partValue(p, f) {
+  switch (f) {
+    case 'first': return p.first || ''; case 'last': return p.last || ''; case 'pref': return p.pref || ''; case 'fullname': return p.name || '';
+    case 'bday': return p.bday || ''; case 'gender': return p.gender || ''; case 'phone': return p.phone || ''; case 'email': return p.email || '';
+    case 'med': return p.med || ''; case 'diet': return p.diet || ''; case 'tshirt': return SIZE_WORD[p.tshirt] || p.tshirt || '';
+    case 'c1n': return p.c1n || ''; case 'c1e': return p.c1e || ''; case 'c1p': return p.c1p || ''; case 'c2n': return p.c2n || ''; case 'c2e': return p.c2e || ''; case 'c2p': return p.c2p || '';
+    case 'age': return p.ageCsv != null ? p.ageCsv : (p.age != null ? p.age : ''); case 'regDate': return p.regDate || ''; case 'status': return p.status || (p.src === 'walkin' ? 'WALK_IN' : '');
+    case 'type': return p.src === 'walkin' ? 'WALK-IN' : 'PARTICIPANT'; case 'stake': return p.stake || ''; case 'unit': return p.unit || '';
+    case 'bishopE': return p.bishopE || ''; case 'bishopN': return p.bishopN || ''; case 'regId': return /^X[a-z0-9]+$/.test(p.id) || p.src === 'walkin' ? '' : p.id;
+  }
+  return '';
+}
+function participantRows() {
+  const cols = S.config.partCols, headers = cols && cols.headers && cols.headers.length ? cols.headers : PORTAL_HEADERS;
+  const map = cols && cols.map ? cols.map : autoMap(headers);
+  const rows = [headers.concat(['Company', 'Group'])];
+  S.P.slice().sort((a, b) => (a.stake || '').localeCompare(b.stake || '') || (a.unit || '').localeCompare(b.unit || '') || a.name.localeCompare(b.name)).forEach(p => {
+    const r = headers.map((h, i) => { const f = map[i] || map[String(i)]; if (f === 'med' || f === 'diet') return partValue(p, f); if (Array.isArray(p.raw) && i < p.raw.length && p.raw[i] != null) return p.raw[i]; return f ? partValue(p, f) : ''; });
+    rows.push(r.concat([p.company ? 'Company ' + p.company.num : '', p.group ? 'G' + p.group.num : '']));
+  });
+  return rows;
+}
+function exportParticipants() { const rows = participantRows(); audit('settings', `Exported all ${rows.length - 1} participants`); exportCSV('fsy-participants-' + new Date().toISOString().slice(0, 10) + '.csv', rows); }
+function staffPlace(s) {
+  const G = Object.values(S.org.groups), C = S.org.companies;
+  if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? [g.companyId && C[g.companyId] ? 'Company ' + C[g.companyId].num : '', 'G' + g.num] : ['', '']; }
+  if (s.role === 'ac') { const c = Object.values(C).find(c => c.acId === s.id); return [c ? 'Company ' + c.num : '', '']; }
+  if (s.role === 'coordinator') return ['All companies', ''];
+  return ['', ''];
+}
+function staffValue(s, f) {
+  switch (f) {
+    case 'ts': return s.addedAt ? new Date(s.addedAt).toLocaleString('en-GB').replace(',', '') : '';
+    case 'name': return s.name || ''; case 'bday': return dmy(s.bday) || (s.ageCsv != null ? s.ageCsv : '');
+    case 'phone': return s.phone || ''; case 'email': return s.email || ''; case 'unit': return s.unitRaw || s.unit || ''; case 'stake': return s.stake || '';
+    case 'tshirt': return s.tshirt || ''; case 'gender': return s.gender === 'F' ? 'Female' : s.gender === 'M' ? 'Male' : '';
+    case 'diet': return s.diet || ''; case 'med': return s.med || ''; case 'role': return ({ ac: 'AC' })[s.role] || ROLES[s.role] || s.role || '';
+  }
+  return '';
+}
+function staffRows() {
+  const cols = S.staffCols, headers = cols && cols.headers && cols.headers.length ? cols.headers : FORM_HEADERS;
+  const map = cols && cols.map ? cols.map : sfMap(headers);
+  const fieldAt = i => map[i] || map[String(i)];
+  // the role always comes out up to date, even when the form said something else
+  const roleCol = headers.findIndex((h, i) => fieldAt(i) === 'role'); const hs = roleCol >= 0 ? headers : headers.concat(['Type']);
+  const rows = [hs.concat(['Company', 'Group'])];
+  S.staffList.filter(x => !x.test).slice().sort((a, b) => (ROLES[a.role] || '').localeCompare(ROLES[b.role] || '') || a.name.localeCompare(b.name)).forEach(x => {
+    const r = headers.map((h, i) => { const f = fieldAt(i); if (f === 'role' || f === 'name') return staffValue(x, f); if (Array.isArray(x.raw) && i < x.raw.length && x.raw[i] !== '') return x.raw[i]; return f ? staffValue(x, f) : ''; });
+    if (roleCol < 0) r.push(staffValue(x, 'role'));
+    rows.push(r.concat(staffPlace(x)));
+  });
+  return rows;
+}
+function exportStaff() { const rows = staffRows(); audit('staff', `Exported all ${rows.length - 1} staff`); exportCSV('fsy-staff-' + new Date().toISOString().slice(0, 10) + '.csv', rows); }
+/** Everyone in one list with the same columns: expected youth, walk-ins and staff. */
+function everyoneRows() {
+  const est = (S.tee && S.tee.perPerson) || {}, st = staffTee();
+  const rows = [['Name', 'Type', 'Gender', 'Age', 'Phone', 'Email', 'Ward/branch', 'Stake/district', 'T-shirt', 'Company', 'Group', 'Checked in']];
+  const yth = S.P.filter(p => isExpected(p) || p.src === 'walkin').sort((a, b) => a.name.localeCompare(b.name));
+  yth.forEach(p => rows.push([p.name, p.src === 'walkin' ? 'Walk-in' : 'Participant', p.gender === 'F' ? 'Female' : p.gender === 'M' ? 'Male' : '', p.age ?? '', p.phone || p.c1p || '', p.email || '', p.unit || '', p.stake || '', p.tshirt || (est[p.id] ? est[p.id] + ' (est.)' : ''), p.company ? 'Company ' + p.company.num : '', p.group ? 'G' + p.group.num : '', p.s === 'in' ? 'Yes' : p.s === 'out' ? 'Checked out' : 'No']));
+  S.staffList.filter(x => !x.test).sort((a, b) => (STAFF_ROLES.indexOf(a.role) - STAFF_ROLES.indexOf(b.role)) || a.name.localeCompare(b.name)).forEach(x => { const pl = staffPlace(x), a = staffAge(x, S.config);
+    rows.push([x.name, ROLES[x.role] || x.role, x.gender === 'F' ? 'Female' : x.gender === 'M' ? 'Male' : '', a ?? '', x.phone || '', x.email || '', x.unit || x.unitRaw || '', x.stake || '', x.tshirt || (st.perPerson[x.id] ? st.perPerson[x.id] + ' (est.)' : ''), pl[0], pl[1], '']); });
+  (S.config.otherRoles || []).filter(o => o && +o.count > 0).forEach(o => rows.push([`${o.name || 'Other'} (${+o.count} ${+o.count === 1 ? 'person' : 'people'})`, 'Other', '', '', '', '', '', '', '', '', '', '']));
+  return rows;
+}
+/** One Excel file: Everyone, Participants (upload layout) and Staff (form layout). */
+async function exportWorkbook() {
+  if (typeof XLSX === 'undefined' || !XLSX.utils) { toast('The spreadsheet tool did not load. Check your connection and reload.', true); return; }
+  const sheet = (rows, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws['!cols'] = rows[0].map((h, i) => ({ wch: widths ? widths[i] || 14 : Math.min(40, Math.max(10, String(h).length + 2, ...rows.slice(1, 200).map(r => String(r[i] == null ? '' : r[i]).length + 1))) })); if (rows.length > 1 && ws['!ref']) ws['!autofilter'] = { ref: ws['!ref'] }; return ws; };
+  const wb = XLSX.utils.book_new();
+  const ev = everyoneRows(), pr = participantRows(), sr = staffRows();
+  XLSX.utils.book_append_sheet(wb, sheet(ev, [28, 22, 8, 5, 14, 28, 22, 26, 12, 11, 7, 11]), 'Everyone');
+  XLSX.utils.book_append_sheet(wb, sheet(pr), 'Participants');
+  XLSX.utils.book_append_sheet(wb, sheet(sr), 'Staff');
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  audit('settings', `Exported everything to Excel: ${ev.length - 1} people, ${pr.length - 1} participant records, ${sr.length - 1} staff`);
+  try { await S.dl.save({ filename: 'fsy-everyone-' + new Date().toISOString().slice(0, 10) + '.xlsx', data: new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }) }); } catch (e) { if (e && e.code !== 'declined') toast('The file was not saved.', true); }
+}
 async function doImport() {
   const I = UI.imp; const rec = rowsToRecords(I.rows, I.map, I.mode, Date.now());
   I.busy = 'Saving…'; renderImport();
@@ -2660,7 +2746,7 @@ async function doImport() {
     const bs = Object.keys(byB); let n = 0;
     for (const b of bs) { const mx = S.medicalEx.has(b); S.medicalEx.add(b); await upd('medical/' + b, { p: medB[b] }, mx); const ex = S.rosterEx.has(b); S.rosterEx.add(b); await upd('roster/' + b, { p: byB[b] }, ex); n++; I.busy = `Saving ${n} of ${bs.length}…`; renderImport(); }
     if (rec.staff.length) { const s = {}; rec.staff.forEach(x => { if (!S.staff[x.id]) { x.addedAt = Date.now(); x.addedBy = S.meName || ''; } else if (S.staff[x.id].addedAt) x.addedAt = S.staff[x.id].addedAt; s[x.id] = x; }); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex); }
-    if (!S.configEx) await saveConfig({});
+    await saveConfig({ partCols: { headers: I.rows[0].map(h => String(h == null ? '' : h)), map: Object.fromEntries(Object.entries(I.map).map(([k, v]) => [String(k), v])) } });
     audit('settings', `Uploaded ${I.name}: ${rec.participants.length} participants and ${rec.staff.length} staff`);
     UI.imp = { done: `Imported ${rec.participants.length} participants and ${rec.staff.length} staff. Next: untick excluded areas below, then generate companies on the Companies & groups tab.` };
   } catch (e) { fail(e); I.busy = null; }
@@ -2830,6 +2916,9 @@ document.addEventListener('click', async e => {
     case 'rebalance': await runRebalance(); break;
     case 'renumber': await runRenumber(); break;
     case 'logClose': UI.genLog = null; render(); break;
+    case 'expAll': await exportWorkbook(); break;
+    case 'expPart': exportParticipants(); break;
+    case 'expStaff': exportStaff(); break;
     case 'chkGo': { UI.coQ = v; UI.band = ''; if (id) UI.open.add(id); const q = $('#coQ'); if (q) q.value = v; render(); const f = $('#coFind'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
     case 'regen': await runRegen(); break;
     case 'addCo': { const band = await new Promise(res => { openModal(`<div class="modal-head"><h2>Add a company</h2><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note">An empty company is created. Move groups into it with the Company picker inside each group, or press Rebalance to fill it automatically with a spare AC.</p><div class="btnrow"><button class="btn primary" id="aY">14–15 company</button><button class="btn primary" id="aO">16–18 company</button></div>`); $('#aY').onclick = () => { closeModal(); res('Y'); }; $('#aO').onclick = () => { closeModal(); res('O'); }; }); if (!band) break; const cid = rid('c'); const num = Math.max(0, ...Object.values(S.org.companies).map(c => c.num)) + 1; await patchOrg({ companies: { [cid]: { id: cid, band, acId: null, coordId: null, num } } }); toast('Company ' + num + ' added'); break; }
