@@ -1,3 +1,12 @@
+/* FSY Kenya 2nd 2026 Check-in — 2026 youth theme "Walk with Me"
+   Palette (2026 Theme Style Guide, page 6):
+     Blue 50  #002846   Blue 35 #005175   Blue 25 #007DA5   Blue 5–78% #C4E9F5
+     Yellow 15–82% #FCB449   Green 20–78% #8DBF67   Green 20–42% #BED7A7
+     Background: Green 20 – 6% tint #F6FAF4, always (the page opts out of dark mode)
+   Layout: phone first. App bar with the theme mark, a bright page banner,
+   a search bar that stays put, big tap targets and a bottom tab bar.
+   Wider screens get top tabs and multi-column cards.
+*/
 :root{
   --blue50:#002846; --blue35:#005175; --blue25:#007da5; --blue5:#c4e9f5; --blue5t:#eaf6fa;
   --yellow:#fcb449; --green:#8dbf67; --green42:#bed7a7; --green6:#f6faf4;
@@ -656,6 +665,7 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 #coFind{scroll-margin-top:110px}
 .callout.official{border-left:5px solid var(--green,#8dbf67);background:var(--surface2);margin-bottom:10px}
 
+/* liquid glass press on banner buttons: a soft lens of light follows the finger, the glass bends and a ripple spreads */
 .pagehead .btn,.hero .btn{position:relative;overflow:hidden;isolation:isolate;transition:transform .35s cubic-bezier(.2,1.4,.4,1),background .25s,border-color .25s,box-shadow .35s,backdrop-filter .35s}
 .pagehead .btn::before,.hero .btn::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:-1;opacity:0;transition:opacity .4s;
   background:radial-gradient(120px circle at var(--lx,50%) var(--ly,50%),rgba(255,255,255,.55),rgba(255,255,255,.12) 45%,transparent 70%),linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 55%)}
@@ -667,3 +677,26 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 .pagehead .btn.lq::after,.hero .btn.lq::after{animation:lqRipple .7s cubic-bezier(.2,.7,.3,1) forwards}
 @keyframes lqRipple{0%{opacity:.9;transform:scale(0)}60%{opacity:.35}100%{opacity:0;transform:scale(28)}}
 @media (prefers-reduced-motion:reduce){.pagehead .btn.lq::after,.hero .btn.lq::after{animation:none}.pagehead .btn:active,.hero .btn:active{transform:none}}
+
+/* small "Numbers locked" badge inside the Renumber button */
+.lockbadge{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:2px 8px 2px 6px;border-radius:999px;font-size:.72em;font-weight:700;letter-spacing:.02em;background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.45);vertical-align:middle}
+.lockbadge[hidden]{display:none}
+.lockbadge svg{width:12px;height:12px}
+
+/* (i) information button in the banner, and the card it opens */
+.ibtn{flex:none;width:44px;height:44px;border-radius:50%;display:inline-grid;place-items:center;cursor:pointer;padding:0;
+  font:italic 700 20px/1 Georgia,'Times New Roman',serif;color:#fff;background:rgba(255,255,255,.14);border:1.5px solid rgba(255,255,255,.6);
+  -webkit-backdrop-filter:blur(8px) saturate(150%);backdrop-filter:blur(8px) saturate(150%);box-shadow:inset 0 1px 0 rgba(255,255,255,.45),0 2px 10px rgba(0,40,70,.15);
+  transition:transform .3s cubic-bezier(.2,1.4,.4,1),background .2s,color .2s,box-shadow .2s}
+.ibtn:hover{background:rgba(255,255,255,.26);transform:scale(1.06)}
+.ibtn:active{transform:scale(.92)}
+.ibtn:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.ibtn.on{background:#fff;color:#004a7c;box-shadow:0 0 0 4px rgba(255,255,255,.25),0 4px 14px rgba(0,40,70,.25)}
+.ibtn span{transform:translateY(1px)}
+.infocard{position:relative;margin:0 0 16px;padding:16px 48px 14px 18px;border-radius:16px;background:var(--card,#fff);border:1px solid rgba(0,74,124,.18);border-left:4px solid var(--yellow,#fcb449);box-shadow:0 8px 24px rgba(0,40,70,.08);animation:infoIn .28s cubic-bezier(.2,1,.4,1)}
+.infocard>b{display:block;font-size:1.05rem;margin-bottom:6px}
+.infocard h4{margin:10px 0 2px;font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted,#5b6b7b)}
+.infocard ul{margin:4px 0 0;padding-left:20px}
+.infocard li{margin:3px 0;line-height:1.45}
+@keyframes infoIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.infocard{animation:none}.ibtn{transition:none}}

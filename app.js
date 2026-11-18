@@ -1,3 +1,5 @@
+/* FSY Kenya 2nd 2026 Check-in. Firebase settings and owner emails live in config.js. */
+/* Firebase layer: the small database/user/download interface the app uses */
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
@@ -47,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18j · liquid glass buttons';
+const APP_VERSION = '2026-11-18n · account role wins for linked staff';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -482,16 +484,20 @@ function intakeRecords(res, choices, role, existing) {
     let stake = u.stake, unit = u.unit;
     if (ch) { const i = ch.indexOf('|'); stake = ch.slice(0, i); unit = ch.slice(i + 1); }
     else if (!unit) unit = titleCase(p.unitRaw);
-    const r = role === 'column' ? (p.role && STAFF_ROLES.includes(p.role) ? p.role : 'counselor') : role;
     const old = ex.find(s => samePerson(s, p));
+    /* a role written in the Type column wins; otherwise someone already on the list keeps their role,
+       so a counselors-only file or a blank Type never turns an AC or coordinator into a counselor */
+    const typed = role === 'column' && p.role && STAFF_ROLES.includes(p.role);
+    const r = typed ? p.role : (old && old.role ? old.role : (role === 'column' ? 'counselor' : role));
+    const kept = !typed && old && old.role && old.role !== (role === 'column' ? 'counselor' : role);
     out.push(Object.assign({}, old ? Object.assign({}, old) : {}, {
       id: old ? old.id : 'S' + fnv((p.email || p.toks.join(' ') + p.bday)).toString(36),
       name: p.name, gender: p.gender || (old && old.gender) || '', bday: p.bday || (old && old.bday) || '', ageCsv: p.bday ? null : (old ? old.ageCsv ?? null : null), role: r,
       raw: p.raw || (old && old.raw) || null, addedAt: (old && old.addedAt) || Date.now(), addedBy: (old && old.addedBy) || (typeof S !== 'undefined' && S.meName) || '',
       phone: p.phone || (old && old.phone) || '', email: p.email || (old && old.email) || '', unit, stake, unitRaw: p.unitRaw, tshirt: p.tshirt || (old && old.tshirt) || '', diet: p.diet, med: p.med || '', src: 'form', test: false
     }));
-    for (const k of ['toks', 'phoneOk', 'uc', 'isUpdate']) delete out[out.length - 1][k];
-    out[out.length - 1].isUpdate = !!old;
+    for (const k of ['toks', 'phoneOk', 'uc', 'isUpdate', 'keptRole']) delete out[out.length - 1][k];
+    out[out.length - 1].isUpdate = !!old; if (kept) out[out.length - 1].keptRole = true;
   }
   return out;
 }
@@ -1224,6 +1230,17 @@ async function runAdminSync() {
   await syncAccountStaff();
   // 5. link accounts to staff records whose email matches (or, failing that, the same name and role)
   await autoLinkStaff();
+  // 6. the role chosen on the Accounts page wins over the role in the staff record it is linked to
+  await syncLinkedRoles();
+}
+const PICK_ROLES = ['counselor', 'ac', 'coordinator'];
+async function syncLinkedRoles() {
+  if (!(S.isOwner || ['regadmin', 'sdc', 'seventy', 'loghead'].includes(realRole())) || !S.loaded.inv || !S.loaded.staff) return;
+  for (const h in S.invites) {
+    const v = S.invites[h]; if (!v || !PICK_ROLES.includes(v.role) || !invHere(v) || !v.staffId) continue;
+    const st = S.staff[v.staffId]; if (!st || st.role === v.role || !PICK_ROLES.includes(st.role)) continue;
+    await saveStaffRec(Object.assign({}, st, { role: v.role, roleFrom: 'account' }));
+  }
 }
 const ACCOUNT_STAFF_ROLES = ['logistics', 'sdc', 'wellness'];
 const LINK_ROLES = ['counselor', 'ac', 'coordinator', 'sdc', 'logistics', 'wellness'];
@@ -1854,6 +1871,10 @@ function checksList(w) {
   }).join('')}</ul>`;
 }
 
+/* info button: a small (i) in the banner opens a short explanation card under it */
+function infoBtn(key, label) { return `<button class="ibtn" type="button" data-act="info" data-v="${key}" aria-expanded="false" aria-controls="info-${key}" title="${esc(label || 'More information')}" aria-label="${esc(label || 'More information')}"><span aria-hidden="true">i</span></button>`; }
+function infoCard(key, title, html) { return `<div class="infocard" id="info-${key}" hidden><button class="x log-x" data-act="info" data-v="${key}" aria-label="Close">×</button><b>${title}</b>${html}</div>`; }
+
 /* page: companies */
 PAGE_IMPL.companies = {
   frame() {
@@ -1861,7 +1882,7 @@ PAGE_IMPL.companies = {
     if (!UI.coMineSet && ['counselor', 'ac'].includes(role())) { UI.coMineSet = true; UI.band = 'mine'; if (role() === 'counselor') myGroups().forEach(g => UI.open.add(g.id)); }
     const adm = can.orgEdit();
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${gsize(S.config, 'F') === gsize(S.config, 'M') ? esc(gsize(S.config, 'F')) : `${gsize(S.config, 'F')} young women or ${gsize(S.config, 'M')} young men`} share a gender and age group, each led by a counselor of the same gender. Companies keep 14–15 and 16–18 apart and mix young men and young women.</p></div>
-    <div class="btnrow">${can.lockRegen() ? (S.config.regenLock ? '<button class="btn" data-act="regenLock" data-v="off">Unlock companies</button>' : '<button class="btn" data-act="regenLock" data-v="on">Mark companies official</button>') : ''}${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber">Renumber groups by company</button>${S.config.regenLock ? '' : '<button class="btn" data-act="regen">Regenerate all</button>'}<button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
+    <div class="btnrow">${can.lockRegen() ? (S.config.regenLock ? '<button class="btn" data-act="regenLock" data-v="off">Unlock companies</button>' : '<button class="btn" data-act="regenLock" data-v="on">Mark companies official</button>') : ''}${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber" id="rnBtn">Renumber groups by company<span class="lockbadge" id="rnLock" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V7a3 3 0 0 0-6 0z" fill="currentColor"/></svg>Numbers locked</span></button>${S.config.regenLock ? '' : '<button class="btn" data-act="regen">Regenerate all</button>'}<button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     ${adm ? foldSec('co-sizes', 'Group sizes', 'coSizeN', '', '<div id="coSizes"></div>') : ''}
     <div id="coLog"></div><div class="co-top"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
     <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '14–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
@@ -1870,7 +1891,8 @@ PAGE_IMPL.companies = {
   },
   update() {
     const G = S.org.groups, C = S.org.companies, adm = can.orgEdit();
-    $('#coLog').innerHTML = (S.config.regenLock ? `<div class="callout official"><b>Companies are official.</b> ${esc(S.config.regenLock.by || 'The Session Directing Couple')} locked them on ${esc(fmtWhen(S.config.regenLock.at))}. Regenerate all and Undo all groups are switched off; use <b>Rebalance</b> for any changes.${can.lockRegen() ? ' Press <b>Unlock companies</b> to allow regenerating again.' : ' Only the registration admin or the Session Directing Couple can unlock them.'}</div>` : '') + (S.orgLock && adm ? `<p class="note lockline">Group numbers are locked${S.orgLock.at ? ' since ' + esc(fmtWhen(S.orgLock.at)) : ''}. Rebalance keeps them; new groups take free numbers first.</p>` : '') + (UI.genLog ? `<div class="log"><button class="x log-x" data-act="logClose" aria-label="Dismiss">×</button><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '');
+    { const rb = $('#rnBtn'), rl = $('#rnLock'); if (rb && rl) { rl.hidden = !S.orgLock; rb.title = S.orgLock ? `Group numbers are locked${S.orgLock.at ? ' since ' + fmtWhen(S.orgLock.at) : ''}. Rebalance keeps them; new groups take free numbers first. Renumber again to tidy the numbers.` : 'Give each company its own run of group numbers and lock them'; } }
+    $('#coLog').innerHTML = (S.config.regenLock ? `<div class="callout official"><b>Companies are official.</b> ${esc(S.config.regenLock.by || 'The Session Directing Couple')} locked them on ${esc(fmtWhen(S.config.regenLock.at))}. Regenerate all and Undo all groups are switched off; use <b>Rebalance</b> for any changes.${can.lockRegen() ? ' Press <b>Unlock companies</b> to allow regenerating again.' : ' Only the registration admin or the Session Directing Couple can unlock them.'}</div>` : '') + (UI.genLog ? `<div class="log"><button class="x log-x" data-act="logClose" aria-label="Dismiss">×</button><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '');
     const by = r => S.staffList.filter(s => s.role === r);
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
     const acs = by('ac'), acUsed = new Set(Object.values(C).map(c => c.acId));
@@ -2228,10 +2250,10 @@ PAGE_IMPL.wellness = {
 PAGE_IMPL.staff = {
   frame() {
     const real = S.staffList.filter(s => !s.test && !s.fromAccount).length;
-    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 14–15 groups first, 23 and over to 16–18. Import the staff sign-up form below or add people one at a time.</p></div><div class="btnrow">${can.staff() ? '<button class="btn adm" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm" data-act="stAdd">+ Add staff member</button></div></section>
-    ${can.staff() ? `<section class="panel adm" id="sfPanel"><div class="panel-head"><h2>Import staff</h2><label class="btn primary" for="sfFile">Choose a file to import</label></div>
-      <p class="note" style="margin-top:-4px">Excel or .csv, such as the Google Form responses for counselors, ACs and coordinators. A Type column (AC, Counselor or Coordinator) sets each person's role. Blank rows are skipped, people who sent the form more than once are merged, and each ward or branch is matched to its stake or district. You can import again at any time: people already on the list are updated, not added twice.</p>
-      <input type="file" id="sfFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div id="sfBox"></div></section>` : ''}
+    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 14–15 groups first, 23 and over to 16–18. Import the staff sign-up form or add people one at a time.</p></div><div class="btnrow">${can.staff() ? '<button class="btn adm" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm" data-act="stAdd">+ Add staff member</button>${can.staff() ? infoBtn('sf', 'About importing staff') : ''}</div></section>
+    ${can.staff() ? infoCard('sf', 'Importing staff', `<ul><li>Pick an Excel or .csv file, such as the Google Form responses for counselors, ACs and coordinators.</li><li>A <b>Type</b> column (AC, Counselor or Coordinator) sets each person's role.</li><li>Blank rows are skipped and people who sent the form more than once are merged.</li><li>Each ward or branch is matched to its stake or district. You confirm any it can't place.</li><li>Import again any time: people already on the list are updated, not added twice.</li></ul>`) : ''}
+    ${can.staff() ? `<input type="file" id="sfFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><section class="panel adm" id="sfPanel" hidden><div class="panel-head"><h2>Import staff</h2><label class="btn small" for="sfFile">Choose another file</label></div>
+      <div id="sfBox"></div></section>` : ''}
     <div id="stK" class="kpis"></div>
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
     <section class="panel"><div class="panel-head"><h2>Staff list</h2><button class="btn small primary adm" data-act="stAdd">+ Add</button></div><input id="stQ" type="search" placeholder="Search staff by name, phone, email, ward or stake" autocomplete="off" value="${esc(UI.stQ || '')}" style="width:100%;margin-bottom:10px"><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stView" class="stview"></div><div id="stList"></div></section>
@@ -2306,9 +2328,10 @@ function sfDirOpts(dir, sel) {
   return Object.keys(by).sort().map(st => `<optgroup label="${esc(st)}">${by[st].sort((a, b) => a.unit.localeCompare(b.unit)).map(e => opt(e.key, e.unit, e.key === sel)).join('')}</optgroup>`).join('');
 }
 function renderSf() {
-  const box = $('#sfBox'); if (!box) return; const F = UI.sf;
+  const box = $('#sfBox'); if (!box) return; const F = UI.sf; const pnl = $('#sfPanel');
+  if (pnl) { const was = pnl.hidden; pnl.hidden = !F; if (was && F && !F.done) pnl.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   if (!F) { box.innerHTML = ''; return; }
-  if (F.done) { box.innerHTML = `<div class="callout info" style="margin-top:10px">${F.done}</div>`; return; }
+  if (F.done) { box.innerHTML = `<div class="log"><button class="x log-x" data-act="sfCancel" aria-label="Dismiss">×</button>${F.done}</div>`; return; }
   const R = F.res, recs = intakeRecords(R, F.choices, F.role, S.staffList.filter(s => !s.fromAccount && !s.test));
   const merged = R.subs - R.people.length, upd8 = recs.filter(r => r.isUpdate).length;
   const need = u => !F.choices[u.k] && (u.status === 'choose' || u.status === 'unknown');
@@ -2327,8 +2350,8 @@ function renderSf() {
   const issues = R.people.filter(p => p.issues.length), dups = R.people.filter(p => p.subs > 1), diets = R.people.filter(p => p.diet);
   box.innerHTML = `<div class="inline" style="margin-bottom:10px;flex-wrap:wrap"><b>${esc(F.name)}</b>
     <label class="inline">Everyone in this file is <select id="sfRole">${['counselor', 'ac', 'coordinator'].map(r => opt(r, 'a ' + ROLES[r].toLowerCase(), F.role === r)).join('')}${F.hasRole ? opt('column', `as given in the ${F.roleCol || 'Type'} column`, F.role === 'column') : ''}</select></label></div>
-    <div class="kpis sf-k"><div class="kpi"><span>Responses</span><b>${R.subs}</b></div><div class="kpi"><span>People</span><b>${R.people.length}</b></div><div class="kpi"><span>Duplicates merged</span><b>${merged}</b></div><div class="kpi"><span>Already on staff list</span><b>${upd8}</b></div></div>
-    ${F.role === 'column' ? `<p class="note"><b>By type:</b> ${['counselor', 'ac', 'coordinator'].map(r => `${recs.filter(x => x.role === r).length} ${esc(ROLES[r].toLowerCase())}s`).join(', ')}${R.people.filter(p => !p.role).length ? ` · <span class="chip warn">${R.people.filter(p => !p.role).length} with no type, imported as counselors</span>` : ''}</p>` : ''}
+    <div class="kpis sf-k"><div class="kpi"><span>Responses</span><b>${R.subs}</b></div><div class="kpi"><span>People</span><b>${R.people.length}</b></div><div class="kpi"><span>Duplicates merged</span><b>${merged}</b></div><div class="kpi"><span>Already on staff list</span><b>${upd8}</b></div></div>${recs.some(r => r.keptRole) ? `<p class="note"><b>${nn(recs.filter(r => r.keptRole).length, 'person keeps', 'people keep')} their current role</b> (AC, coordinator or other) because this file doesn't give them a different one in a Type column.</p>` : ''}
+    ${F.role === 'column' ? `<p class="note"><b>By type:</b> ${['counselor', 'ac', 'coordinator'].map(r => { const n = recs.filter(x => x.role === r).length, w = ROLES[r].toLowerCase(); return `${n} ${esc(n === 1 ? w : w + 's')}`; }).join(', ')}${R.people.filter(p => !p.role).length ? ` · <span class="chip warn">${R.people.filter(p => !p.role).length} with no type, imported as counselors</span>` : ''}</p>` : ''}
     <p class="note">${R.blank ? `${R.blank} blank row${R.blank === 1 ? '' : 's'} skipped. ` : ''}Phone numbers are written as 07… or 01…, names are capitalised and "None", "N/A" and similar food answers are cleared.</p>
     <h3 style="margin:14px 0 6px">Wards and branches</h3>
     ${nNeed ? `<div class="callout" style="margin-bottom:8px">${nNeed} ${nNeed === 1 ? 'person needs' : 'people need'} a ward or branch chosen below. Choices are remembered for the next upload.</div>` : '<p class="note">Every ward and branch is matched. Check the spelling fixes, then import.</p>'}
@@ -2346,7 +2369,7 @@ async function sfImport() {
   const nUpd = recs.filter(r => r.isUpdate).length;
   F.busy = 'Saving…'; renderSf();
   try {
-    const s = {}; recs.forEach(r => { const x = Object.assign({}, r); delete x.isUpdate; s[x.id] = x; });
+    const s = {}; recs.forEach(r => { const x = Object.assign({}, r); delete x.isUpdate; delete x.keptRole; s[x.id] = x; });
     S.staff = Object.assign({}, S.staff, s); const ex = S.staffEx; S.staffEx = true;
     await upd('staff/all', { s, cols: { headers: F.rows[0].map(h => String(h == null ? '' : h)), map: Object.fromEntries(Object.entries(F.map).map(([k, v]) => [String(k), v])) } }, ex);
     const al = Object.assign({}, S.config.unitAliases || {}); let n = 0;
@@ -2610,10 +2633,9 @@ async function moveParticipants(list, target, opts) {
 /* page: data */
 PAGE_IMPL.data = {
   frame() {
-    return `<section class="pagehead"><div><h1>Data & areas</h1><p class="note" style="margin:4px 0 0">Upload the FSY portal export, choose which stakes and units belong to this session, and clean up problem records.</p></div></section>
-    <div class="panel"><div class="panel-head"><h2>Export</h2><div class="btnrow"><button class="btn primary" data-act="expAll">Export everything (Excel)</button><button class="btn" data-act="expPart">Participants (CSV)</button><button class="btn" data-act="expStaff">Staff (CSV)</button></div></div><p class="note" style="margin:-4px 0 0"><b>Excel</b> has three tabs: <b>Everyone</b> (youth, walk-ins and staff in the same columns, with T-shirt, company, group and check-in), <b>Participants</b> and <b>Staff</b>. The <b>CSV</b> files keep exactly the columns you uploaded, so they can be edited and uploaded again. Company and Group are always the last two columns.</p></div>
-    <div class="panel adm"><h2>Upload participants or staff</h2><p class="note">Excel (.xlsx, .xls) or .csv. Column headers are read from the first row and matched to fields. Rows are matched by Registration ID, so uploading a newer export updates people without losing check-ins or groups. The Type column decides who is a participant, counselor or assistant coordinator.</p>
-      <input type="file" id="impFile" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div id="impBox" style="margin-top:12px"></div></div>
+    return `<section class="pagehead"><div><h1>Data & areas</h1><p class="note" style="margin:4px 0 0">Upload the FSY portal export, choose which stakes and units belong to this session, and clean up problem records.</p></div><div class="btnrow">${can.admin() ? '<button class="btn primary adm" data-act="impPick">Upload participants or staff</button>' : ''}<button class="btn" data-act="expAll">Export everything (Excel)</button><button class="btn" data-act="expPart">Participants (CSV)</button><button class="btn" data-act="expStaff">Staff (CSV)</button>${infoBtn('data', 'About uploading and exporting')}</div></section>
+    ${infoCard('data', 'Uploading and exporting', `<h4>Upload</h4><ul><li>Excel (.xlsx, .xls) or .csv. Column headers are read from the first row and matched to fields; you can adjust the matches before saving.</li><li>Rows are matched by <b>Registration ID</b>, so a newer export updates people without losing check-ins or groups.</li><li>The <b>Type</b> column decides who is a participant, counselor or assistant coordinator.</li></ul><h4>Export</h4><ul><li><b>Excel</b> has three tabs: <b>Everyone</b> (youth, walk-ins and staff in the same columns, with T-shirt, company, group and check-in), <b>Participants</b> and <b>Staff</b>.</li><li>The <b>CSV</b> files keep exactly the columns you uploaded, so they can be edited and uploaded again. Company and Group are always the last two columns.</li></ul>`)}
+    <input type="file" id="impFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><div class="panel adm" id="impPanel" hidden><div class="panel-head"><h2>Upload participants or staff</h2><label class="btn small" for="impFile">Choose another file</label></div><div id="impBox"></div></div>
     <div class="grid2"><div class="panel"><h2>Session settings</h2><form id="cfgForm" class="form">
       <label class="span2">Session name<input id="cfName" value="${esc(S.config.sessionName)}"></label>
       <label>First day of session<input id="cfStart" type="date" value="${esc(S.config.sessionStart || '')}"></label>
@@ -2645,9 +2667,10 @@ PAGE_IMPL.data = {
   }
 };
 function renderImport() {
-  const box = $('#impBox'); if (!box) return; const I = UI.imp;
+  const box = $('#impBox'); if (!box) return; const I = UI.imp; const pnl = $('#impPanel');
+  if (pnl) { const was = pnl.hidden; pnl.hidden = !I; if (was && I && !I.done) pnl.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   if (!I) { box.innerHTML = ''; return; }
-  if (I.done) { box.innerHTML = `<div class="callout info">${esc(I.done)}</div>`; return; }
+  if (I.done) { box.innerHTML = `<div class="log"><button class="x log-x" data-act="impCancel" aria-label="Dismiss">×</button>${esc(I.done)}</div>`; return; }
   const fieldOpts = sel => opt('', '— Ignore') + FIELDS.map(([k, l]) => opt(k, l, k === sel)).join('');
   const rec = rowsToRecords(I.rows, I.map, I.mode, Date.now());
   const byRole = {}; rec.staff.forEach(s => byRole[s.role] = (byRole[s.role] || 0) + 1);
@@ -2935,6 +2958,7 @@ document.addEventListener('click', async e => {
     case 'rebalance': await runRebalance(); break;
     case 'renumber': await runRenumber(); break;
     case 'logClose': UI.genLog = null; render(); break;
+    case 'info': { const c = $('#info-' + v); if (!c) break; c.hidden = !c.hidden; document.querySelectorAll(`.ibtn[data-v="${v}"]`).forEach(b => { b.setAttribute('aria-expanded', String(!c.hidden)); b.classList.toggle('on', !c.hidden); }); if (!c.hidden) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); break; }
     case 'hcReset': await resetHeadcounts(v); break;
     case 'expAll': await exportWorkbook(); break;
     case 'expPart': exportParticipants(); break;
@@ -3023,7 +3047,7 @@ document.addEventListener('click', async e => {
     case 'stPdf': printStaffList(UI.staffTab, v || ''); break;
     case 'sfGo': await sfImport(); break;
     case 'sfCancel': { UI.sf = null; const f = $('#sfFile'); if (f) f.value = ''; renderSf(); break; }
-    case 'sfPick': { const f = $('#sfFile'); if (f) { f.value = ''; $('#sfPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); f.click(); } break; }
+    case 'sfPick': { const f = $('#sfFile'); if (f) { f.value = ''; f.click(); } break; }
     case 'sfNewCancel': UI.sf.adding = null; renderSf(); break;
     case 'sfNewSave': { const st = clean(($('#sfNewStake') || {}).value), un = sfName(($('#sfNewUnit') || {}).value || ''); if (!st || !un) { toast('Type both the stake or district and the ward or branch', true); break; } UI.sf.choices[v] = st + '|' + un; UI.sf.adding = null; sfRun(); renderSf(); break; }
     case 'stEdit': if (can.staff()) openStaffForm(id); break;
@@ -3031,6 +3055,7 @@ document.addEventListener('click', async e => {
     case 'exCsv': { const L = PAGE_IMPL.exceptions.lists(); const rows = [['Type', 'Name', 'Age', 'Gender', 'Ward/branch', 'Stake', 'Status', 'Group']]; [['Walk-in', L.walk], ['Not on approved list', L.off], ['Checked in, no group', L.nog]].forEach(([t, list]) => list.forEach(p => rows.push([t, p.name, p.age ?? '', p.gender, p.unit, p.stake, p.s || 'not arrived', p.group ? 'G' + p.group.num : '']))); exportCSV('fsy-walkins-exceptions.csv', rows); break; }
     case 'stDel': { const st = S.staffMap[id]; if (st && st.fromAccount) { toast('This person comes from Accounts. Delete or change their account there.', true); break; } if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; audit('staff', `Deleted staff member ${st.name}`, id); const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
     case 'impGo': await doImport(); break;
+    case 'impPick': { const f = $('#impFile'); if (f) { f.value = ''; f.click(); } break; }
     case 'impCancel': UI.imp = null; renderImport(); const f = $('#impFile'); if (f) f.value = ''; break;
     case 'reqDel': audit('accounts', `Dismissed the sign-in request from ${(S.requests[id] || {}).name || (S.requests[id] || {}).email || 'someone'}`); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(fail); break;
     case 'invDel': { const v = S.invites[id]; if (!await confirmBox(`Delete ${v.name}'s account?`, 'They lose access to the app straight away. Their check-ins stay.', 'Delete account', true)) break; audit('accounts', `Deleted the account of ${v.name} (${id})`, id); await serial('invites/' + id, () => S.db.doc('invites/' + id).delete()).catch(fail); toast('Account deleted'); break; }
