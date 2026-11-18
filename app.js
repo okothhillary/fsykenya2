@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18e · export everything to Excel';
+const APP_VERSION = '2026-11-18g · walk-in form tidy';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1994,7 +1994,7 @@ PAGE_IMPL.exceptions = {
       <label>T-shirt size<select id="wkSize">${opt('', 'Not given')}${SIZES.map(s => opt(s, SIZE_LABEL[s])).join('')}</select></label>
       <label>Phone<input id="wkPhone" inputmode="tel"></label><label>Parent / guardian<input id="wkC1"></label><label>Guardian phone<input id="wkC1p" inputmode="tel"></label>
       <label class="span2">Medical information<input id="wkMed" placeholder="Leave blank if none"></label><label class="span2">Dietary information<input id="wkDiet" placeholder="Leave blank if none"></label>
-      <label class="inline" style="flex-direction:row;color:var(--ink)"><input type="checkbox" id="wkIn" checked> Check in now</label>
+      <label class="chkrow" style="grid-column:1/-1"><input type="checkbox" id="wkIn" checked> Check in now</label>
       <div class="span2"><button class="btn go" type="submit" style="width:100%">Add walk-in</button></div>
     </form><datalist id="dlStakes">${stakes.map(s => `<option value="${esc(s)}">`).join('')}</datalist><datalist id="dlUnits">${units.map(s => `<option value="${esc(s)}">`).join('')}</datalist></details>` : ''}
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="exCsv">Export CSV</button></div><div id="exTally"></div></section>
@@ -2413,10 +2413,15 @@ PAGE_IMPL.headcount = {
     const r = role(), scope = r === 'counselor' ? 'Your group' : r === 'ac' ? 'Your company' : 'Whole session · live' + (hcViewOnly() ? ' · view only' : '');
     return `<section class="pagehead"><div><p class="th">Headcount · ${scope}</p><h1 id="hcTitle">Tonight's headcount</h1><p class="note">${r === 'counselor' ? 'Before bed, mark each youth in your group present or missing, then submit to your assistant coordinator.' : r === 'ac' ? 'Your counselors report their groups here. Check your groups, then submit any group yourself to your coordinator if needed. Missing youth and groups that have not reported are highlighted.' : r === 'coordinator' ? 'Every company, live as counselors and ACs report. Check the night, then report to the Session Directing Couple.' : 'Every group, company and missing youth for the night, updating live as counselors, ACs and coordinators report.'}</p></div>${['regadmin', 'sdc', 'seventy', 'coordinator', 'logistics'].includes(r) ? '<button class="btn" data-act="hcCsv">Export night</button>' : ''}</section>
     <div class="segscroll"><div class="chips" id="hcDays"></div></div>
-    <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>`;
+    <div id="hcBody" style="display:flex;flex-direction:column;gap:14px"></div>
+    ${can.admin() ? `<details class="panel danger-zone hc-reset" id="hcReset"><summary><h2 style="display:inline">Reset headcounts</h2> <span class="chip bad">Can't be undone</span></summary>
+      <p class="note">Removes saved headcount reports so counselors can report again from scratch. Check-ins, groups and participants are not touched. Use this after a practice run.</p>
+      <div class="dz-list"><div class="dz"><div><b id="hcResetNightT">Reset this night</b><small class="muted" id="hcResetNightN"></small></div><button class="btn danger" data-act="hcReset" data-v="night">Reset this night</button></div>
+      <div class="dz"><div><b>Reset every night</b><small class="muted" id="hcResetAllN"></small></div><button class="btn danger" data-act="hcReset" data-v="all">Reset all nights</button></div></div></details>` : ''}`;
   },
   update() {
     const day = hcDay(), tonight = nightOf(), r = role();
+    if ($('#hcReset')) { const dn = Object.values(S.hc || {}).filter(x => x && x.date === day).length, an = Object.keys(S.hc || {}).length; $('#hcResetNightT').textContent = 'Reset ' + nightLabel(day, true); $('#hcResetNightN').textContent = `${nn(dn, 'group report')} saved for this night`; $('#hcResetAllN').textContent = `${nn(an, 'group report')} saved across all nights`; }
     $('#hcTitle').textContent = (day === tonight ? 'Tonight · ' : '') + nightLabel(day, true);
     const groups = hcScopeGroups();
     $('#hcDays').innerHTML = hcNights().map(d => { const st = groups.map(g => hcGroup(g, d)).filter(x => x.expected); const done = st.length && st.every(x => x.submitted); const any = st.some(x => x.submitted); const n = st.filter(x => x.submitted).length; return `<button data-act="hcDay" data-v="${d}" aria-pressed="${d === day}">${nightLabel(d)}${d === tonight ? ' · tonight' : ''}${done ? ' ✓' : any ? ` · ${n}/${st.length}` : ''}</button>`; }).join('');
@@ -2461,6 +2466,17 @@ function hcOverview(groups, day) {
   return h;
 }
 let hcNoteT = {};
+async function resetHeadcounts(which) {
+  if (!can.admin()) return;
+  const day = hcDay(), ids = Object.keys(S.hc || {}).filter(id => which === 'all' || (S.hc[id] && S.hc[id].date === day));
+  if (!ids.length) { toast('There are no saved headcounts to reset.'); return; }
+  const what = which === 'all' ? 'every night' : nightLabel(day, true);
+  if (!await confirmTyped(`Reset headcounts for ${what}?`, `${nn(ids.length, 'group report')} will be deleted, including missing-youth marks and notes. Counselors can then report again. Check-ins and groups stay as they are.`, 'RESET', 'Reset headcounts')) return;
+  let done = 0; for (const id of ids) { try { await serial('headcount/' + id, () => S.db.doc('headcount/' + id).delete()); done++; } catch (e) { console.error(e); } }
+  const h = Object.assign({}, S.hc); ids.forEach(id => delete h[id]); S.hc = h;
+  audit('headcount', `Reset headcounts for ${what}: ${nn(done, 'group report')} deleted`);
+  toast(`Headcounts reset for ${what}`); render();
+}
 async function hcWrite(gid, patch, submit) {
   const day = hcDay(), id = day + '_' + gid, g = S.org.groups[gid]; if (!g) return;
   const base = { date: day, groupId: gid, groupNum: g.num, companyId: g.companyId || null, counselorId: g.counselorId || null, by: S.uid, byName: S.meName || S.email || '', byRole: role(), byStaff: myStaffId() || null, updatedAt: Date.now() };
@@ -2916,6 +2932,7 @@ document.addEventListener('click', async e => {
     case 'rebalance': await runRebalance(); break;
     case 'renumber': await runRenumber(); break;
     case 'logClose': UI.genLog = null; render(); break;
+    case 'hcReset': await resetHeadcounts(v); break;
     case 'expAll': await exportWorkbook(); break;
     case 'expPart': exportParticipants(); break;
     case 'expStaff': exportStaff(); break;
