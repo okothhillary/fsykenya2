@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18g · walk-in form tidy';
+const APP_VERSION = '2026-11-18h · logistics can search staff; new staff need contact details';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1440,7 +1440,7 @@ function render() {
 function lockReadOnly(pg) {
   const m = $('#main');
   m.querySelectorAll('.adm,.adm-hc').forEach(el => el.hidden = true);
-  if (pg === 'staff' || pg === 'data') m.querySelectorAll('input,select,textarea').forEach(el => { if (el.id !== 'ciQ') el.disabled = true; });
+  if (pg === 'staff' || pg === 'data') m.querySelectorAll('input,select,textarea').forEach(el => { if (el.type !== 'search' && !['ciQ', 'stQ'].includes(el.id)) el.disabled = true; }); /* searching stays available */
   if (pg === 'headcount') m.querySelectorAll('.hc-toggle button,.hc-reason,[data-hcnote]').forEach(el => el.disabled = true);
 }
 
@@ -2368,12 +2368,12 @@ function openStaffForm(id) {
     <label>Role<select id="stRole">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === (s ? s.role : UI.staffTab))).join('')}</select></label>
     <label>Gender<select id="stGender" required>${opt('', 'Choose…', !(s && s.gender))}${opt('F', 'Female', s && s.gender === 'F')}${opt('M', 'Male', s && s.gender === 'M')}</select></label>
     <label>Age<input id="stAge" type="number" min="16" max="90" inputmode="numeric" value="${esc(s ? (staffAge(s, S.config) ?? '') : '')}"></label>
-    <label>Phone<input id="stPhone" inputmode="tel" value="${esc(s ? s.phone || '' : '')}"></label>
-    <label class="span2">Google email <small class="muted" style="font-weight:600">· links their sign-in account to this record</small><input id="stEmail" type="email" inputmode="email" autocomplete="off" placeholder="name@gmail.com" value="${esc(s ? s.email || '' : '')}"></label>
-    <label>Stake / district<input id="stStake" list="dlStStakes" value="${esc(s ? s.stake || '' : '')}" autocomplete="off"></label>
-    <label>Ward / branch<input id="stUnit" list="dlStUnits" value="${esc(s ? s.unit || '' : '')}" autocomplete="off"></label>
+    <label>Phone${s ? '' : ' *'}<input id="stPhone" inputmode="tel" ${s ? '' : 'required'} placeholder="07… or 01…" value="${esc(s ? s.phone || '' : '')}"></label>
+    <label class="span2">Google (Gmail) email${s ? '' : ' *'} <small class="muted" style="font-weight:600">· links their sign-in account to this record</small><input id="stEmail" type="email" inputmode="email" autocomplete="off" placeholder="name@gmail.com" ${s ? '' : 'required'} value="${esc(s ? s.email || '' : '')}"></label>
+    <label>Stake / district${s ? '' : ' *'}<input id="stStake" list="dlStStakes" ${s ? '' : 'required'} value="${esc(s ? s.stake || '' : '')}" autocomplete="off"></label>
+    <label>Ward / branch${s ? '' : ' *'}<input id="stUnit" list="dlStUnits" ${s ? '' : 'required'} value="${esc(s ? s.unit || '' : '')}" autocomplete="off"></label>
     <label>T-shirt size<select id="stSize">${opt('', 'Not given', !(s && s.tshirt))}${SIZES.map(z => opt(z, SIZE_LABEL[z], s && s.tshirt === z)).join('')}</select></label>
-    <div class="span2"><button class="btn primary" type="submit" style="width:100%">${s ? 'Save changes' : 'Add staff member'}</button></div>
+    ${s ? '' : '<p class="note span2" style="margin:0">* Needed for every new staff member.</p>'}<div class="span2"><button class="btn primary" type="submit" style="width:100%">${s ? 'Save changes' : 'Add staff member'}</button></div>
   </form><datalist id="dlStStakes">${stakes.map(x => `<option value="${esc(x)}">`).join('')}</datalist><datalist id="dlStUnits">${units.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`);
   setTimeout(() => { const n = $('#stName'); if (n && !s) n.focus(); }, 60);
 }
@@ -3091,8 +3091,12 @@ document.addEventListener('submit', async e => {
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
     const age = parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
     const email = sfEmail(val('stEmail')); if (email && !okEmail(email)) { toast('That email does not look right', true); return; }
+    const V = { role: val('stRole'), phone: val('stPhone'), size: val('stSize'), stake: val('stStake'), unit: val('stUnit') }; /* read before any confirm box replaces the form */
+    if (!sid) { const miss = [['Google email', email], ['phone', clean(val('stPhone'))], ['stake or district', clean(val('stStake'))], ['ward or branch', clean(val('stUnit'))]].filter(x => !x[1]).map(x => x[0]); if (miss.length) { toast('Please add the ' + miss.join(', '), true); return; }
+      if (!okPhone(sfPhone(val('stPhone')))) { toast('That phone number does not look right. Use 07… or 01…', true); return; }
+      if (!/@(gmail|googlemail)\.com$/.test(email) && f.dataset.okEmail !== email) { f.dataset.okEmail = email; toast(`${email} is not a Gmail address. It only links if it is the Google account they sign in with. Press Add again to keep it.`, true); return; } }
     const dupE = email && S.staffList.find(x => x.id !== sid && (x.email || '').toLowerCase() === email); if (dupE) { toast(`${dupE.name} already has that email`, true); return; }
-    const rec = Object.assign({ addedAt: Date.now(), addedBy: S.meName || S.email || '' }, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: val('stRole'), phone: sfPhone(val('stPhone')) || clean(val('stPhone')), email, tshirt: val('stSize'), stake: clean(val('stStake')), unit: clean(val('stUnit')) });
+    const rec = Object.assign({ addedAt: Date.now(), addedBy: S.meName || S.email || '' }, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: V.role, phone: sfPhone(V.phone) || clean(V.phone), email, tshirt: V.size, stake: clean(V.stake), unit: clean(V.unit) });
     await saveStaffRec(rec); linkTried = {}; UI.staffTab = rec.role; closeModal(); toast(sid ? 'Saved' : name + ' added');
   }
   if (f.id === 'invForm') {
