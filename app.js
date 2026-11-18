@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18h · logistics can search staff; new staff need contact details';
+const APP_VERSION = '2026-11-18j · liquid glass buttons';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1034,6 +1034,8 @@ const can = {
   moveOwn: () => role() === 'ac',
   // regenerate, rebalance, add or remove companies and groups, change who leads them
   orgEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator'].includes(role()),
+  // marking companies official (which locks Regenerate and Undo all groups) is for the registration admin and the Session Directing Couple only
+  lockRegen: () => ['regadmin', 'sdc'].includes(role()),
   logistics: () => !!role() && role() !== 'wellness',
   wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness', 'logistics'].includes(role()),
   // resolving and following up on health concerns (logistics only looks)
@@ -1449,7 +1451,7 @@ function resetPanel() {
   return `<section class="panel danger-zone"><div class="panel-head"><h2>Start over</h2><span class="chip bad">Can't be undone</span></div>
     <p class="note" style="margin-top:-4px">For registration admins, the Session Directing Couple, the Area Seventy and coordinators. Check-ins, participants and headcounts already submitted are kept.</p>
     <div class="dz-list">
-      <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${nG || nC ? '' : 'disabled'}>Undo groups</button></div>
+      <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${(nG || nC) && !S.config.regenLock ? '' : 'disabled'} ${S.config.regenLock ? 'title="Companies are official. Unlock them first."' : ''}>Undo groups</button></div>
       <div class="dz"><div><b>Delete test staff</b><small class="muted">${nT} staff marked Test.</small></div><button class="btn danger" data-act="resetTest" ${nT ? '' : 'disabled'}>Delete test staff</button></div>
       <div class="dz"><div><b>Delete staff of one type</b><small class="muted">For example every counselor, before uploading a corrected list. Everyone else stays. Logistics and Session Directing Couple members who have an account are always kept.</small><select id="rsType" style="margin-top:8px;max-width:280px">${STAFF_ROLES.map(r => { const n = S.staffList.filter(x => x.role === r && !x.fromAccount).length; return opt(r, `${ROLES[r]}s · ${n}`, r === (UI.rsType || 'counselor')); }).join('')}</select></div><button class="btn danger" data-act="resetType">Delete this type</button></div>
       <div class="dz"><div><b>Delete all staff</b><small class="muted">All ${nS} staff, real and test. Groups and companies lose their counselors and ACs. Accounts stay and link again automatically to the new list where the email or name matches.</small></div><button class="btn danger" data-act="resetStaff" ${nS ? '' : 'disabled'}>Delete all staff</button></div>
@@ -1859,7 +1861,7 @@ PAGE_IMPL.companies = {
     if (!UI.coMineSet && ['counselor', 'ac'].includes(role())) { UI.coMineSet = true; UI.band = 'mine'; if (role() === 'counselor') myGroups().forEach(g => UI.open.add(g.id)); }
     const adm = can.orgEdit();
     return `<section class="pagehead"><div><h1>Companies & groups</h1><p class="note" style="margin:4px 0 0">Groups of ${gsize(S.config, 'F') === gsize(S.config, 'M') ? esc(gsize(S.config, 'F')) : `${gsize(S.config, 'F')} young women or ${gsize(S.config, 'M')} young men`} share a gender and age group, each led by a counselor of the same gender. Companies keep 14–15 and 16–18 apart and mix young men and young women.</p></div>
-    <div class="btnrow">${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber">Renumber groups by company</button><button class="btn" data-act="regen">Regenerate all</button><button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
+    <div class="btnrow">${can.lockRegen() ? (S.config.regenLock ? '<button class="btn" data-act="regenLock" data-v="off">Unlock companies</button>' : '<button class="btn" data-act="regenLock" data-v="on">Mark companies official</button>') : ''}${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber">Renumber groups by company</button>${S.config.regenLock ? '' : '<button class="btn" data-act="regen">Regenerate all</button>'}<button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     ${adm ? foldSec('co-sizes', 'Group sizes', 'coSizeN', '', '<div id="coSizes"></div>') : ''}
     <div id="coLog"></div><div class="co-top"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
     <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '14–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
@@ -1868,7 +1870,7 @@ PAGE_IMPL.companies = {
   },
   update() {
     const G = S.org.groups, C = S.org.companies, adm = can.orgEdit();
-    $('#coLog').innerHTML = (S.orgLock && adm ? `<p class="note lockline">Group numbers are locked${S.orgLock.at ? ' since ' + esc(fmtWhen(S.orgLock.at)) : ''}. Rebalance keeps them; new groups take free numbers first.</p>` : '') + (UI.genLog ? `<div class="log"><button class="x log-x" data-act="logClose" aria-label="Dismiss">×</button><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '');
+    $('#coLog').innerHTML = (S.config.regenLock ? `<div class="callout official"><b>Companies are official.</b> ${esc(S.config.regenLock.by || 'The Session Directing Couple')} locked them on ${esc(fmtWhen(S.config.regenLock.at))}. Regenerate all and Undo all groups are switched off; use <b>Rebalance</b> for any changes.${can.lockRegen() ? ' Press <b>Unlock companies</b> to allow regenerating again.' : ' Only the registration admin or the Session Directing Couple can unlock them.'}</div>` : '') + (S.orgLock && adm ? `<p class="note lockline">Group numbers are locked${S.orgLock.at ? ' since ' + esc(fmtWhen(S.orgLock.at)) : ''}. Rebalance keeps them; new groups take free numbers first.</p>` : '') + (UI.genLog ? `<div class="log"><button class="x log-x" data-act="logClose" aria-label="Dismiss">×</button><b>${esc(UI.genLog.title)}</b><ul>${UI.genLog.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '');
     const by = r => S.staffList.filter(s => s.role === r);
     const node = (s, extra) => `<div class="node"><b>${esc(s.name)}</b>${extra || ''}</div>`;
     const acs = by('ac'), acUsed = new Set(Object.values(C).map(c => c.acId));
@@ -2882,6 +2884,7 @@ async function runRenumber() {
   render(); toast(`Groups renumbered by company: ${changed} of ${gs.length} got a new number. Numbers are now locked.`);
 }
 async function runRegen() {
+  if (S.config.regenLock) { toast('Companies are official, so they cannot be regenerated. Use Rebalance, or ask the registration admin or Session Directing Couple to unlock them.', true); return; }
   if (!S.staffList.some(s => s.role === 'counselor')) { toast('Add counselors on the Staff tab first (or generate test staff).', true); return; }
   const ok = await confirmBox('Regenerate all groups and companies?', `Every participant is placed again from scratch. Check-ins are kept, but group and company assignments, including manual moves, are replaced.${S.orgLock ? ' <b>Group numbers are locked: regenerating gives every group a new number</b>, so rosters and what counselors were told will no longer match.' : ''} To keep current groups and numbers, use Rebalance instead.`, 'Regenerate', true);
   if (!ok) return;
@@ -2938,6 +2941,9 @@ document.addEventListener('click', async e => {
     case 'expStaff': exportStaff(); break;
     case 'chkGo': { UI.coQ = v; UI.band = ''; if (id) UI.open.add(id); const q = $('#coQ'); if (q) q.value = v; render(); const f = $('#coFind'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
     case 'regen': await runRegen(); break;
+    case 'regenLock': { if (!can.lockRegen()) break; if (v === 'on') { if (!await confirmBox('Mark companies as official?', 'Regenerate all and Undo all groups are switched off for everyone. Coordinators and leaders can still press <b>Rebalance</b>, which keeps every group and company and only places newcomers or fills gaps. Only the registration admin or the Session Directing Couple can unlock this.', 'Mark official')) break; await saveConfig({ regenLock: { at: Date.now(), by: S.meName || S.email || '' } }); audit('groups', 'Marked companies as official (Regenerate all locked)'); toast('Companies are official'); }
+      else { if (!await confirmBox('Unlock companies?', 'Regenerate all and Undo all groups become available again. Regenerating would put everyone in new groups.', 'Unlock', true)) break; await saveConfig({ regenLock: null }); audit('groups', 'Unlocked companies (Regenerate all allowed again)'); toast('Companies unlocked'); }
+      UI.frameKey = ''; render(); break; }
     case 'addCo': { const band = await new Promise(res => { openModal(`<div class="modal-head"><h2>Add a company</h2><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note">An empty company is created. Move groups into it with the Company picker inside each group, or press Rebalance to fill it automatically with a spare AC.</p><div class="btnrow"><button class="btn primary" id="aY">14–15 company</button><button class="btn primary" id="aO">16–18 company</button></div>`); $('#aY').onclick = () => { closeModal(); res('Y'); }; $('#aO').onclick = () => { closeModal(); res('O'); }; }); if (!band) break; const cid = rid('c'); const num = Math.max(0, ...Object.values(S.org.companies).map(c => c.num)) + 1; await patchOrg({ companies: { [cid]: { id: cid, band, acId: null, coordId: null, num } } }); toast('Company ' + num + ' added'); break; }
     case 'delCo': { const c = S.org.companies[id]; if (!await confirmBox(`Remove Company ${c.num}?`, 'Its groups stay together and move to "Groups without a company". Press Rebalance to place them in other companies.', 'Remove company', true)) break; audit('groups', `Removed Company ${c.num}`); const o = { groups: {}, companies: Object.assign({}, S.org.companies) }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = g.companyId === id ? Object.assign({}, g, { companyId: null }) : g; delete o.companies[id]; await saveOrg(o, S.orgGen); toast('Company removed'); break; }
     case 'delGrp': { const g = S.org.groups[id]; if (!await confirmBox(`Remove group G${g.num}?`, 'Its participants become unassigned. Press Rebalance to place them in other groups.', 'Remove group', true)) break; audit('groups', `Removed group G${g.num}`); const o = { groups: Object.assign({}, S.org.groups), companies: S.org.companies }; delete o.groups[id]; await saveOrg(o, S.orgGen); const ch = {}; S.P.filter(p => p.g === id).forEach(p => ch[p.id] = { g: null }); await setStates(ch).catch(fail); toast('Group removed'); break; }
@@ -2968,7 +2974,7 @@ document.addEventListener('click', async e => {
       try { await moveParticipants(list, target, { isNew, name, team: sp.team }); UI.split = { dest: 'new', name: '', team: 'same', sel: new Set() }; UI.sessCounts = null; render(); toast(`${list.length} participants moved to ${name}`, false, { label: 'Open', fn: () => { try { localStorage.setItem('fsy.session.' + S.uid, target); } catch (e) { } location.hash = ''; location.reload(); } }); }
       catch (e) { fail(e); }
       break; }
-    case 'resetOrg': { if (!can.reset()) break; if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; audit('groups', 'Undid all groups and companies'); await resetOrg(); toast('Groups and companies removed'); break; }
+    case 'resetOrg': { if (!can.reset()) break; if (S.config.regenLock) { toast('Companies are official. Unlock them first.', true); break; } if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; audit('groups', 'Undid all groups and companies'); await resetOrg(); toast('Groups and companies removed'); break; }
     case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; audit('staff', `Deleted ${tests.length} test staff (Start over)`); const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
     case 'resetType': { if (!can.reset()) break; const r = ($('#rsType') || {}).value || 'counselor'; UI.rsType = r; const gone = S.staffList.filter(x => x.role === r && !x.fromAccount); if (!gone.length) { toast(`There are no ${ROLES[r].toLowerCase()}s to delete.`); break; }
       if (!await confirmTyped(`Delete all ${gone.length} ${ROLES[r].toLowerCase()}s?`, `Every ${esc(ROLES[r].toLowerCase())} record is deleted, real and test. Other staff types are kept.${r === 'counselor' ? ' Groups lose their counselors; press Rebalance after uploading the new list.' : r === 'ac' ? ' Companies lose their ACs; press Rebalance after uploading the new list.' : ''} Sign-in accounts are kept.`, 'DELETE', 'Delete ' + ROLES[r].toLowerCase() + 's')) break;
@@ -3142,3 +3148,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mbg'))
 boot();
 document.addEventListener('toggle', e => { if (e.target && e.target.id === 'coChecks') UI.checksOpen = e.target.open; }, true);
 document.addEventListener('toggle', e => { const t = e.target; if (t && t.classList && t.classList.contains('fold') && t.id) UI.foldSet = Object.assign(UI.foldSet || {}, { [t.id]: t.open }); }, true);
+
+/* liquid glass press: the light follows the finger or mouse on banner buttons */
+document.addEventListener('pointerdown', e => {
+  const b = e.target.closest && e.target.closest('.pagehead .btn, .hero .btn'); if (!b) return;
+  const r = b.getBoundingClientRect(); b.style.setProperty('--lx', (e.clientX - r.left) + 'px'); b.style.setProperty('--ly', (e.clientY - r.top) + 'px');
+  b.classList.remove('lq'); void b.offsetWidth; b.classList.add('lq');
+  clearTimeout(b._lq); b._lq = setTimeout(() => b.classList.remove('lq'), 650);
+}, { passive: true });
