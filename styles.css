@@ -640,3 +640,12 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 .or-step{display:flex;align-items:center;gap:4px}
 .or-step .btn{min-width:36px;font-size:1.1rem;padding:2px 8px}
 .or-count{width:70px;text-align:center}
+
+/* checks: each line opens the group or company it is about */
+.chk-body{display:flex;flex-direction:column;align-items:flex-start;gap:1px}
+.chk-link{border:0;background:none;padding:0;font:inherit;color:var(--ink);text-align:left;cursor:pointer;text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px}
+.chk-link:hover{color:var(--blue25);text-decoration-color:currentColor}
+.chk-hint{display:block;color:var(--muted);font-size:.8rem;font-weight:600}
+.warnlist summary .chk-hint{margin-top:1px}
+.chk-people{margin:8px 0 2px 14px}
+#coFind{scroll-margin-top:110px}

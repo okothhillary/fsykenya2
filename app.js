@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18a · other roles in the tally';
+const APP_VERSION = '2026-11-18b · checks link to groups';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -892,29 +892,29 @@ function validate(P, org, staffMap, cfg) {
   const mem = {}; for (const id in groups) mem[id] = [];
   P.forEach(p => { if (p.g && mem[p.g]) mem[p.g].push(p); });
   const un = P.filter(p => p.elig && (!p.g || !groups[p.g])).length;
-  if (un) w.push(['warn', `${un === 1 ? '1 eligible participant is' : un + ' eligible participants are'} not in a group`, 'unassigned']);
+  if (un) w.push(['warn', `${un === 1 ? '1 eligible participant is' : un + ' eligible participants are'} not in a group`, { p: P.filter(p => p.elig && (!p.g || !groups[p.g])).map(p => p.id) }]);
   const shadow = shadowedCounselors(Object.values(staffMap));
   for (const g of Object.values(groups)) { const c = g.counselorId && staffMap[g.counselorId]; if (!c) continue;
-    if (c.role !== 'counselor') w.push(['bad', `Group ${g.num} is led by ${c.name}, who is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}. Press Rebalance.`]);
-    else if (shadow[c.id]) { const co = Object.values(companies).find(x => x.acId === shadow[c.id].id); w.push(['bad', `${c.name} leads group ${g.num} but is also listed as ${ROLES[shadow[c.id].role].toLowerCase()}${co ? ' (Company ' + co.num + ')' : ''}. Press Rebalance, then delete the extra counselor record on the Staff page.`]); } }
+    if (c.role !== 'counselor') w.push(['bad', `Group ${g.num} is led by ${c.name}, who is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}. Press Rebalance.`, { g: g.id }]);
+    else if (shadow[c.id]) { const co = Object.values(companies).find(x => x.acId === shadow[c.id].id); w.push(['bad', `${c.name} leads group ${g.num} but is also listed as ${ROLES[shadow[c.id].role].toLowerCase()}${co ? ' (Company ' + co.num + ')' : ''}. Press Rebalance, then delete the extra counselor record on the Staff page.`, { g: g.id }]); } }
   const noCoun = Object.values(groups).filter(g => !(g.counselorId && staffMap[g.counselorId])).length;
   if (noCoun) w.push(['bad', `${noCoun === 1 ? '1 group has' : noCoun + ' groups have'} no counselor. Press Rebalance: ${noCoun === 1 ? 'its' : 'their'} youth move into groups of the same gender and age that have a counselor, and those groups grow until you add counselors.`]);
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
-    if (!c) w.push(['bad', `Group ${g.num} has no counselor`]);
-    else if (c.gender && c.gender !== g.gender) w.push(['bad', `Group ${g.num}: counselor ${c.name} is not the same gender as the group`]);
-    if (mem[g.id].some(p => p.gender !== g.gender)) w.push(['bad', `Group ${g.num} mixes young men and young women`]);
-    if (mem[g.id].some(p => p.band && p.band !== g.band)) w.push(['bad', `Group ${g.num} mixes the 13–15 and 16–18 age groups`]);
-    if (mem[g.id].length > gsize(cfg, g.gender)) w.push(['warn', `Group ${g.num} has ${mem[g.id].length} participants (size is ${gsize(cfg, g.gender)})`]);
-    if (!g.companyId || !companies[g.companyId]) w.push(['warn', `Group ${g.num} is not in a company`]);
-    else if (companies[g.companyId].band !== g.band) w.push(['bad', `Group ${g.num} is in a company of the other age group`]);
+    if (!c) w.push(['bad', `Group ${g.num} has no counselor`, { g: g.id }]);
+    else if (c.gender && c.gender !== g.gender) w.push(['bad', `Group ${g.num}: counselor ${c.name} is not the same gender as the group`, { g: g.id }]);
+    if (mem[g.id].some(p => p.gender !== g.gender)) w.push(['bad', `Group ${g.num} mixes young men and young women`, { g: g.id }]);
+    if (mem[g.id].some(p => p.band && p.band !== g.band)) w.push(['bad', `Group ${g.num} mixes the 13–15 and 16–18 age groups`, { g: g.id }]);
+    if (mem[g.id].length > gsize(cfg, g.gender)) w.push(['warn', `Group ${g.num} has ${mem[g.id].length} participants (size is ${gsize(cfg, g.gender)})`, { g: g.id }]);
+    if (!g.companyId || !companies[g.companyId]) w.push(['warn', `Group ${g.num} is not in a company`, { g: g.id }]);
+    else if (companies[g.companyId].band !== g.band) w.push(['bad', `Group ${g.num} is in a company of the other age group`, { g: g.id }]);
   }
   const noG = Object.values(staffMap).filter(s => s.role === 'counselor' && !s.gender).length;
   if (noG) w.push(['warn', `${noG === 1 ? '1 counselor has' : noG + ' counselors have'} no gender, so ${noG === 1 ? 'they cannot' : 'they cannot'} lead a group. Add it on the Staff page.`]);
   for (const c of Object.values(companies)) {
     const gs = Object.values(groups).filter(g => g.companyId === c.id);
-    if (!c.acId || !staffMap[c.acId]) w.push(['bad', `Company ${c.num} has no assistant coordinator`]);
-    if (!gs.some(g => g.gender === 'F') || !gs.some(g => g.gender === 'M')) w.push(['bad', `Company ${c.num} does not have both young men and young women`]);
+    if (!c.acId || !staffMap[c.acId]) w.push(['bad', `Company ${c.num} has no assistant coordinator`, { c: c.id }]);
+    if (!gs.some(g => g.gender === 'F') || !gs.some(g => g.gender === 'M')) w.push(['bad', `Company ${c.num} does not have both young men and young women`, { c: c.id }]);
   }
   return w;
 }
@@ -1815,15 +1815,39 @@ PAGE_IMPL.tally = {
 
 /* Repeated checks (one line per group) fold into a single line that opens to show them. */
 const CHECK_KINDS = [[/^Group \d+ has \d+ participants/, n => `${n} groups are over the group size`], [/^Group \d+ has no counselor/, n => `${n} groups have no counselor`], [/^Group \d+ is not in a company/, n => `${n} groups are not in a company`], [/^Company \d+ has no assistant/, n => `${n} companies have no assistant coordinator`], [/^Company \d+ does not have both/, n => `${n} companies do not have both young men and young women`]];
+/** Short advice shown under a check. */
+function checkHint(t) {
+  if (/participants? (is|are) not in a group/.test(t)) return 'Press Rebalance to place them.';
+  if (/has \d+ participants|over the group size/.test(t)) return 'Add counselors or raise the group size, then press Rebalance.';
+  if (/Press Rebalance/.test(t)) return '';
+  if (/no counselor/.test(t)) return 'Press Rebalance, or choose a counselor inside the group.';
+  if (/not in a company/.test(t)) return 'Press Rebalance, or pick a company inside the group.';
+  if (/other age group/.test(t)) return 'Move the group to a company of its age group, or press Rebalance.';
+  if (/not the same gender|mixes young men|mixes the 13/.test(t)) return 'Press Rebalance.';
+  if (/no assistant coordinator/.test(t)) return 'Choose an AC in the company card, or press Rebalance.';
+  if (/does not have both/.test(t)) return 'Press Rebalance to share groups out.';
+  return '';
+}
 function checksList(w) {
-  const li = ([lv, t]) => `<li><span class="chip ${lv}">${lv === 'bad' ? 'Fix' : 'Check'}</span><span>${esc(t)}</span></li>`;
+  const lim = ['counselor', 'ac'].includes(role());
+  const hint = t => { const h = lim ? '' : checkHint(t); return h ? `<small class="chk-hint">${esc(h)}</small>` : ''; };
+  const link = (t, ref) => {
+    if (ref && ref.g && S.org.groups[ref.g]) return `<button class="chk-link" data-act="chkGo" data-v="G${S.org.groups[ref.g].num}" data-id="${esc(ref.g)}">${esc(t)}</button>`;
+    if (ref && ref.c && S.org.companies[ref.c]) return `<button class="chk-link" data-act="chkGo" data-v="Co ${S.org.companies[ref.c].num}">${esc(t)}</button>`;
+    return `<span>${esc(t)}</span>`;
+  };
+  const chip = lv => `<span class="chip ${lv}">${lv === 'bad' ? 'Fix' : 'Check'}</span>`;
+  const li = ([lv, t, ref]) => {
+    if (ref && ref.p && ref.p.length) return `<li class="wgroup"><details><summary>${chip(lv)}<span>${esc(t)}${hint(t)}</span></summary><div class="flags chk-people">${ref.p.map(id => { const p = S.P.find(x => x.id === id); return p ? `<a href="#" class="chip" data-act="detail" data-id="${esc(id)}">${esc(p.name)} · ${esc(p.unit || '')}${!p.gender ? ' · no gender' : !p.band ? ' · no age' : ''}</a>` : ''; }).join('')}</div></details></li>`;
+    return `<li>${chip(lv)}<span class="chk-body">${link(t, ref)}${hint(t)}</span></li>`;
+  };
   const out = [], kinds = {};
   w.forEach(x => { const k = CHECK_KINDS.findIndex(([re]) => re.test(x[1])); if (k < 0) out.push(['one', x]); else { if (!kinds[k]) { kinds[k] = []; out.push(['many', k]); } kinds[k].push(x); } });
   return `<ul class="warnlist">${out.map(([t, x]) => {
     if (t === 'one') return li(x);
     const list = kinds[x]; if (list.length < 3) return list.map(li).join('');
-    const lv = list.some(y => y[0] === 'bad') ? 'bad' : 'warn';
-    return `<li class="wgroup"><details><summary><span class="chip ${lv}">${lv === 'bad' ? 'Fix' : 'Check'}</span><span>${esc(CHECK_KINDS[x][1](list.length))}</span></summary><ul class="warnlist sub">${list.map(li).join('')}</ul></details></li>`;
+    const lv = list.some(y => y[0] === 'bad') ? 'bad' : 'warn', head = CHECK_KINDS[x][1](list.length);
+    return `<li class="wgroup"><details><summary>${chip(lv)}<span>${esc(head)}${hint(head)}</span></summary><ul class="warnlist sub">${list.map(li).join('')}</ul></details></li>`;
   }).join('')}</ul>`;
 }
 
@@ -2806,6 +2830,7 @@ document.addEventListener('click', async e => {
     case 'rebalance': await runRebalance(); break;
     case 'renumber': await runRenumber(); break;
     case 'logClose': UI.genLog = null; render(); break;
+    case 'chkGo': { UI.coQ = v; UI.band = ''; if (id) UI.open.add(id); const q = $('#coQ'); if (q) q.value = v; render(); const f = $('#coFind'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); break; }
     case 'regen': await runRegen(); break;
     case 'addCo': { const band = await new Promise(res => { openModal(`<div class="modal-head"><h2>Add a company</h2><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note">An empty company is created. Move groups into it with the Company picker inside each group, or press Rebalance to fill it automatically with a spare AC.</p><div class="btnrow"><button class="btn primary" id="aY">13–15 company</button><button class="btn primary" id="aO">16–18 company</button></div>`); $('#aY').onclick = () => { closeModal(); res('Y'); }; $('#aO').onclick = () => { closeModal(); res('O'); }; }); if (!band) break; const cid = rid('c'); const num = Math.max(0, ...Object.values(S.org.companies).map(c => c.num)) + 1; await patchOrg({ companies: { [cid]: { id: cid, band, acId: null, coordId: null, num } } }); toast('Company ' + num + ' added'); break; }
     case 'delCo': { const c = S.org.companies[id]; if (!await confirmBox(`Remove Company ${c.num}?`, 'Its groups stay together and move to "Groups without a company". Press Rebalance to place them in other companies.', 'Remove company', true)) break; audit('groups', `Removed Company ${c.num}`); const o = { groups: {}, companies: Object.assign({}, S.org.companies) }; for (const g of Object.values(S.org.groups)) o.groups[g.id] = g.companyId === id ? Object.assign({}, g, { companyId: null }) : g; delete o.companies[id]; await saveOrg(o, S.orgGen); toast('Company removed'); break; }
