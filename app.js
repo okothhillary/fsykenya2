@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-17j · one expected count everywhere';
+const APP_VERSION = '2026-11-18a · other roles in the tally';
 const BANDS = { Y: '13–15', O: '16–18' };
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1768,21 +1768,32 @@ function pCard(p) {
 
 /* page: tally */
 PAGE_IMPL.tally = {
-  frame() { return `<section class="pagehead"><div><h1>Tally</h1><p class="note" style="margin:4px 0 0">Live counts for the session, each stake and each ward or branch. Tap a stake to see its units.</p></div><button class="btn" data-act="tallyCsv">Export CSV</button></section><div id="tK" class="kpis"></div><div class="panel"><div class="panel-head"><h2>Everyone at the session</h2></div><div id="tAll"></div></div><div class="grid2"><div class="panel"><h2>By age group and gender</h2><div id="tBG"></div></div><div class="panel"><h2>By company</h2><div id="tCo"></div></div></div><div class="panel"><h2>By stake, ward and branch</h2><div id="tSt"></div></div>`; },
+  frame() { return `<section class="pagehead"><div><h1>Tally</h1><p class="note" style="margin:4px 0 0">Live counts for the session, each stake and each ward or branch. Tap a stake to see its units.</p></div><button class="btn" data-act="tallyCsv">Export CSV</button></section><div id="tK" class="kpis"></div><div class="panel"><div class="panel-head"><h2>Everyone at the session</h2></div><div id="tAll"></div><div id="orEdit"></div></div><div class="grid2"><div class="panel"><h2>By age group and gender</h2><div id="tBG"></div></div><div class="panel"><h2>By company</h2><div id="tCo"></div></div></div><div class="panel"><h2>By stake, ward and branch</h2><div id="tSt"></div></div>`; },
   update() {
     const P = S.P;
     const exp = isExpected;
     const T = { exp: P.filter(exp).length, inn: P.filter(p => p.s === 'in').length, out: P.filter(p => p.s === 'out').length, arrived: P.filter(p => exp(p) && p.s).length, wk: P.filter(p => p.src === 'walkin').length, exc: P.filter(p => !p.inc && p.s).length };
-    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin')).length + S.staffList.filter(x => !x.test).length}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
+    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin')).length + S.staffList.filter(x => !x.test).length + (S.config.otherRoles || []).reduce((t, o) => t + Math.max(0, +o.count || 0), 0)}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
     const ST = S.staffList.filter(x => !x.test);
     const gc = (list, g) => list.filter(x => x.gender === g).length;
     const yp = P.filter(p => exp(p) || (p.src === 'walkin'));
     const rowsAll = [['Participants expected', P.filter(exp)], ['Walk-ins', P.filter(p => p.src === 'walkin')]].map(([l, L]) => [l, gc(L, 'F'), gc(L, 'M'), L.length])
       .concat(STAFF_ROLES.map(r => { const L = ST.filter(x => x.role === r); return [ROLE_PLURAL[r], gc(L, 'F'), gc(L, 'M'), L.length]; }));
-    const stN = ST.length, allN = yp.length + stN;
+    // other people with no role in the app (DJs, sound or PA team…): a name and a number, added to the staff total
+    const others = (S.config.otherRoles || []).filter(o => o && (o.name || o.count));
+    others.forEach(o => rowsAll.push([o.name || 'Other', '—', '—', Math.max(0, +o.count || 0)]));
+    const otherN = others.reduce((a, o) => a + Math.max(0, +o.count || 0), 0);
+    const stN = ST.length + otherN, allN = yp.length + stN;
     $('#tAll').innerHTML = `<div class="tablewrap"><table><thead><tr><th></th><th class="n">Women</th><th class="n">Men</th><th class="n">Total</th></tr></thead><tbody>${rowsAll.map(([l, f, m, t], i) => `<tr${i === 2 ? ' class="divide"' : ''}><td>${esc(l)}</td><td class="n">${f}</td><td class="n">${m}</td><td class="n"><b>${t}</b></td></tr>`).join('')}
       <tr class="subtot"><td><b>Youth</b></td><td class="n">${gc(yp, 'F')}</td><td class="n">${gc(yp, 'M')}</td><td class="n"><b>${yp.length}</b></td></tr><tr class="subtot"><td><b>Staff</b></td><td class="n">${gc(ST, 'F')}</td><td class="n">${gc(ST, 'M')}</td><td class="n"><b>${stN}</b></td></tr>
-      <tr class="total"><td>Everyone</td><td class="n">${gc(yp, 'F') + gc(ST, 'F')}</td><td class="n">${gc(yp, 'M') + gc(ST, 'M')}</td><td class="n">${allN}</td></tr></tbody></table></div><p class="note">Youth expected plus walk-ins, and every staff member on the Staff page (test staff left out). ${ST.filter(x => !x.gender).length ? `${ST.filter(x => !x.gender).length} staff with no gender are only in the totals.` : ''}</p>`;
+      <tr class="total"><td>Everyone</td><td class="n">${gc(yp, 'F') + gc(ST, 'F')}</td><td class="n">${gc(yp, 'M') + gc(ST, 'M')}</td><td class="n">${allN}</td></tr></tbody></table></div><p class="note">Youth expected plus walk-ins, every staff member on the Staff page (test staff left out)${otherN ? `, and ${nn(otherN, 'other person', 'other people')} in roles added below, who are in the totals but not split into women and men` : ''}. ${ST.filter(x => !x.gender).length ? `${ST.filter(x => !x.gender).length} staff with no gender are only in the totals.` : ''}</p>`;
+    const ed = $('#orEdit');
+    if (ed && !(ed.contains(document.activeElement) && document.activeElement.tagName === 'INPUT')) {
+      const list = S.config.otherRoles || [];
+      ed.innerHTML = can.admin() ? `<div class="or-box"><h3>Other people at the session</h3><p class="note" style="margin:0 0 8px">For people with no role in the app, such as DJs or the sound and PA team. They count towards Staff and Everyone above.</p>
+        ${list.map((o, i) => `<div class="or-row"><input class="or-name" data-i="${i}" value="${esc(o.name || '')}" placeholder="Role, e.g. Sound and PA team" aria-label="Role name" autocomplete="off"><div class="or-step"><button class="btn small" data-act="orDec" data-v="${i}" aria-label="One fewer">−</button><input class="or-count" data-i="${i}" type="number" min="0" max="500" inputmode="numeric" value="${Math.max(0, +o.count || 0)}" aria-label="How many"><button class="btn small" data-act="orInc" data-v="${i}" aria-label="One more">+</button></div><button class="btn small danger" data-act="orDel" data-v="${i}">Remove</button></div>`).join('')}
+        <button class="btn small" data-act="orAdd">+ Add a role</button></div>` : (list.length ? '' : '');
+    }
     let bg = '<div class="tablewrap"><table><thead><tr><th></th><th class="n">Young women</th><th class="n">Young men</th><th class="n">Total</th></tr></thead><tbody>';
     for (const b of ['Y', 'O']) { const c = g => { const e = P.filter(p => exp(p) && p.band === b && (!g || p.gender === g)).length, i = P.filter(p => p.s === 'in' && p.band === b && (!g || p.gender === g)).length; return `<td class="n">${i} / ${e}</td>`; }; bg += `<tr><td>${BANDS[b]}</td>${c('F')}${c('M')}${c('')}</tr>`; }
     bg += `</tbody></table></div><p class="note">Checked in / expected.</p>`; $('#tBG').innerHTML = bg;
@@ -2856,6 +2867,9 @@ document.addEventListener('click', async e => {
     case 'repReopen': await updateReport(id, v, { status: 'open' }); toast('Reopened'); break;
     case 'coQClear': UI.coQ = ''; { const i = $('#coQ'); if (i) i.value = ''; } render(); break;
     case 'wlRep': UI.wlRep = v; render(); break;
+    case 'orAdd': { const l = (S.config.otherRoles || []).concat([{ name: '', count: 1 }]); await saveConfig({ otherRoles: l }); setTimeout(() => { const x = document.querySelectorAll('.or-name'); if (x.length) x[x.length - 1].focus(); }, 50); break; }
+    case 'orInc': case 'orDec': { const l = (S.config.otherRoles || []).map(o => Object.assign({}, o)); const o = l[+v]; if (!o) break; o.count = Math.max(0, (+o.count || 0) + (act === 'orInc' ? 1 : -1)); audit('settings', `Set ${o.name || 'other role'} to ${o.count}`); await saveConfig({ otherRoles: l }); break; }
+    case 'orDel': { const l = (S.config.otherRoles || []).slice(); const o = l[+v]; if (!o) break; if (!await confirmBox(`Remove ${o.name || 'this role'}?`, `${nn(+o.count || 0, 'person', 'people')} will no longer be counted.`, 'Remove')) break; l.splice(+v, 1); audit('settings', `Removed the other role ${o.name || ''}`); await saveConfig({ otherRoles: l }); break; }
     case 'audK': UI.audK = v; render(); break;
     case 'audMore': UI.audLimit = (UI.audLimit || 500) + 1000; render(); break;
     case 'audCsv': { const rows = [['When', 'Who', 'Email', 'Role', 'Kind', 'What']]; audFiltered().forEach(r => rows.push([new Date(r.at).toLocaleString(), r.name || '', r.email || '', ROLES[r.role] || r.role || '', AUDIT_KINDS[r.kind] || r.kind, r.text])); exportCSV('fsy-audit-log.csv', rows); break; }
@@ -2900,6 +2914,7 @@ document.addEventListener('change', async e => {
   if (t.id === 'impFile') { if (t.files[0]) readFile(t.files[0]).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }); return; }
   if (t.id === 'impMode') { UI.imp.mode = t.value; renderImport(); return; }
   if (t.id === 'sfFile') { const f = t.files[0]; if (f) sfRead(f).catch(err => { console.error(err); toast('Could not read that file. Save it as .xlsx or .csv and try again.', true); }).finally(() => { t.value = ''; }); return; }
+  if (t.classList && (t.classList.contains('or-name') || t.classList.contains('or-count'))) { const l = (S.config.otherRoles || []).map(o => Object.assign({}, o)); const o = l[+t.dataset.i]; if (!o) return; if (t.classList.contains('or-name')) o.name = clean(t.value).slice(0, 60); else o.count = Math.max(0, Math.min(500, parseInt(t.value, 10) || 0)); audit('settings', `Set other role ${o.name || '(unnamed)'} to ${o.count || 0}`); t.blur(); await saveConfig({ otherRoles: l }); return; }
   if (t.id === 'audWho') { UI.audWho = t.value; PAGE_IMPL.audit.update(); return; }
   if (t.id === 'audDay') { UI.audDay = t.value; PAGE_IMPL.audit.update(); return; }
   if (t.id === 'rsType') { UI.rsType = t.value; return; }
