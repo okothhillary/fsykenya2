@@ -4,7 +4,7 @@ This is a simple FSY Check-in App that is built around what check-in processes l
 
 The whole app lives inside `app.js`; a simple monolith supported with pure html, css and js for simplicity. This guide explains how `app.js` is built and what every function does, grouped by the tab or part of the app it serves. The setup steps (Firebase, GitHub Pages, accounts) are in `README.md`.
 
-Version described: **2026-11-19c**. Function names are the exact names in `app.js`, so you can search for them (Ctrl+F) in any editor.
+Function names are the exact names in `app.js`, so you can search for them (Ctrl+F) in any editor.
 
 ---
 
