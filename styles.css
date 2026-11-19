@@ -711,3 +711,7 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 /* "give every counselor a group anyway" */
 .useall-go{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:10px}
 .useall-on{margin:10px 0 0;padding:8px 12px;border-radius:10px;background:rgba(141,188,86,.16);border:1px solid rgba(141,188,86,.45)}
+
+/* staff list: the table folds away, the search and the latest-added line stay */
+.st-folded .tablewrap,.st-folded .empty{display:none}
+.panel-head .btnrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
