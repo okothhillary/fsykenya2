@@ -1,3 +1,4 @@
+
 const FB = { app: null, auth: null, fs: null, user: null };
 function appConfig() { try { return FIREBASE_CONFIG; } catch (e) { try { return firebaseConfig; } catch (e2) { return null; } } }
 function ownerEmails() { try { return OWNER_EMAILS; } catch (e) { return []; } }
@@ -47,7 +48,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-19e · staff table hidden by default';
+const APP_VERSION = '2026-11-19h · my details for everyone';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1274,8 +1275,8 @@ async function syncAccountStaff() {
     if (v.staffId && S.staff[v.staffId] && S.staff[v.staffId].role === v.role && v.staffId !== id) { if (cur && cur.fromAccount) del.push(id); continue; }
     if (!cur && S.staffList.some(s => !s.fromAccount && s.role === v.role && norm(s.name) && norm(s.name) === norm(v.name))) continue;
     const name = titleCase(v.name || h.split('@')[0]);
-    const gender = v.gender || (cur && cur.gender) || '';
-    if (!cur || cur.name !== name || cur.role !== v.role || (cur.gender || '') !== gender) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '', addedAt: Date.now(), addedBy: 'Accounts' }, cur || {}, { id, name, role: v.role, gender, fromAccount: 1 });
+    const gender = (cur && cur.selfAt && cur.gender) || v.gender || (cur && cur.gender) || ''; /* a gender the person set in My details wins */
+    if (!cur || cur.name !== name || cur.role !== v.role || (cur.gender || '') !== gender || !cur.email) add[id] = Object.assign({ gender: '', stake: '', unit: '', phone: '', addedAt: Date.now(), addedBy: 'Accounts' }, cur || {}, { id, name, role: v.role, gender, email: (cur && cur.email) || h, fromAccount: 1 });
   }
   for (const id in S.staff) { const s = S.staff[id]; if (s && s.fromAccount && !want[id]) del.push(id); }
   if (!Object.keys(add).length && !del.length) return;
@@ -1381,6 +1382,7 @@ const ICONS = {
   sessions: I('<rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>'),
   print: I('<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  me: I('<circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/>'),
   signout: I('<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 17l-5-5 5-5M5 12h11"/>')
 };
 const SHORT = { audit: 'Audit', wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
@@ -1413,12 +1415,72 @@ function openMore() {
   openModal(`<div class="modal-head"><h2>More</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
   <div class="sheetlist">${rest.map(k => `<button data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${ICONS[k]}${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('')}</div>`);
 }
+/* My details: anyone whose account is linked to a staff record edits their own contact, T-shirt, birthdate, gender, home unit, food and medical notes.
+   The database only lets them change these fields on their own record (see firestore.rules). */
+const SELF_FIELDS = ['phone', 'email', 'tshirt', 'bday', 'ageCsv', 'gender', 'stake', 'unit', 'diet', 'med', 'selfAt'];
+/* my staff record: the one linked to my account, or else the only staff record carrying my sign-in email */
+function myRecord() {
+  if (S.viewAs) return null; const id = myStaffId(); if (id && S.staff[id]) return S.staff[id];
+  const me = String(S.email || '').toLowerCase(); if (!me) return null;
+  const m = S.staffList.filter(x => !x.test && String(x.email || '').toLowerCase() === me); return m.length === 1 ? S.staff[m[0].id] || m[0] : null;
+}
+function myRecordByEmail() { const r = myRecord(); return !!r && r.id !== myStaffId(); }
+function openMyDetails() {
+  const s = myRecord();
+  if (!s) {
+    openModal(`<div class="modal-head"><h2>My details</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <p>You are not on the staff list yet, so there are no details to edit.</p>
+    <p class="note">The app finds your details by the staff record linked to your account, or by a staff record with your sign-in email (${esc(S.email || '')}).</p>
+    ${can.staff() ? '<button class="btn primary" data-act="addMe" style="width:100%">Add me to the staff list</button>' : '<p class="note">Ask the registration admin to add you on the Staff page or link your account on the Accounts page.</p>'}`);
+    return;
+  }
+  const byEmail = myRecordByEmail();
+  const A = stAreas(), stk = s.stake || '', unt = s.unit || '';
+  const stOther = !!stk && !A.stakes.includes(stk), unOther = !!unt && !(A.units[stk] || []).includes(unt);
+  openModal(`<div class="modal-head"><h2>My details</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+  <p class="note" style="margin:-6px 0 12px"><b>${esc(s.name)}</b> · ${esc(ROLES[s.role] || s.role)}. Changes save straight away and the registration team can see them. To change your name or role, ask the registration admin.</p>
+  <form id="meForm" class="form">
+    <label>Phone<input id="mePhone" inputmode="tel" placeholder="07… or 01…" value="${esc(s.phone || '')}"></label>
+    <label>Email<input id="meEmail" type="email" inputmode="email" autocomplete="email" value="${esc(s.email || '')}" ${byEmail ? 'readonly title="This email connects your sign-in to this record"' : ''}></label>
+    <label>Gender<select id="meGender">${opt('', 'Choose…', !s.gender)}${opt('F', 'Female', s.gender === 'F')}${opt('M', 'Male', s.gender === 'M')}</select></label>
+    <label>Birthdate<input id="stBday" type="date" max="${isoUTC(new Date(Date.now() - 15 * 365.25 * 864e5))}" value="${esc(s.bday || '')}"><small class="muted st-age" id="stAgeOut">${stAgeText(s.bday || '', s.bday ? null : s.ageCsv)}</small></label>
+    <label>Stake / district<select id="stStakeSel">${opt('', 'Choose…', !stk)}${A.stakes.map(x => opt(x, x, x === stk)).join('')}${opt('__other', '+ Other stake or district…', stOther)}</select>
+      <input id="stStakeNew" placeholder="Type your stake or district" autocomplete="off" value="${esc(stOther ? stk : '')}" ${stOther ? '' : 'hidden'}></label>
+    <label>Ward / branch<select id="stUnitSel">${stUnitOpts(stOther ? '__other' : stk, unOther ? '__other' : unt)}</select>
+      <input id="stUnitNew" placeholder="Type your ward or branch" autocomplete="off" value="${esc(unOther ? unt : '')}" ${unOther || stOther ? '' : 'hidden'}></label>
+    <p class="note span2" id="stOtherNote" hidden style="margin:-4px 0 0">Type it in full, for example "Kenya Nairobi South Stake" and "Nairobi 2nd Ward".</p>
+    <label>T-shirt size<select id="meSize">${opt('', 'Not given', !s.tshirt)}${SIZES.map(z => opt(z, SIZE_LABEL[z], s.tshirt === z)).join('')}</select></label>
+    <label class="span2">Food needs or allergies<textarea id="meDiet" rows="2" placeholder="Leave blank if none">${esc(s.diet || '')}</textarea></label>
+    <label class="span2">Medical information<textarea id="meMed" rows="2" placeholder="Leave blank if none">${esc(s.med || '')}</textarea><small class="muted">Only the wellness team, logistics and the registration team use this.</small></label>
+    <p class="note span2" style="margin:0">Changing your gender or birthdate can change which group you lead after the next Rebalance.</p>
+    <div class="span2"><button class="btn primary" type="submit" style="width:100%">Save my details</button></div>
+  </form>`);
+}
+async function saveMyDetails() {
+  const s = myRecord(); if (!s) { toast('Your account is not linked to a staff record', true); return; }
+  const val = id => clean(($('#' + id) || {}).value || '');
+  const email = myRecordByEmail() ? s.email : sfEmail(val('meEmail')), phoneRaw = val('mePhone'), phone = sfPhone(phoneRaw) || phoneRaw, bday = val('stBday');
+  if (email && !okEmail(email)) { toast('That email does not look right', true); return; }
+  if (phoneRaw && !okPhone(sfPhone(phoneRaw))) { toast('That phone number does not look right. Use 07… or 01…', true); return; }
+  const age = bday ? ageOn(bday, S.config.sessionStart || '') : null; if (bday && (age < 15 || age > 90)) { toast('That birthdate does not look right', true); return; }
+  const stake = val('stStakeSel') === '__other' ? titleCase(val('stStakeNew')) : val('stStakeSel'), unit = val('stUnitSel') === '__other' || val('stStakeSel') === '__other' ? titleCase(val('stUnitNew')) : val('stUnitSel');
+  const next = { phone, email, gender: val('meGender'), bday: bday || s.bday || '', stake, unit, tshirt: val('meSize'), diet: val('meDiet'), med: val('meMed') };
+  if (bday) next.ageCsv = null;
+  const LBL = { phone: 'phone', email: 'email', gender: 'gender', bday: 'birthdate', stake: 'stake', unit: 'ward', tshirt: 'T-shirt size', diet: 'food needs', med: 'medical information' };
+  const patch = {}; for (const k in next) if ((next[k] ?? '') !== (s[k] ?? '')) patch[k] = next[k];
+  if (!Object.keys(patch).length) { closeModal(); toast('Nothing changed'); return; }
+  patch.selfAt = Date.now();
+  S.staff = Object.assign({}, S.staff, { [s.id]: Object.assign({}, s, patch) }); recompute(true);
+  try { await upd('staff/all', { selfKey: s.id, s: { [s.id]: patch } }, true); audit('staff', `${s.name} updated their own details: ${Object.keys(patch).filter(k => LBL[k]).map(k => LBL[k]).join(', ')}`, s.id); closeModal(); toast('Your details are saved'); }
+  catch (e) { S.staff = Object.assign({}, S.staff, { [s.id]: s }); recompute(true); fail(e); }
+}
 function openAccount() {
   const r = realRole();
   openModal(`<div class="modal-head"><div class="acct"><span class="avatar" style="width:46px;height:46px;cursor:default">${esc(initials(S.meName))}</span><div><h2>${esc(S.meName || 'Signed in')}</h2><small class="muted">${esc(S.email || '')}</small></div></div><button class="x" data-act="close" aria-label="Close">×</button></div>
   <p style="margin:0">Role: <span class="rolechip">${esc(r ? ROLES[r] : 'No role yet')}</span></p>
   ${r === 'regadmin' ? `<label class="form" style="display:block"><span class="note" style="display:block;margin-bottom:4px">See the app the way someone else does</span><select id="viewAs" aria-label="Preview as role" style="width:100%">${opt('', 'Viewing as myself', !S.viewAs)}${Object.keys(ROLES).filter(k => k !== 'regadmin').map(k => opt(k, 'Preview: ' + ROLES[k], S.viewAs === k)).join('')}</select></label>` : ''}
   ${S.mySessions.length > 1 ? `<div><p class="th" style="margin-bottom:6px">Session</p><div class="sheetlist">${S.mySessions.map(id => `<button data-act="switchSession" data-v="${esc(id)}" ${id === S.sid ? 'aria-current="page"' : ''}>${ICONS.checkin}${esc(sessName(id))}${id === S.sid ? ' · open now' : ''}</button>`).join('')}</div></div>` : ''}
+  ${r && !S.viewAs ? `<div class="sheetlist"><button data-act="myDetails">${ICONS.me}My details<small class="muted" style="margin-left:auto;font-weight:600">${myRecord() ? 'phone, T-shirt, ward…' : 'not on the staff list yet'}</small></button></div>` : ''}
   <div class="sheetlist">${allowedPages().some(p => p[0] === 'audit') ? `<button data-act="nav" data-v="audit" ${currentPage() === 'audit' ? 'aria-current="page"' : ''}>${ICONS.audit}Audit log</button>` : ''}<button data-act="signOut">${ICONS.signout}Sign out</button></div>
   <p class="note" style="margin:0;text-align:center">App version ${esc(APP_VERSION)}</p>`);
 }
@@ -2292,8 +2354,9 @@ PAGE_IMPL.staff = {
     } else body = (newest ? list.slice().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0) || a.name.localeCompare(b.name)) : list).map(row).join('');
     const withT = list.filter(x => x.addedAt).sort((a, b) => b.addedAt - a.addedAt), recent = withT.filter(x => Date.now() - x.addedAt < DAY);
     const latestLine = withT.length ? `<p class="note st-latest">Latest ${esc((ROLES[UI.staffTab] || '').toLowerCase())} added: <b>${esc(withT[0].name)}</b> · ${esc(fmtWhen(withT[0].addedAt))}${withT[0].addedBy ? ' by ' + esc(withT[0].addedBy) : ''}${recent.length > 1 ? ` · <b>${recent.length}</b> added in the last 24 hours` : ''}${newest ? '' : ' · <a href="#" data-act="stView" data-v="new">See newest first</a>'}</p>` : '';
-    { const L = $('#stList'), fb = $('#stFoldBtn'), fold = !!UI.stFold && !clean(UI.stQ || ''); L.classList.toggle('st-folded', fold); if (fb) { fb.textContent = fold ? 'Show table' : 'Hide table'; fb.setAttribute('aria-expanded', String(!fold)); } }
-    $('#stList').innerHTML = latestLine + (list.length ? `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`);
+    const stFolded = !!UI.stFold && !clean(UI.stQ || '');
+    { const L = $('#stList'), fb = $('#stFoldBtn'), fold = stFolded; L.classList.toggle('st-folded', fold); if (fb) { fb.textContent = fold ? 'Show table' : 'Hide table'; fb.setAttribute('aria-expanded', String(!fold)); } }
+    $('#stList').innerHTML = latestLine + (list.length ? `<div class="tablewrap"${stFolded ? ' hidden style="display:none"' : ''}><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`);
     renderSf();
   }
 };
@@ -2963,6 +3026,8 @@ document.addEventListener('click', async e => {
     case 'close': closeModal(); break;
     case 'request': { const note = ($('#reqNote') || {}).value || ''; try { await S.db.doc('requests/' + S.uid).set({ at: now, note: note.slice(0, 200), email: S.email, name: S.meName }); audit('accounts', 'Asked for access'); notifyRequest(note); toast('Request sent'); UI.frameKey = ''; } catch (err) { toast('Could not send the request. Try again.', true); } break; }
     case 'signIn': await signIn(); break;
+    case 'myDetails': closeModal(); openMyDetails(); break;
+    case 'addMe': { closeModal(); openStaffForm(null); setTimeout(() => { const n = $('#stName'), e2 = $('#stEmail'); if (n) n.value = titleCase(S.meName || ''); if (e2) e2.value = S.email || ''; const rl = $('#stRole'); const rr = realRole(); if (rl && STAFF_ROLES.includes(rr)) rl.value = rr; }, 80); break; }
     case 'signOut': audit('signin', 'Signed out'); closeModal(); await FB.auth.signOut(); break;
     case 'ciF': UI.filter = v; UI.limit = 40; UI.frameKey = ''; render(); break;
     case 'ciToggle': { const o = UI.ciOpen || (UI.ciOpen = new Set()); const st = t.dataset.stake; o.has(st) ? o.delete(st) : o.add(st); render(); break; }
@@ -3055,7 +3120,7 @@ document.addEventListener('click', async e => {
     case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); audit('headcount', `Submitted the ${hcDay()} headcount for G${S.org.groups[g].num}: ${x.present.length} present, ${x.missing.length} missing`); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
     case 'stAdd': openStaffForm(null); break;
-    case 'stFold': UI.stFold = !UI.stFold; try { localStorage.setItem('fsy.stFold', UI.stFold ? '1' : '0'); } catch (e) { } render(); break;
+    case 'stFold': UI.stFold = !UI.stFold; try { localStorage.setItem('fsy.stFold', UI.stFold ? '1' : '0'); } catch (e) { } if (PAGE_IMPL.staff && $('#stList')) PAGE_IMPL.staff.update(); else render(); break;
     case 'stView': UI.staffView = v; render(); break;
     case 'repNew': closeModal(); openReportForm(id); break;
     case 'repResolve': { const note = await askText('Mark as resolved', 'What was done? (optional)'); if (note === null) break; await updateReport(id, v, { status: 'resolved', resNote: note, resAt: Date.now(), resBy: S.uid, resByName: S.meName || S.email }); toast('Marked resolved'); break; }
@@ -3156,6 +3221,7 @@ document.addEventListener('submit', async e => {
   }
   if (f.id === 'repForm') { await saveReport(f); return; }
   if (f.id === 'sizeForm') { const F = Math.max(4, Math.min(25, parseInt(val('szF'), 10) || 10)), M = Math.max(4, Math.min(25, parseInt(val('szM'), 10) || 10)); await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: false }); UI.frameKey = ''; render(); toast(`Sizes saved: ${F} young women, ${M} young men. Press Rebalance to apply them.`); return; }
+  if (f.id === 'meForm') { await saveMyDetails(); return; }
   if (f.id === 'stForm') {
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
     const bday = val('stBday') || '', age = bday ? ageOn(bday, S.config.sessionStart || '') : parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
