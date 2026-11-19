@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-18o · member rows side by side';
+const APP_VERSION = '2026-11-19c · no minimum group size';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -804,12 +804,11 @@ function rebalance(P, staffList, org, cfg) {
     opened++; log.push(`New ${BANDS[band]} group for ${c.name}: ${members[id].length} participants moved from groups over ${gsize(cfg, c.gender)}`);
   }
   // "fit sizes to counselors": spare counselors still get a group by taking a share from the biggest groups of their gender,
-  // as long as groups stay at a sensible size
   if (cfg.useAll) for (let guard = 0; guard < 300; guard++) {
     let best = null;
     for (const c of counselors) { if (used.has(c.id)) continue;
       for (const band of ['Y', 'O']) { const gs = Object.values(groups).filter(g => g.band === band && g.gender === c.gender && g.counselorId); if (!gs.length) continue;
-        const tot = gs.reduce((a, g) => a + members[g.id].length, 0), avg = tot / (gs.length + 1); if (avg < 6) continue;
+        const tot = gs.reduce((a, g) => a + members[g.id].length, 0), avg = tot / (gs.length + 1); if (avg < 1) continue; /* no lower limit on group size, only that every group keeps someone */
         const key = [cPref(c, band, cfg), -tot / gs.length]; if (!best || key[0] < best.key[0] || (key[0] === best.key[0] && key[1] < best.key[1])) best = { c, band, key }; } }
     if (!best) break;
     const { c, band } = best; const id = rid('g'); groups[id] = { id, band, gender: c.gender, counselorId: c.id, companyId: null, num: 0 }; members[id] = []; used.add(c.id);
@@ -1902,6 +1901,7 @@ PAGE_IMPL.companies = {
       if (shadowC[c.id]) return [c, `extra record: also listed as ${ROLES[shadowC[c.id].role].toLowerCase()}. Delete this record on the Staff page`];
       if (!c.gender) return [c, 'no gender on their record, so they cannot be matched to a group. Add it on the Staff page'];
       const sizeN = gsize(S.config, c.gender); const over = Object.values(G).filter(g => g.gender === c.gender && (memN[g.id] || 0) > sizeN).length;
+      if (S.config.useAll && !over) return [c, `average: there are not enough young ${c.gender === 'F' ? 'women' : 'men'} of the right age band for one more group. Press Rebalance if you just turned this on`];
       return [c, over ? `${over} ${c.gender === 'F' ? "young women's" : "young men's"} ${over === 1 ? 'group is' : 'groups are'} over ${sizeN}. Press Rebalance to give them a group` : `spare: every ${c.gender === 'F' ? "young women's" : "young men's"} group already has ${sizeN} or fewer. Available as a reserve or to swap in`];
     }).sort((a, b) => a[1].localeCompare(b[1]) || a[0].name.localeCompare(b[0].name));
     $('#coChart').innerHTML = `<div class="orgchart lead-grid"><div class="lead-col"><div class="tierlabel">Session Directing Couple</div><div class="tier">${by('sdc').map(s => node(s, `<small class="muted">${s.gender === 'F' ? 'Sister' : s.gender === 'M' ? 'Brother' : ''}</small>`)).join('') || '<span class="muted">Not added yet</span>'}</div>
@@ -1910,11 +1910,11 @@ PAGE_IMPL.companies = {
 </div>
       <div class="lead-col lead-wide"><div class="tierlabel">Assistant coordinators and counselors</div><div class="tier stat-tier">
         <div class="statnode"><div class="sn-top"><b>${acs.length}</b><span>assistant coordinators</span></div><ul><li><b>${acs.filter(a => acUsed.has(a.id)).length}</b> lead a company</li><li class="${acs.filter(a => !acUsed.has(a.id)).length ? 'warn' : ''}"><b>${acs.filter(a => !acUsed.has(a.id)).length}</b> spare</li></ul></div>
-        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list">${fitHint()}<p class="note" style="margin:10px 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul></div>` : ''}</div>`;
+        <div class="statnode"><div class="sn-top"><b>${by('counselor').length}</b><span>counselors</span></div><ul><li><b>${by('counselor').length - spare.length}</b> lead a group</li><li class="${spare.length ? 'warn' : ''}"><b>${spare.length}</b> without a group${spare.length && can.orgEdit() ? ` <button class="linkbtn" data-act="spareToggle">${UI.spareOpen ? 'Hide reasons' : 'See why'}</button>` : ''}</li></ul></div></div></div>${spare.length && UI.spareOpen && can.orgEdit() ? `<div class="spare-list">${fitHint()}<p class="note" style="margin:10px 0 6px"><b>Why ${spare.length} counselor${spare.length === 1 ? ' has' : 's have'} no group</b></p><ul>${spare.map(([c, why]) => `<li><b>${esc(c.name)}</b> ${c.gender ? chipG(c.gender) : ''} · ${esc(why)}</li>`).join('')}</ul>${spare.some(x => /^spare|average/.test(x[1])) ? (S.config.useAll ? `<p class="note useall-on"><b>Every counselor gets a group</b> is on. ${spare.some(x => /^average/.test(x[1])) ? '' : 'Press <b>Rebalance, keep groups</b> to hand them out.'} <button class="linkbtn" data-act="useAll" data-v="off">Turn off</button></p>` : `<div class="useall-go"><button class="btn small primary" data-act="useAll" data-v="on">Give every counselor a group anyway</button><small class="muted">Rebalances now. Groups of that gender and age get a little smaller.</small></div>`) : ''}</div>` : ''}</div>`;
     if ($('#coSizes')) {
       $('#coSizeN').textContent = `${gsize(S.config, 'F')} young women · ${gsize(S.config, 'M')} young men`;
       if (!$('#sizeForm')) $('#coSizes').innerHTML = `<form id="sizeForm" class="form size-form"><label>Young women per group<input id="szF" type="number" min="4" max="25" value="${gsize(S.config, 'F')}"></label><label>Young men per group<input id="szM" type="number" min="4" max="25" value="${gsize(S.config, 'M')}"></label><div class="size-go"><button class="btn primary" type="submit">Save sizes</button></div></form><p class="note" style="margin:6px 0 10px">After changing sizes, press <b>Rebalance, keep groups</b>. Groups over the new size get a free counselor of the same gender; nobody already in a group under the size is moved.</p><div id="coFit"></div>`;
-      $('#coFit').innerHTML = fitHint();
+      $('#coFit').innerHTML = (S.config.useAll ? `<p class="note useall-on"><b>Every counselor gets a group</b> is on: groups may be smaller than the set size so no counselor is left without one. <button class="linkbtn" data-act="useAll" data-v="off">Turn off</button></p>` : '') + fitHint();
     }
     let w = validate(S.P, S.org, S.staffMap, S.config);
     const limW = ['counselor', 'ac'].includes(role());
@@ -2381,23 +2381,53 @@ async function sfImport() {
   } catch (e) { fail(e); F.busy = null; }
   render();
 }
+/* official stakes and their wards (from the participant upload), plus places already used on staff records */
+function stAreas() {
+  const units = {}; const add = (st, un) => { if (!st) return; (units[st] = units[st] || new Set()); if (un) units[st].add(un); };
+  sfKnownUnits().forEach(([st, un]) => add(st, un)); S.staffList.forEach(x => add(x.stake, x.unit));
+  const out = { stakes: Object.keys(units).sort((a, b) => a.localeCompare(b)), units: {} };
+  for (const k in units) out.units[k] = [...units[k]].sort((a, b) => a.localeCompare(b)); return out;
+}
+function stUnitOpts(stake, sel) {
+  if (stake === '__other') return opt('__other', '+ Other ward or branch…', true);
+  const list = stake ? stAreas().units[stake] || [] : [];
+  return opt('', stake ? 'Choose…' : 'Choose the stake first', !sel) + list.map(x => opt(x, x, x === sel)).join('') + (stake ? opt('__other', '+ Other ward or branch…', sel === '__other') : '');
+}
+function stAgeText(bday, age) {
+  const a = bday ? ageOn(bday, S.config.sessionStart || '') : age;
+  if (a == null || isNaN(a)) return bday ? '' : 'Age is worked out from the birthdate';
+  return `${bday ? 'Age' : 'Age from the sign-up form'}: <b>${a}</b>${S.config.sessionStart ? ' at the session' : ''}${a < 19 ? ' · under 19, check the date' : ''}`;
+}
+function stAreaSync(changed) {
+  const ss = $('#stStakeSel'), us = $('#stUnitSel'), sn = $('#stStakeNew'), un = $('#stUnitNew'); if (!ss || !us) return;
+  const otherStake = ss.value === '__other';
+  if (changed === 'stake') { us.innerHTML = stUnitOpts(ss.value, otherStake ? '__other' : ''); if (un) un.value = ''; }
+  sn.hidden = !otherStake; un.hidden = !(otherStake || us.value === '__other');
+  const nt = $('#stOtherNote'); if (nt) nt.hidden = sn.hidden && un.hidden;
+  if (changed === 'stake' && otherStake) sn.focus(); else if (changed === 'unit' && !un.hidden) un.focus();
+}
 function openStaffForm(id) {
   const s = id ? S.staffMap[id] : null;
-  const stakes = uniq(S.P.map(p => p.stake).concat(S.staffList.map(x => x.stake)).filter(Boolean)).sort();
-  const units = uniq(S.P.map(p => p.unit).concat(S.staffList.map(x => x.unit)).filter(Boolean)).sort();
+  const A = stAreas(), stk = s ? s.stake || '' : '', unt = s ? s.unit || '' : '';
+  const stOther = !!stk && !A.stakes.includes(stk), unOther = !!unt && !(A.units[stk] || []).includes(unt);
+  const age = s ? staffAge(s, S.config) : null;
   openModal(`<div class="modal-head"><h2>${s ? 'Edit ' + esc(s.name) : 'Add a staff member'}</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
   <form id="stForm" class="form" data-id="${s ? esc(s.id) : ''}">
     <label class="span2">Full name<input id="stName" required value="${esc(s ? s.name : '')}" autocomplete="off"></label>
     <label>Role<select id="stRole">${STAFF_ROLES.map(r => opt(r, ROLES[r], r === (s ? s.role : UI.staffTab))).join('')}</select></label>
     <label>Gender<select id="stGender" required>${opt('', 'Choose…', !(s && s.gender))}${opt('F', 'Female', s && s.gender === 'F')}${opt('M', 'Male', s && s.gender === 'M')}</select></label>
-    <label>Age<input id="stAge" type="number" min="16" max="90" inputmode="numeric" value="${esc(s ? (staffAge(s, S.config) ?? '') : '')}"></label>
+    <label>Birthdate${s ? '' : ' *'}<input id="stBday" type="date" max="${isoUTC(new Date(Date.now() - 15 * 365.25 * 864e5))}" value="${esc(s ? s.bday || '' : '')}"><small class="muted st-age" id="stAgeOut">${stAgeText(s ? s.bday : '', s && !s.bday ? s.ageCsv : null)}</small></label>
+    <details class="span2 st-noage" ${s && !s.bday && s.ageCsv != null ? 'open' : ''}><summary>Don't know the birthdate? Enter the age instead</summary><label>Age<input id="stAge" type="number" min="16" max="90" inputmode="numeric" value="${esc(s && !s.bday && age != null ? age : '')}"></label></details>
     <label>Phone${s ? '' : ' *'}<input id="stPhone" inputmode="tel" ${s ? '' : 'required'} placeholder="07… or 01…" value="${esc(s ? s.phone || '' : '')}"></label>
     <label class="span2">Google (Gmail) email${s ? '' : ' *'} <small class="muted" style="font-weight:600">· links their sign-in account to this record</small><input id="stEmail" type="email" inputmode="email" autocomplete="off" placeholder="name@gmail.com" ${s ? '' : 'required'} value="${esc(s ? s.email || '' : '')}"></label>
-    <label>Stake / district${s ? '' : ' *'}<input id="stStake" list="dlStStakes" ${s ? '' : 'required'} value="${esc(s ? s.stake || '' : '')}" autocomplete="off"></label>
-    <label>Ward / branch${s ? '' : ' *'}<input id="stUnit" list="dlStUnits" ${s ? '' : 'required'} value="${esc(s ? s.unit || '' : '')}" autocomplete="off"></label>
+    <label>Stake / district${s ? '' : ' *'}<select id="stStakeSel">${opt('', 'Choose…', !stk)}${A.stakes.map(x => opt(x, x, x === stk)).join('')}${opt('__other', '+ Other stake or district…', stOther)}</select>
+      <input id="stStakeNew" placeholder="Type the stake or district" autocomplete="off" value="${esc(stOther ? stk : '')}" ${stOther ? '' : 'hidden'}></label>
+    <label>Ward / branch${s ? '' : ' *'}<select id="stUnitSel">${stUnitOpts(stOther ? '__other' : stk, unOther ? '__other' : unt)}</select>
+      <input id="stUnitNew" placeholder="Type the ward or branch" autocomplete="off" value="${esc(unOther ? unt : '')}" ${unOther || stOther ? '' : 'hidden'}></label>
+    <p class="note span2 st-other-note" id="stOtherNote" ${stOther || unOther ? '' : 'hidden'} style="margin:-4px 0 0">Places outside the official list are saved with this person only. They don't add youth areas or change the session's stakes and wards.</p>
     <label>T-shirt size<select id="stSize">${opt('', 'Not given', !(s && s.tshirt))}${SIZES.map(z => opt(z, SIZE_LABEL[z], s && s.tshirt === z)).join('')}</select></label>
     ${s ? '' : '<p class="note span2" style="margin:0">* Needed for every new staff member.</p>'}<div class="span2"><button class="btn primary" type="submit" style="width:100%">${s ? 'Save changes' : 'Add staff member'}</button></div>
-  </form><datalist id="dlStStakes">${stakes.map(x => `<option value="${esc(x)}">`).join('')}</datalist><datalist id="dlStUnits">${units.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`);
+  </form>`);
   setTimeout(() => { const n = $('#stName'); if (n && !s) n.focus(); }, 60);
 }
 
@@ -2954,6 +2984,11 @@ document.addEventListener('click', async e => {
     case 'coBand': UI.band = v; UI.frameKey = ''; render(); break;
     case 'allWarn': UI.allWarn = true; render(); break;
     case 'rebalance': await runRebalance(); break;
+    case 'useAll': {
+      const on = v === 'on', sz = { groupSizeF: gsize(S.config, 'F'), groupSizeM: gsize(S.config, 'M'), groupSize: gsize(S.config, 'F'), useAll: on };
+      if (on && !await confirmBox('Give every counselor a group?', `Counselors without a group each get a new group, made from one or two youth taken from the biggest groups of the same gender and age band. Groups end up smaller than ${sz.groupSizeF === sz.groupSizeM ? sz.groupSizeF : 'the set size'}. This stays on for future Rebalances until you turn it off.`, 'Give them groups')) break;
+      await saveSizes(sz); if (on) await runRebalance(); else toast('Turned off. Rebalance now fills groups up to the set size before opening new ones.');
+      UI.frameKey = ''; render(); break; }
     case 'renumber': await runRenumber(); break;
     case 'logClose': UI.genLog = null; render(); break;
     case 'info': { const c = $('#info-' + v); if (!c) break; c.hidden = !c.hidden; document.querySelectorAll(`.ibtn[data-v="${v}"]`).forEach(b => { b.setAttribute('aria-expanded', String(!c.hidden)); b.classList.toggle('on', !c.hidden); }); if (!c.hidden) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); break; }
@@ -3033,7 +3068,7 @@ document.addEventListener('click', async e => {
     case 'audMore': UI.audLimit = (UI.audLimit || 500) + 1000; render(); break;
     case 'audCsv': { const rows = [['When', 'Who', 'Email', 'Role', 'Kind', 'What']]; audFiltered().forEach(r => rows.push([new Date(r.at).toLocaleString(), r.name || '', r.email || '', ROLES[r.role] || r.role || '', AUDIT_KINDS[r.kind] || r.kind, r.text])); exportCSV('fsy-audit-log.csv', rows); break; }
     case 'spareToggle': UI.spareOpen = !UI.spareOpen; render(); break;
-    case 'fitSizes': { const f = fitSizes(); const F = f.F.fit || f.F.now, M = f.M.fit || f.M.now; if (!await confirmBox('Change group sizes?', `Young women: <b>${F}</b> per group (now ${f.F.now}). Young men: <b>${M}</b> per group (now ${f.M.now}). Press <b>Rebalance</b> afterwards: every counselor who is free gets a group, made from one or two youth from each of the biggest groups of the same gender and age band. Groups never drop below 6.`, 'Change sizes')) break; await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: true }); UI.frameKey = ''; render(); toast('Group sizes changed. Press Rebalance to apply them.'); break; }
+    case 'fitSizes': { const f = fitSizes(); const F = f.F.fit || f.F.now, M = f.M.fit || f.M.now; if (!await confirmBox('Change group sizes?', `Young women: <b>${F}</b> per group (now ${f.F.now}). Young men: <b>${M}</b> per group (now ${f.M.now}). Press <b>Rebalance</b> afterwards: every counselor who is free gets a group, made from one or two youth from each of the biggest groups of the same gender and age band.`, 'Change sizes')) break; await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: true }); UI.frameKey = ''; render(); toast('Group sizes changed. Press Rebalance to apply them.'); break; }
     case 'lgGo': { if (v === 'blank') { UI.foldSet = Object.assign(UI.foldSet || {}, { 'sec-tee': true }); if (location.hash === '#tee-blank') openFold('sec-tee'); else location.hash = 'tee-blank'; break; } openFold({ med: 'sec-med', diet: 'sec-diet', tee: 'sec-tee', steee: 'sec-steee' }[v]); break; }
     case 'accToggle': { const o = UI.accOpen || (UI.accOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); render(); break; }
     case 'accAllOpen': { UI.accOpen = new Set(v ? Object.keys(ROLES) : []); render(); break; }
@@ -3066,6 +3101,9 @@ document.addEventListener('change', async e => {
   if (t.id === 'accAll') { UI.accAll = t.checked; render(); return; }
   if (t.id === 'spDest') { UI.split.dest = t.value; t.blur(); render(); return; }
   if (t.name === 'spTeam') { UI.split.team = t.value; return; }
+  if (t.id === 'stStakeSel') { stAreaSync('stake'); return; }
+  if (t.id === 'stUnitSel') { stAreaSync('unit'); return; }
+  if (t.id === 'stBday') { const o = $('#stAgeOut'); if (o) o.innerHTML = stAgeText(t.value, null); return; }
   if (t.dataset && t.dataset.act === 'spUnit') { t.checked ? UI.split.sel.add(t.dataset.v) : UI.split.sel.delete(t.dataset.v); render(); return; }
   if (t.dataset && t.dataset.act === 'spStake') { const st = t.dataset.v; S.P.filter(p => areaOf(p).st === st).forEach(p => { const k = st + '|' + areaOf(p).un; t.checked ? UI.split.sel.add(k) : UI.split.sel.delete(k); }); render(); return; }
   if (t.id === 'viewAs') { S.viewAs = t.value || null; S.viewAsStaff = null; UI.coMineSet = false; UI.band = ''; UI.filterSet = false; UI.filter = 'all'; if (S.viewAs && ['counselor', 'ac', 'coordinator'].includes(S.viewAs)) { const s = S.staffList.find(x => x.role === S.viewAs && (S.viewAs !== 'counselor' || Object.values(S.org.groups).some(g => g.counselorId === x.id)) && (S.viewAs !== 'ac' || Object.values(S.org.companies).some(c => c.acId === x.id))); S.viewAsStaff = s ? s.id : null; if (s) toast('Previewing as ' + s.name); } UI.frameKey = ''; closeModal(); render(); return; }
@@ -3118,14 +3156,16 @@ document.addEventListener('submit', async e => {
   if (f.id === 'sizeForm') { const F = Math.max(4, Math.min(25, parseInt(val('szF'), 10) || 10)), M = Math.max(4, Math.min(25, parseInt(val('szM'), 10) || 10)); await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: false }); UI.frameKey = ''; render(); toast(`Sizes saved: ${F} young women, ${M} young men. Press Rebalance to apply them.`); return; }
   if (f.id === 'stForm') {
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
-    const age = parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
+    const bday = val('stBday') || '', age = bday ? ageOn(bday, S.config.sessionStart || '') : parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
+    if (bday && (age < 15 || age > 90)) { toast('That birthdate does not look right', true); return; }
+    const stakeV = val('stStakeSel') === '__other' ? titleCase(val('stStakeNew')) : val('stStakeSel'), unitV = val('stUnitSel') === '__other' || val('stStakeSel') === '__other' ? titleCase(val('stUnitNew')) : val('stUnitSel');
     const email = sfEmail(val('stEmail')); if (email && !okEmail(email)) { toast('That email does not look right', true); return; }
-    const V = { role: val('stRole'), phone: val('stPhone'), size: val('stSize'), stake: val('stStake'), unit: val('stUnit') }; /* read before any confirm box replaces the form */
-    if (!sid) { const miss = [['Google email', email], ['phone', clean(val('stPhone'))], ['stake or district', clean(val('stStake'))], ['ward or branch', clean(val('stUnit'))]].filter(x => !x[1]).map(x => x[0]); if (miss.length) { toast('Please add the ' + miss.join(', '), true); return; }
+    const V = { role: val('stRole'), phone: val('stPhone'), size: val('stSize'), stake: stakeV, unit: unitV }; /* read before any confirm box replaces the form */
+    if (!sid) { const miss = [['Google email', email], ['phone', clean(val('stPhone'))], ['birthdate', bday || (isNaN(age) ? '' : 'x')], ['stake or district', clean(stakeV)], ['ward or branch', clean(unitV)]].filter(x => !x[1]).map(x => x[0]); if (miss.length) { toast('Please add the ' + miss.join(', '), true); return; }
       if (!okPhone(sfPhone(val('stPhone')))) { toast('That phone number does not look right. Use 07… or 01…', true); return; }
       if (!/@(gmail|googlemail)\.com$/.test(email) && f.dataset.okEmail !== email) { f.dataset.okEmail = email; toast(`${email} is not a Gmail address. It only links if it is the Google account they sign in with. Press Add again to keep it.`, true); return; } }
     const dupE = email && S.staffList.find(x => x.id !== sid && (x.email || '').toLowerCase() === email); if (dupE) { toast(`${dupE.name} already has that email`, true); return; }
-    const rec = Object.assign({ addedAt: Date.now(), addedBy: S.meName || S.email || '' }, old, { id: sid || rid('S'), name, gender, ageCsv: isNaN(age) ? null : age, bday: sid && staffAge(old, S.config) === age ? old.bday || '' : '', role: V.role, phone: sfPhone(V.phone) || clean(V.phone), email, tshirt: V.size, stake: clean(V.stake), unit: clean(V.unit) });
+    const rec = Object.assign({ addedAt: Date.now(), addedBy: S.meName || S.email || '' }, old, { id: sid || rid('S'), name, gender, ageCsv: bday ? null : (isNaN(age) ? null : age), bday, role: V.role, phone: sfPhone(V.phone) || clean(V.phone), email, tshirt: V.size, stake: clean(V.stake), unit: clean(V.unit) });
     await saveStaffRec(rec); linkTried = {}; UI.staffTab = rec.role; closeModal(); toast(sid ? 'Saved' : name + ' added');
   }
   if (f.id === 'invForm') {

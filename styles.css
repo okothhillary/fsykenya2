@@ -700,3 +700,14 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 @media (min-width:900px){.mem select{font-size:.84rem}}
 @media (max-width:899px){.mem select{font-size:16px}}
 @media (max-width:360px){.mem{grid-template-columns:auto minmax(0,1fr)}.mem select{grid-column:2;justify-self:start;max-width:100%;margin-top:4px}}
+
+/* staff form: birthdate with the age worked out, and places outside the official list */
+.st-age{display:block;margin-top:4px;font-weight:600}
+.st-noage{margin:-6px 0 0}
+.st-noage summary{cursor:pointer;color:var(--blue,#006184);font-weight:600;font-size:.86rem;padding:2px 0}
+.st-noage label{margin-top:6px;max-width:220px}
+#stStakeNew,#stUnitNew{margin-top:6px}
+
+/* "give every counselor a group anyway" */
+.useall-go{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:10px}
+.useall-on{margin:10px 0 0;padding:8px 12px;border-radius:10px;background:rgba(141,188,86,.16);border:1px solid rgba(141,188,86,.45)}
