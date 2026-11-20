@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-20z2 · inner lists keep their scroll';
+const APP_VERSION = '2026-11-21b · blank sizes notice';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1774,6 +1774,94 @@ async function printForm(stake, unit) {
   await S.dl.save({ filename: name, data: new Blob([bytes], { type: 'application/pdf' }) });
   toast(`Check-in form ready: ${people.length} participants${unitNames.length > 1 ? ' in ' + unitNames.length + ' units' : ''}`);
 }
+/* The full T-shirt order as rows: size, youth (given and estimated), staff (given and estimated), total */
+function teeOrderRows(L) {
+  const { ST, est } = staffTee(), R = teeRedistribute(L);
+  const giv = {}; ST.forEach(x => { if (x.tshirt) giv[x.tshirt] = (giv[x.tshirt] || 0) + 1; });
+  const rows = [];
+  for (const s of sizesIn(giv, est, R.totals)) {
+    const yg = R.totals[s] ? R.totals[s].given : 0, ye = R.totals[s] ? R.totals[s].est : 0, sg = giv[s] || 0, se = est[s] || 0;
+    if (yg + ye + sg + se) rows.push({ s, label: SIZE_LABEL[s] || s, yg, ye, sg, se, y: yg + ye, st: sg + se, t: yg + ye + sg + se });
+  }
+  return rows;
+}
+/** Printable T-shirt order (A4), in the same style as the check-in forms */
+async function printTeeOrder() {
+  const L = UI.teeL || S.P.filter(p => p.inc || p.s), rows = teeOrderRows(L);
+  if (!rows.length) { toast('There are no T-shirt sizes to print yet.', true); return; }
+  toast('Preparing the order…');
+  let Lb; try { Lb = await loadPdfLib(); } catch (e) { toast('Could not load the PDF tool. Check your connection and try again.', true); return; }
+  const { PDFDocument, StandardFonts, rgb } = Lb;
+  const C = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+  const doc = await PDFDocument.create();
+  const sess = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
+  doc.setTitle(pdfSafe(`${sess} T-shirt order`)); doc.setAuthor(pdfSafe(sess)); doc.setCreator('FSY Check-in');
+  const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let logo = null; try { logo = await doc.embedPng(await logoPngBytes()); } catch (e) { }
+  const W = 595.28, H = 841.89, M = 36, ROW = 26, pg = doc.addPage([W, H]), top = H - M, bandH = 84;
+  const printed = new Date().toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const T = rows.reduce((a, r) => ({ yg: a.yg + r.yg, ye: a.ye + r.ye, sg: a.sg + r.sg, se: a.se + r.se, t: a.t + r.t }), { yg: 0, ye: 0, sg: 0, se: 0, t: 0 });
+  pg.drawRectangle({ x: M, y: top - bandH, width: W - 2 * M, height: bandH, color: C('#f6faf4') });
+  pg.drawRectangle({ x: M, y: top - bandH - 4, width: W - 2 * M, height: 4, color: C('#fcb449') });
+  let tx = M + 16; if (logo) { const sz = 62; pg.drawImage(logo, { x: M + 10, y: top - bandH + (bandH - sz) / 2, width: sz, height: sz }); tx = M + 84; }
+  pg.drawText(pdfSafe(`${sess.toUpperCase()}  -  T-SHIRT ORDER`), { x: tx, y: top - 22, size: 8, font: bold, color: C('#007da5') });
+  pg.drawText('Full order: youth and staff', { x: tx, y: top - 46, size: 19, font: bold, color: C('#002846') });
+  pg.drawText(pdfSafe(UI.logScope === 'in' ? 'Youth checked in now' : 'Everyone registered'), { x: tx, y: top - 64, size: 11.5, font, color: C('#005175') });
+  const rt = `${T.t} T-shirts`; pg.drawText(rt, { x: W - M - 14 - bold.widthOfTextAtSize(rt, 13), y: top - 46, size: 13, font: bold, color: C('#002846') });
+  const pr = pdfSafe('Printed ' + printed); pg.drawText(pr, { x: W - M - 14 - font.widthOfTextAtSize(pr, 8), y: top - 62, size: 8, font, color: C('#4f6f84') });
+  /* columns: size | youth given | youth est | youth | staff given | staff est | staff | total */
+  const X = { size: M + 10, yg: M + 190, ye: M + 245, y: M + 300, sg: M + 360, se: M + 410, st: M + 460, t: W - M - 12 };
+  const right = (t, x, y, f, sz, col) => pg.drawText(String(t), { x: x - f.widthOfTextAtSize(String(t), sz), y, size: sz, font: f, color: C(col || '#002846') });
+  let y = top - bandH - 36;
+  pg.drawRectangle({ x: M, y: y - 8, width: W - 2 * M, height: 36, color: C('#005175') });
+  const hd = (t, x, yy) => right(t, x, yy, bold, 8, '#ffffff');
+  pg.drawText('SIZE', { x: X.size, y: y + 4, size: 9, font: bold, color: C('#ffffff') });
+  hd('YOUTH', X.y, y + 14); hd('given', X.yg, y + 2); hd('est.', X.ye, y + 2); hd('total', X.y, y + 2);
+  hd('STAFF', X.st, y + 14); hd('given', X.sg, y + 2); hd('est.', X.se, y + 2); hd('total', X.st, y + 2);
+  hd('TO ORDER', X.t, y + 8);
+  y -= 8 + ROW - 6;
+  rows.forEach((r, i) => {
+    if (i % 2 === 1) pg.drawRectangle({ x: M, y: y - 9, width: W - 2 * M, height: ROW, color: C('#f6faf4') });
+    pg.drawLine({ start: { x: M, y: y - 9 }, end: { x: W - M, y: y - 9 }, thickness: 0.5, color: C('#d2e5ee') });
+    pg.drawText(pdfSafe(r.label), { x: X.size, y, size: 12, font: bold, color: C('#002846') });
+    right(r.yg, X.yg, y, font, 11, '#4f6f84'); right(r.ye ? '+' + r.ye : '0', X.ye, y, font, 11, '#4f6f84'); right(r.y, X.y, y, bold, 11.5);
+    right(r.sg, X.sg, y, font, 11, '#4f6f84'); right(r.se ? '+' + r.se : '0', X.se, y, font, 11, '#4f6f84'); right(r.st, X.st, y, bold, 11.5);
+    right(r.t, X.t, y, bold, 13);
+    y -= ROW;
+  });
+  pg.drawRectangle({ x: M, y: y - 9, width: W - 2 * M, height: ROW + 2, color: C('#e8f3f8') });
+  pg.drawText('All', { x: X.size, y, size: 12.5, font: bold, color: C('#002846') });
+  right(T.yg, X.yg, y, font, 11); right('+' + T.ye, X.ye, y, font, 11); right(T.yg + T.ye, X.y, y, bold, 12);
+  right(T.sg, X.sg, y, font, 11); right('+' + T.se, X.se, y, font, 11); right(T.sg + T.se, X.st, y, bold, 12);
+  right(T.t, X.t, y, bold, 14);
+  y -= 34;
+  /* blank sizes: how many, and that they can be shared out differently */
+  const nb = T.ye + T.se;
+  if (nb) {
+    const msg = pdfSafe(`${nb} T-shirt${nb === 1 ? ' was' : 's were'} ordered for people who gave no size (${T.ye} youth, ${T.se} staff). They are shared out above in the same proportions as everyone who did give a size. Adjust them to suit the group, for example more small sizes for younger youth.`);
+    const lines = []; let line = ''; for (const w of msg.split(' ')) { const nx = line ? line + ' ' + w : w; if (font.widthOfTextAtSize(nx, 10) > W - 2 * M - 40) { lines.push(line); line = w; } else line = nx; } if (line) lines.push(line);
+    const bh = 26 + lines.length * 14;
+    pg.drawRectangle({ x: M, y: y - bh + 14, width: W - 2 * M, height: bh, color: C('#fff4e0'), borderColor: C('#fcb449'), borderWidth: 1 });
+    pg.drawRectangle({ x: M, y: y - bh + 14, width: 4, height: bh, color: C('#fcb449') });
+    pg.drawText(pdfSafe(`${nb} blank size${nb === 1 ? '' : 's'}`), { x: M + 16, y: y - 2, size: 11, font: bold, color: C('#7a4b00') });
+    let ly = y - 18; lines.forEach(l => { pg.drawText(l, { x: M + 16, y: ly, size: 10, font, color: C('#002846') }); ly -= 14; });
+    y -= bh + 14;
+  }
+  const notes = [
+    'Given: the size each person chose. Est.: people who gave no size, shared out in the same proportions as those of the same group who did.',
+    `Youth: ${UI.logScope === 'in' ? 'only those checked in now' : 'everyone registered'}. Staff: every staff member except test records.`
+  ];
+  notes.forEach(t => { const words = pdfSafe(t).split(' '); let line = ''; for (const w of words) { const nx = line ? line + ' ' + w : w; if (font.widthOfTextAtSize(nx, 9) > W - 2 * M - 8) { pg.drawText(line, { x: M + 4, y, size: 9, font, color: C('#4f6f84') }); y -= 13; line = w; } else line = nx; } if (line) { pg.drawText(line, { x: M + 4, y, size: 9, font, color: C('#4f6f84') }); y -= 17; } });
+  y -= 10;
+  pg.drawText('Ordered by: ______________________________', { x: M + 4, y, size: 10.5, font, color: C('#002846') });
+  pg.drawText('Date: _______________', { x: M + 330, y, size: 10.5, font, color: C('#002846') });
+  pg.drawLine({ start: { x: M, y: M + 14 }, end: { x: W - M, y: M + 14 }, thickness: 0.5, color: C('#cfe3ec') });
+  pg.drawText(pdfSafe(`${sess}  -  T-shirt order`), { x: M, y: M, size: 8, font, color: C('#4f6f84') });
+  const bytes = await doc.save();
+  await S.dl.save({ filename: pdfSafe(`T-shirt order - ${sess}.pdf`).replace(/[\\/:*?"<>|]+/g, ''), data: new Blob([bytes], { type: 'application/pdf' }) });
+  audit('settings', `Downloaded the T-shirt order (${T.t} shirts)`);
+  toast(`T-shirt order ready: ${T.t} shirts`);
+}
 /** Printable staff list (A4) for one role, grouped by stake or district and then ward or branch. */
 async function printStaffList(role, onlyStake) {
   const list = S.staffList.filter(s => s.role === role && (!onlyStake || (s.stake || NO_STAFF_STAKE) === onlyStake));
@@ -2246,10 +2334,12 @@ function staffTeeBlock(L) {
   h += `<tr><td><b>All</b></td><td class="n">${ST.filter(x => x.tshirt && x.gender === 'F').length}</td><td class="n">${ST.filter(x => x.tshirt && x.gender === 'M').length}</td><td class="n">${tg}</td><td class="n est">+${te}</td><td class="n"><b>${tg + te}</b></td></tr></tbody></table></div>`;
   const blanks = ST.filter(x => !x.tshirt);
   h += `<p class="note">${blanks.length ? `${blanks.length} staff gave no size (${blanks.slice(0, 6).map(x => esc(x.name)).join(', ')}${blanks.length > 6 ? ' and ' + (blanks.length - 6) + ' more' : ''}). Each blank is estimated from staff of the same gender who did give a size.` : 'Every staff member gave a size.'} Test staff are left out.</p>`;
-  h += `<p class="th" style="margin:18px 0 6px">Full order: youth and staff</p><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Youth</th><th class="n">Staff</th><th class="n">Total to order</th></tr></thead><tbody>`;
+  UI.teeL = L;
+  h += `<div class="tee-order-head"><p class="th" style="margin:18px 0 6px">Full order: youth and staff</p><button class="btn small" data-act="teePdf">${ICONS.print} Download order (PDF)</button></div><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Youth</th><th class="n">Staff</th><th class="n">Total to order</th></tr></thead><tbody>`;
   let ty = 0, ts = 0;
   for (const s of sizes) { const y = R.totals[s] ? R.totals[s].given + R.totals[s].est : 0, st = (giv[s] || 0) + (est[s] || 0); if (!y && !st) continue; ty += y; ts += st; h += `<tr><td><b>${esc(SIZE_LABEL[s] || s)}</b></td><td class="n">${y}</td><td class="n">${st}</td><td class="n"><b>${y + st}</b></td></tr>`; }
-  h += `<tr class="total"><td>All</td><td class="n">${ty}</td><td class="n">${ts}</td><td class="n">${ty + ts}</td></tr></tbody></table></div><p class="note">Youth follow the "${UI.logScope === 'in' ? 'Checked in now' : 'Everyone registered'}" choice at the top of the page.</p>`;
+  const yBlank = Object.values(R.totals).reduce((a, x) => a + (x.est || 0), 0), sBlank = Object.values(est).reduce((a, b) => a + b, 0);
+  h += `<tr class="total"><td>All</td><td class="n">${ty}</td><td class="n">${ts}</td><td class="n">${ty + ts}</td></tr></tbody></table></div>${yBlank + sBlank ? `<div class="tee-blank"><b>${nn(yBlank + sBlank, 'blank size')}</b> (${yBlank} youth, ${sBlank} staff) ${yBlank + sBlank === 1 ? 'is' : 'are'} included above, shared out like everyone who gave a size. Adjust them to suit the group, for example more small sizes for younger youth.</div>` : ''}<p class="note">Youth follow the "${UI.logScope === 'in' ? 'Checked in now' : 'Everyone registered'}" choice at the top of the page.</p>`;
   return h;
 }
 
@@ -2935,7 +3025,8 @@ PAGE_IMPL.planner = {
     box.innerHTML = `<div class="pl-cards">${ids.map(card).join('')}</div>
       <section class="panel"><div class="panel-head"><h2>Move stakes and units</h2><label class="inline"><input type="checkbox" data-act="plStaff" ${PLAN.staffMove ? 'checked' : ''}> Staff move with their unit</label></div>
         ${bar}
-        <p class="note" style="margin:0 0 8px">Moved units appear under their new session in amber. Press × to move one back. Nothing changes in any session until you apply.</p>
+        <div class="pl-warn"><b>Only press Apply if you want to make the changes official.</b> Apply really moves youth${PLAN.staffMove ? ' and staff' : ''} between sessions. To just see how the numbers would look, use <b>Move</b>, then <b>Clear plan</b> when you are done.</div>
+        <p class="note" style="margin:0 0 8px">Moved units appear under their new session in amber. Press × to move one back.</p>
         ${ids.map(d => { const t = T[d]; return `<details class="pl-src ${PLAN.virt[d] ? 'virt' : ''}" open><summary><b>${esc(D[d].name)}</b>${PLAN.virt[d] ? ' <span class="chip info">New</span>' : ''} <span class="muted">· ${t.n} youth after the plan</span></summary><div class="pl-tree">${group(d)}</div></details>`; }).join('')}
         ${ch.length ? (() => { const g = {}; ch.forEach(c => { const k = c.src + '>' + c.dest; const x = g[k] = g[k] || { src: c.src, dest: c.dest, st: new Set(), un: 0, y: 0, s: 0 }; x.st.add(c.st); x.un++; x.y += c.youth.filter(y => y.inc).length; x.s += c.staff.length; });
           return `<div class="pl-sum"><ul>${Object.values(g).map(x => `<li><b>${x.y} youth</b>${x.s ? ` and ${nn(x.s, 'staff member')}` : ''} from ${esc(D[x.src].name)} to <b>${esc(D[x.dest].name)}</b> <span class="muted">· ${nn(x.un, 'unit')} in ${nn(x.st.size, 'stake or district', 'stakes and districts')}</span></li>`).join('')}</ul><button class="btn primary" data-act="plApply">Apply ${nn(ch.length, 'change')}</button></div>`; })() : ''}</section>`;
@@ -3494,6 +3585,7 @@ document.addEventListener('click', async e => {
       exportCSV('no-mrn-youth-' + new Date().toISOString().slice(0, 10) + '.csv', [['Stake / district', 'Ward / branch', 'Bishop or branch president', 'Bishop email', 'First name', 'Last name', 'Birthday', 'Age', 'Phone', 'Contact 1 name', 'Contact 1 phone', 'Registration ID', 'Is a member? (bishop to fill in)']].concat(L.map(p => [areaOf(p).st, areaOf(p).un, p.bishopN || '', p.bishopE || '', p.first || '', p.last || '', p.bday || '', p.age ?? '', p.phone || '', p.c1n || '', p.c1p || '', p.id, '']))); audit('settings', `Exported the list of ${L.length} youth with no MRN`); break; }
     case 'nmToggle': { const o = UI.nmOpen || (UI.nmOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); renderNonMembers(); break; }
     case 'dupDelAll': await deleteDuplicates(v === 'likely'); break;
+    case 'teePdf': await printTeeOrder(); break;
     case 'nmShow': openFold('nmPanel'); break;
     case 'dupAll': UI.dupAll = !UI.dupAll; renderDups(); break;
     case 'logClose': UI.genLog = null; render(); break;
