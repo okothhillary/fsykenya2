@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-20y · clearer session planner';
+const APP_VERSION = '2026-11-20z2 · inner lists keep their scroll';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1507,6 +1507,10 @@ function gateView() {
   }
   return null;
 }
+/* lists that scroll inside the page (stake pickers, wide tables) keep their place when redrawn */
+function scrollKey(el) { const m = $('#main'); const cls = String(el.className || '').trim().split(/\s+/).filter(Boolean).join('.'); const sel = el.id ? '#' + CSS.escape(el.id) : el.tagName.toLowerCase() + (cls ? '.' + cls.split('.').map(c => CSS.escape(c)).join('.') : ''); const all = [...m.querySelectorAll(sel)]; return [sel, all.indexOf(el)]; }
+function innerScrolls() { const m = $('#main'); if (!m) return []; const out = []; m.querySelectorAll('*').forEach(el => { if (el.scrollTop > 0 || el.scrollLeft > 0) out.push([scrollKey(el), el.scrollTop, el.scrollLeft]); }); return out; }
+function restoreScrolls(list) { const m = $('#main'); if (!m || !list) return; for (const [[sel, i], t, l] of list) { const el = m.querySelectorAll(sel)[i]; if (el) { el.scrollTop = t; el.scrollLeft = l; } } }
 function render() {
   if (UI.pending) return;
   const ae = document.activeElement;
@@ -1516,16 +1520,17 @@ function render() {
   if (gate) { const gk = 'gate' + fnv(gate); if (UI.frameKey !== gk) { $('#main').innerHTML = gate; UI.frameKey = gk; } return; }
   const pg = currentPage(); const key = pg + '|' + role() + '|' + (myStaffId() || '');
   const page = PAGE_IMPL[pg];
-  let keepY = null, refocus = null;
+  let keepY = null, refocus = null, inner = null;
   if (UI.frameKey !== key) { $('#main').innerHTML = page.frame(); UI.frameKey = key; window.scrollTo(0, 0); }
   else {
     /* redrawing a list must not move the page (Safari has no scroll anchoring), and a ticked box keeps focus */
-    keepY = window.scrollY;
+    keepY = window.scrollY; inner = innerScrolls();
     if (ae && ae.dataset && ae.dataset.act && ae.tagName === 'INPUT' && $('#main').contains(ae)) refocus = `input[data-act="${ae.dataset.act}"]` + (ae.dataset.v != null ? `[data-v="${CSS.escape(ae.dataset.v)}"]` : '');
   }
   page.update();
   if (keepY != null) {
     if (Math.abs(window.scrollY - keepY) > 1) window.scrollTo(0, keepY);
+    restoreScrolls(inner);
     if (refocus) { const el = $('#main').querySelector(refocus); if (el && document.activeElement !== el) try { el.focus({ preventScroll: true }); } catch (e) { } }
   }
   if (can.readOnly()) lockReadOnly(pg); else if (pg === 'headcount' && hcViewOnly()) lockReadOnly(pg);
@@ -3169,11 +3174,28 @@ PAGE_IMPL.data = {
     renderImport();
   }
 };
+/* After an upload: how many of the uploaded youth count, and why the others don't */
+function impBreakdown(ids) {
+  if (!ids.length) return '';
+  const byId = {}; S.P.forEach(p => byId[p.id] = p);
+  const del = ids.filter(id => ((S.state[bucketOf(id)] || {})[id] || {}).del), present = ids.map(id => byId[id]).filter(Boolean);
+  if (present.length + del.length < ids.length) return '<p class="note" style="margin:6px 0 0">Counting…</p>';
+  const counted = present.filter(p => p.inc), out = present.filter(p => !p.inc);
+  const why = { status: 0, area: 0, nonmember: 0, hand: 0 };
+  out.forEach(p => { if (p.ov === 'exc') why.hand++; else if (p.flags.includes('status')) why.status++; else if (p.flags.includes('area')) why.area++; else if (p.flags.includes('nonmember')) why.nonmember++; });
+  const li = [];
+  if (why.status) li.push(`<li><b>${why.status}</b> have a status that is unticked under Registration statuses (for example cancelled)</li>`);
+  if (why.area) li.push(`<li><b>${why.area}</b> are in stakes or units that are unticked in the list of stakes, wards and branches below</li>`);
+  if (why.nonmember) li.push(`<li><b>${why.nonmember}</b> have no MRN, and "no MRN" is unticked under Registration statuses</li>`);
+  if (why.hand) li.push(`<li><b>${why.hand}</b> were left out by hand on their record</li>`);
+  if (del.length) li.push(`<li><b>${del.length}</b> were deleted in the app before (for example as duplicates), so they stay hidden. <button class="linkbtn" data-act="impRestore">Bring them back</button></li>`);
+  return `<p style="margin:6px 0 0"><b>${counted.length}</b> of ${ids.length} count as registered in this session.</p>${li.length ? `<ul class="imp-why">${li.join('')}</ul>` : ''}<p class="note" style="margin:4px 0 0">Next: check Possible duplicates and No MRN, then press Rebalance on Companies & groups.</p>`;
+}
 function renderImport() {
   const box = $('#impBox'); if (!box) return; const I = UI.imp; const pnl = $('#impPanel');
   if (pnl) { const was = pnl.hidden; pnl.hidden = !I; if (was && I && !I.done) pnl.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   if (!I) { box.innerHTML = ''; return; }
-  if (I.done) { box.innerHTML = `<div class="log"><button class="x log-x" data-act="impCancel" aria-label="Dismiss">×</button>${esc(I.done)}</div>`; return; }
+  if (I.done) { box.innerHTML = `<div class="log"><button class="x log-x" data-act="impCancel" aria-label="Dismiss">×</button><b>${esc(I.done)}</b>${impBreakdown(I.ids || [])}</div>`; return; }
   const fieldOpts = sel => opt('', '— Ignore') + FIELDS.map(([k, l]) => opt(k, l, k === sel)).join('');
   const rec = rowsToRecords(I.rows, I.map, I.mode, Date.now());
   const byRole = {}; rec.staff.forEach(s => byRole[s.role] = (byRole[s.role] || 0) + 1);
@@ -3292,7 +3314,7 @@ async function doImport() {
     if (rec.staff.length) { const s = {}; rec.staff.forEach(x => { if (!S.staff[x.id]) { x.addedAt = Date.now(); x.addedBy = S.meName || ''; } else if (S.staff[x.id].addedAt) x.addedAt = S.staff[x.id].addedAt; s[x.id] = x; }); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex); }
     await saveConfig({ partCols: { headers: I.rows[0].map(h => String(h == null ? '' : h)), map: Object.fromEntries(Object.entries(I.map).map(([k, v]) => [String(k), v])) } });
     audit('settings', `Uploaded ${I.name}: ${rec.participants.length} participants and ${rec.staff.length} staff`);
-    UI.imp = { done: `Imported ${rec.participants.length} participants and ${rec.staff.length} staff. Next: untick excluded areas below, then generate companies on the Companies & groups tab.` };
+    UI.imp = { done: `Imported ${rec.participants.length} participants and ${rec.staff.length} staff.`, ids: rec.participants.map(p => p.id) };
   } catch (e) { fail(e); I.busy = null; }
   renderImport();
 }
@@ -3610,6 +3632,9 @@ document.addEventListener('click', async e => {
     case 'stDel': { const st = S.staffMap[id]; if (st && st.fromAccount) { toast('This person comes from Accounts. Delete or change their account there.', true); break; } if (!await confirmBox(`Delete ${st.name}?`, 'If they lead a group or company, it loses its leader. Press Rebalance afterwards to fill the gap.', 'Delete', true)) break; audit('staff', `Deleted staff member ${st.name}`, id); const s = Object.assign({}, S.staff); delete s[id]; S.staff = s; recompute(true); await setDoc('staff/all', { s }).catch(fail); toast('Deleted'); break; }
     case 'impGo': await doImport(); break;
     case 'impPick': { const f = $('#impFile'); if (f) { f.value = ''; f.click(); } break; }
+    case 'impRestore': { const ids = ((UI.imp || {}).ids || []).filter(id => ((S.state[bucketOf(id)] || {})[id] || {}).del); if (!ids.length) break;
+      if (!await confirmBox(`Bring back ${nn(ids.length, 'participant')}?`, 'These records were deleted in the app before, for example as duplicates, and the upload contains them again. They come back as normal participants, without a group.', 'Bring them back')) break;
+      const st = {}; ids.forEach(id => st[id] = { del: null }); await setStates(st); audit('settings', `Brought back ${ids.length} deleted participants from the upload`); toast(`${nn(ids.length, 'participant')} brought back`); renderImport(); break; }
     case 'impCancel': UI.imp = null; renderImport(); const f = $('#impFile'); if (f) f.value = ''; break;
     case 'reqDel': audit('accounts', `Dismissed the sign-in request from ${(S.requests[id] || {}).name || (S.requests[id] || {}).email || 'someone'}`); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(fail); break;
     case 'invDel': { const v = S.invites[id]; if (!await confirmBox(`Delete ${v.name}'s account?`, 'They lose access to the app straight away. Their check-ins stay.', 'Delete account', true)) break; audit('accounts', `Deleted the account of ${v.name} (${id})`, id); await serial('invites/' + id, () => S.db.doc('invites/' + id).delete()).catch(fail); toast('Account deleted'); break; }
