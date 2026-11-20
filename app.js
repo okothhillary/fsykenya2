@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-20k · no MRN list folds by stake and unit';
+const APP_VERSION = '2026-11-20m · MRN chip on duplicate cards';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -2809,7 +2809,7 @@ function dupCard(x, tag) {
   const meta = [kind, isP && r.src !== 'walkin' ? 'ID ' + (r.id.length > 12 ? r.id.slice(0, 8) + '…' : r.id) : '', isP && r.status ? r.status.replace(/_/g, ' ').toLowerCase() : '', r.tshirt ? 'T-shirt ' + r.tshirt : '', x.age != null ? 'age ' + x.age : '', x.bday ? dmyStr(x.bday) : '', [r.unit, r.stake].filter(Boolean).join(', '), r.phone || '', r.email || '', where].filter(Boolean);
   const del = isP ? (can.deleteP() ? `<button class="btn small danger adm" data-act="delP" data-id="${esc(r.id)}">Delete</button>` : '') : (can.staff() ? `<button class="btn small danger adm" data-act="stDel" data-id="${esc(r.id)}">Delete</button>` : '');
   const w = dupWhen(x), when = w ? `${isP && r.src !== 'walkin' ? 'Registered' : 'Added'} ${new Date(w).toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : 'Date not known';
-  return `<div class="dup-card"><div class="dup-top">${tag ? `<span class="chip ${tag === 'Newer' ? 'info' : ''}">${tag}</span>` : ''}<small class="dup-when">${esc(when)}</small></div><a href="#" data-act="${isP ? 'detail' : 'stEdit'}" data-id="${esc(r.id)}"><b>${esc(x.name)}</b></a><small class="muted">${meta.map(esc).join(' · ')}</small>${del}</div>`;
+  return `<div class="dup-card"><div class="dup-top">${tag ? `<span class="chip ${tag === 'Newer' ? 'info' : ''}">${tag}</span>` : ''}<small class="dup-when">${esc(when)}</small>${isP && r.src !== 'walkin' ? (r.member === true ? '<span class="chip good">Has MRN</span>' : r.member === false ? '<span class="chip warn">No MRN</span>' : '<span class="chip">MRN not known</span>') : ''}</div><a href="#" data-act="${isP ? 'detail' : 'stEdit'}" data-id="${esc(r.id)}"><b>${esc(x.name)}</b></a><small class="muted">${meta.map(esc).join(' · ')}</small>${del}</div>`;
 }
 function dmyStr(iso) { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; }
 function renderNonMembers() {
@@ -2845,7 +2845,8 @@ function renderDups() {
   const D = findDuplicates(), n = $('#dupN'); if (n) { n.textContent = D.length || 'None'; n.className = 'chip ' + (D.some(d => d.high) ? 'bad' : D.length ? 'warn' : 'good'); }
   if (!D.length) { box.innerHTML = '<p class="note">None found.</p>'; return; }
   const show = UI.dupAll ? D : D.slice(0, DUP_LIMIT);
-  box.innerHTML = `<div class="dup-list">${show.map(d => `<div class="dup ${d.high ? 'high' : ''}"><div class="dup-why"><span class="chip ${d.high ? 'bad' : 'warn'}">${d.high ? 'Likely' : 'Possible'}</span>${d.why.map(w => `<span class="chip">${esc(w)}</span>`).join('')}<button class="linkbtn adm" data-act="dupIgnore" data-v="${esc(d.key)}">Not a duplicate</button></div>${(() => { const [o, n] = dupWhen(d.a) <= dupWhen(d.b) ? [d.a, d.b] : [d.b, d.a], same = dupWhen(o) === dupWhen(n) || !dupWhen(o) || !dupWhen(n), df = dupDiffs(o, n); return `<div class="dup-pair">${dupCard(o, same ? '' : 'Older')}${dupCard(n, same ? '' : 'Newer')}</div>${df.length ? `<p class="note dup-diff"><b>${same ? 'Differs' : 'Changed in the newer one'}:</b> ${df.map(esc).join(' · ')}</p>` : ''}`; })()}</div>`).join('')}</div>
+  const pp = D.filter(d => d.a.kind === 'p'), nm = pp.filter(d => d.a.rec.member === false || d.b.rec.member === false).length, known = S.P.some(p => p.member != null);
+  box.innerHTML = `${known && pp.length ? `<p class="note" style="margin:0 0 8px"><b>${nm} of ${nn(pp.length, 'participant pair')}</b> involve a youth with no MRN.</p>` : ''}<div class="dup-list">${show.map(d => `<div class="dup ${d.high ? 'high' : ''}"><div class="dup-why"><span class="chip ${d.high ? 'bad' : 'warn'}">${d.high ? 'Likely' : 'Possible'}</span>${d.why.map(w => `<span class="chip">${esc(w)}</span>`).join('')}<button class="linkbtn adm" data-act="dupIgnore" data-v="${esc(d.key)}">Not a duplicate</button></div>${(() => { const [o, n] = dupWhen(d.a) <= dupWhen(d.b) ? [d.a, d.b] : [d.b, d.a], same = dupWhen(o) === dupWhen(n) || !dupWhen(o) || !dupWhen(n), df = dupDiffs(o, n); return `<div class="dup-pair">${dupCard(o, same ? '' : 'Older')}${dupCard(n, same ? '' : 'Newer')}</div>${df.length ? `<p class="note dup-diff"><b>${same ? 'Differs' : 'Changed in the newer one'}:</b> ${df.map(esc).join(' · ')}</p>` : ''}`; })()}</div>`).join('')}</div>
     ${D.length > DUP_LIMIT ? `<button class="btn small" data-act="dupAll">${UI.dupAll ? 'Show fewer' : `Show all ${D.length}`}</button>` : ''}`;
 }
 
