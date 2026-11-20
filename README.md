@@ -3,11 +3,6 @@
 This is a simple fsy check-in app built on a focus-perspective: considering what check-in processes look like at fsy and building backwards from that. All functions purely come from mapping those processes, to avoid a bloated app.
 
 This guide explains how `app.js` is built and what every function does, grouped by the tab or part of the app it serves, which represent what leaders and teams at fsy need for check-in and company generation. 
-
-The setup steps (Firebase, GitHub Pages, accounts) are in `README.md`.
-
-Version described: **2026-11-19c**. Function names are the exact names in `app.js`, so you can search for them (Ctrl+F) in any editor.
-
 ---
 
 ## 1. The files
@@ -24,7 +19,7 @@ Version described: **2026-11-19c**. Function names are the exact names in `app.j
 
 ---
 
-## 2. The big picture
+## 2. Overview
 
 ```
  Firebase (live database)
@@ -449,7 +444,54 @@ Who sees it: the registration admin only.
 
 ---
 
-## 6. The events section (bottom of `app.js`)
+## 6. File formats for uploads
+
+Neither upload needs a fixed template. The first row must hold the column names. Column order doesn't matter, and columns the app doesn't recognise are ignored.
+
+### Staff sign-up form (Staff page, Import staff)
+
+Each column name is matched by keywords (`SF_FIELDS` and `sfMap` in `app.js`). Matching isn't case-sensitive, and a column name only needs to contain the keyword. Each field takes the first column that matches it, and every column is tested against the fields in this order:
+
+| Order | Field | Column name containing | Needed? |
+|---|---|---|---|
+| 1 | Timestamp | timestamp, submitted, submission | No. Used to keep the newest answer when someone sent the form twice. |
+| 2 | Email | email, e-mail | Strongly advised. It links the person's Google sign-in to their record. |
+| 3 | Birthdate | birth, dob | Advised. The age and best age band come from it. |
+| 4 | Phone | phone, mobile, tel, contact | Advised. Cleaned to 07… or 01…. |
+| 5 | Stake / district | stake, district | No. If missing, it's worked out from the ward. |
+| 6 | Ward / branch | ward, branch, unit, congregation | Advised. Matched to its stake or district. |
+| 7 | T-shirt | shirt, size | No. |
+| 8 | Gender | gender, sex | Needed to lead a group. Male/Female, M/F, Brother/Sister. |
+| 9 | Food | food, allerg, diet | No. |
+| 10 | Medical | medic, health | No. |
+| 11 | Type (role) | role, type, position, calling, assignment, category | Advised. Values: Counselor, AC or Assistant coordinator, Coordinator, and more. |
+| 12 | Name | name | **Required.** The full name in one column. |
+
+Watch out for:
+
+- A column name that contains an earlier keyword is taken by that field. "Emergency **contact** name" becomes the phone, and "**Shoe size**" becomes the T-shirt. Rename such columns, or delete them before uploading.
+- There is no Age column. Give a Birthdate instead, or add the age later on the Staff page.
+- Dates can be day/month/year (30/12/2002, the Kenyan way), year-month-day, or real Excel dates.
+- **Without a Type column**, the import asks "Everyone in this file is…". People already on the list keep their current role, and new people get the role you choose.
+- The same person sending the form twice (same email, phone or name) is merged. Importing again updates people instead of adding them twice.
+- The staff import has no screen for changing the column matches. If a column isn't picked up, rename it in the file.
+
+### Participant export (Data & areas, Upload participants or staff)
+
+Matching is stricter here (`FIELDS` and `autoMap`). It first looks for an exact column name such as "First Name", "Birthday" or "Stake - District Name", then for a name that contains one. **The preview lets you change any match** before saving. The FSY portal export works as it is.
+
+- **Registration ID** is the key, so a newer export updates people without losing check-ins or groups. Without it, a code made from the name, birthday and ward is used instead.
+- A **Type** column decides participant, counselor or assistant coordinator. Without it, choose the mode in the preview.
+
+### Reusing this for another event
+
+- Changing the column keywords means editing `SF_FIELDS` (staff) or the alias lists in `FIELDS` (participants). Keep the more specific keywords near the top of `SF_FIELDS`, because the first match wins.
+- The ward-to-stake rules for Kenya (for example Buruburu, Nairobi 1st Ward and South B belong to Nairobi Kenya South Stake) live in the `BUILTIN_UNITS` list near the top of the staff-form code, plus the ward choices you confirm during an import (saved as unit aliases in the session settings). Replace `BUILTIN_UNITS` for another area. The other wards come from the participant upload.
+- Phone cleaning assumes Kenyan numbers (`sfPhone`, `okPhone`). Change those for another country.
+
+---
+
+## 7. The events section (bottom of `app.js`)
 
 Three listeners handle everything you do on the page:
 
@@ -463,7 +505,7 @@ To add a new button: give it `data-act="myThing"`, then add `case 'myThing': …
 
 ---
 
-## 7. Tips for changing things safely
+## 8. Tips for changing things safely
 
 - **Change permissions in two places:** the `can` checks in `app.js` (what people see) and `firestore.rules` (what the database allows).
 - **Counts:** use `isExpected(p)` for "expected" so every tab agrees.
