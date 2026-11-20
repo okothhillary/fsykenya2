@@ -758,3 +758,56 @@ td.st-act .st-del{display:block;margin-top:6px}
 .nm-row .nm-n{margin-left:auto;font-weight:700;font-size:.88rem}
 .nm-row:hover{background:rgba(0,125,165,.07)}
 .nm-tbl{border:0;border-radius:0;border-top:1px solid var(--line);margin:0 0 0 34px}
+
+/* delete-all buttons on Possible duplicates, and the new-session form */
+.dup-bulk{justify-content:flex-start}
+.ns-form{grid-template-columns:2fr 1fr auto;align-items:end}
+.ns-go{display:flex;align-items:end}
+@media (max-width:700px){.ns-form{grid-template-columns:1fr}}
+.sess-act{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* plan sessions */
+.pl-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:16px}
+.pl-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:0 4px 14px rgba(0,40,70,.05)}
+.pl-card h3{margin:0 0 8px;font-size:1.05rem}
+.pl-big{font-size:1rem;margin-bottom:6px}.pl-big b{font-size:2rem;line-height:1}
+.pl-stats{list-style:none;margin:0;padding:0;font-size:.9rem}
+.pl-stats li{padding:3px 0;border-top:1px solid var(--line)}
+.pl-stats li.warn{color:#9a5a00}
+.pl-d{font-weight:800;margin-left:4px;padding:1px 6px;border-radius:999px}
+.pl-d.up{background:rgba(141,188,86,.25);color:#2f6b1d}.pl-d.down{background:rgba(214,75,58,.15);color:#a2321f}
+.pl-src{border:1px solid var(--line);border-radius:12px;margin:10px 0;overflow:hidden}
+.pl-src>summary{padding:10px 14px;cursor:pointer;background:rgba(0,74,124,.05)}
+.pl-row{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line)}
+.pl-row.un{padding-left:38px;background:rgba(0,74,124,.025)}
+.pl-row.moved{background:rgba(252,180,73,.16)}
+.pl-name{flex:1;min-width:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:none;border:0;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer}
+span.pl-name{cursor:default}
+.pl-name .caret{color:var(--blue25);width:12px}
+.pl-row select{max-width:240px;padding:6px 8px}
+.pl-sum{margin-top:12px;padding:10px 14px;border-radius:12px;background:rgba(252,180,73,.14);font-size:.9rem}
+@media (max-width:640px){.pl-row{flex-wrap:wrap}.pl-row select{max-width:100%;width:100%}}
+.th-link{color:inherit;text-decoration:underline}
+.pl-row input[type=checkbox]{width:18px;height:18px;flex:none;margin:0}
+label.pl-row{cursor:pointer}
+.pl-row.un{padding-left:44px}
+.pl-to{display:inline-flex;align-items:center;gap:4px;font-size:.82rem;font-weight:800;color:#7a4b00;background:rgba(252,180,73,.3);border-radius:999px;padding:3px 4px 3px 10px;white-space:nowrap}
+.pl-to .x{width:22px;height:22px;min-width:0;padding:0;font-size:14px;line-height:1;border-radius:50%;background:rgba(255,255,255,.7)}
+.pl-bar{position:sticky;top:var(--stick,0px);z-index:3;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:10px 14px;margin:6px 0 10px;border-radius:12px;background:var(--surface);border:1px solid var(--line);box-shadow:0 6px 18px rgba(0,40,70,.08)}
+.pl-bar label{display:inline-flex;align-items:center;gap:6px;font-weight:700}
+.pl-bar select{padding:6px 8px;max-width:260px}
+.pl-bar-apply{margin-left:auto;display:inline-flex;gap:8px}
+.pl-bar .btn.apply{background:var(--yellow,#fcb449);border-color:var(--yellow,#fcb449);color:#002846}
+.pl-bar .btn.apply:disabled{opacity:.5}
+.pl-sum{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;justify-content:space-between}
+.pl-sum ul{margin:0;padding-left:18px}
+/* planner steps: 1 tick, 2 move, 3 apply */
+.pl-bar{gap:10px 18px}
+.pl-step{display:flex;align-items:center;gap:8px;opacity:.55}
+.pl-step.on,.pl-step.done{opacity:1}
+.pl-num{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:.85rem;background:rgba(0,74,124,.1);color:var(--blue25,#006184)}
+.pl-step.on .pl-num{background:var(--blue,#004a7c);color:#fff;box-shadow:0 0 0 4px rgba(0,125,165,.18)}
+.pl-step.done .pl-num{background:#8dbc56;color:#fff}
+.pl-step-b{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pl-row.sel{box-shadow:inset 3px 0 0 var(--blue25,#006184)}
+.pl-src.virt{border-style:dashed}

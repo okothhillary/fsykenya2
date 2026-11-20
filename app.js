@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-20m · MRN chip on duplicate cards';
+const APP_VERSION = '2026-11-20y · clearer session planner';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1066,6 +1066,7 @@ const PAGES = [
   ['data', 'Data & areas', () => can.admin() || can.viewAll()],
   ['access', 'Accounts', () => can.accounts()],
   ['sessions', 'Sessions', () => can.split()],
+  ['planner', 'Plan sessions', () => TOP_ROLES.includes(realRole()) && TOP_ROLES.includes(role())],
   ['audit', 'Audit log', () => (S.isOwner || realRole() === 'regadmin') && role() === 'regadmin']
 ];
 function allowedPages() { return PAGES.filter(p => p[2]()); }
@@ -1383,6 +1384,7 @@ const ICONS = {
   headcount: I('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/><path d="m10 13 2 2 4-4"/>'),
   more: I('<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>'),
   audit: I('<path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4"/><path d="M10 12h6M10 15h6M10 18h4"/>'),
+  planner: I('<path d="M4 6h16M4 12h10M4 18h6"/><path d="M17 14l3 3-3 3M14 17h6"/>'),
   sessions: I('<rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/>'),
   print: I('<path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
@@ -1391,7 +1393,7 @@ const ICONS = {
 };
 const SHORT = { audit: 'Audit', wellness: 'Wellness', sessions: 'Sessions', headcount: 'Headcount', checkin: 'Check-in', tally: 'Tally', companies: 'Groups', exceptions: 'Walk-ins', logistics: 'Logistics', staff: 'Staff', data: 'Data', access: 'Accounts' };
 const NAV_ORDER = { wellness: ['checkin', 'wellness', 'tally'], logistics: ['checkin', 'logistics', 'exceptions', 'tally', 'companies', 'headcount', 'staff', 'wellness', 'data'], counselor: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'], ac: ['checkin', 'companies', 'headcount', 'logistics', 'exceptions'] };
-function navPages() { const ok = allowedPages().map(p => p[0]).filter(k => k !== 'audit'); /* the audit log opens from the account menu */ const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
+function navPages() { const ok = allowedPages().map(p => p[0]).filter(k => k !== 'audit' && k !== 'planner'); /* the audit log opens from the account menu, the planner from Sessions */ const pref = NAV_ORDER[role()] || []; return pref.filter(k => ok.includes(k)).concat(ok.filter(k => !pref.includes(k))); }
 function initials(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('') || '?').toUpperCase(); }
 function renderHeader() {
   $('#sessName').textContent = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
@@ -1404,7 +1406,7 @@ function renderHeader() {
 }
 const SHORT_ROLE = { wellness: 'Wellness', regadmin: 'Reg admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
-  const cur = currentPage(); const keys = navPages();
+  const cur = currentPage() === 'planner' ? 'sessions' : currentPage(); const keys = navPages();
   $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
   fitWidth();
   const bn = $('#bnav');
@@ -1514,8 +1516,18 @@ function render() {
   if (gate) { const gk = 'gate' + fnv(gate); if (UI.frameKey !== gk) { $('#main').innerHTML = gate; UI.frameKey = gk; } return; }
   const pg = currentPage(); const key = pg + '|' + role() + '|' + (myStaffId() || '');
   const page = PAGE_IMPL[pg];
+  let keepY = null, refocus = null;
   if (UI.frameKey !== key) { $('#main').innerHTML = page.frame(); UI.frameKey = key; window.scrollTo(0, 0); }
+  else {
+    /* redrawing a list must not move the page (Safari has no scroll anchoring), and a ticked box keeps focus */
+    keepY = window.scrollY;
+    if (ae && ae.dataset && ae.dataset.act && ae.tagName === 'INPUT' && $('#main').contains(ae)) refocus = `input[data-act="${ae.dataset.act}"]` + (ae.dataset.v != null ? `[data-v="${CSS.escape(ae.dataset.v)}"]` : '');
+  }
   page.update();
+  if (keepY != null) {
+    if (Math.abs(window.scrollY - keepY) > 1) window.scrollTo(0, keepY);
+    if (refocus) { const el = $('#main').querySelector(refocus); if (el && document.activeElement !== el) try { el.focus({ preventScroll: true }); } catch (e) { } }
+  }
   if (can.readOnly()) lockReadOnly(pg); else if (pg === 'headcount' && hcViewOnly()) lockReadOnly(pg);
 }
 
@@ -1529,11 +1541,12 @@ function lockReadOnly(pg) {
 function resetPanel() {
   const nG = Object.keys(S.org.groups).length, nC = Object.keys(S.org.companies).length, nT = S.staffList.filter(x => x.test).length, nS = S.staffList.length;
   return `<section class="panel danger-zone"><div class="panel-head"><h2>Start over</h2><span class="chip bad">Can't be undone</span></div>
-    <p class="note" style="margin-top:-4px">For registration admins, the Session Directing Couple, the Area Seventy and coordinators. Check-ins, participants and headcounts already submitted are kept.</p>
+    <p class="note" style="margin-top:-4px">For registration admins, the Session Directing Couple, the Area Seventy and coordinators. Each action says what it removes; everything else is kept.</p>
     <div class="dz-list">
       <div class="dz"><div><b>Undo all groups and companies</b><small class="muted">${nG} groups and ${nC} companies are removed and every participant goes back to "no group". Generate again afterwards.</small></div><button class="btn danger" data-act="resetOrg" ${(nG || nC) && !S.config.regenLock ? '' : 'disabled'} ${S.config.regenLock ? 'title="Companies are official. Unlock them first."' : ''}>Undo groups</button></div>
       <div class="dz"><div><b>Delete test staff</b><small class="muted">${nT} staff marked Test.</small></div><button class="btn danger" data-act="resetTest" ${nT ? '' : 'disabled'}>Delete test staff</button></div>
       <div class="dz"><div><b>Delete staff of one type</b><small class="muted">For example every counselor, before uploading a corrected list. Everyone else stays. Logistics and Session Directing Couple members who have an account are always kept.</small><select id="rsType" style="margin-top:8px;max-width:280px">${STAFF_ROLES.map(r => { const n = S.staffList.filter(x => x.role === r && !x.fromAccount).length; return opt(r, `${ROLES[r]}s · ${n}`, r === (UI.rsType || 'counselor')); }).join('')}</select></div><button class="btn danger" data-act="resetType">Delete this type</button></div>
+      ${can.deleteP() ? `<div class="dz"><div><b>Delete all participants</b><small class="muted">All ${S.P.length} youth and walk-ins in ${esc(sessName(S.sid))}, with their check-ins, medical notes and headcounts. Staff, groups and companies stay. Upload the participant file again on Data & areas, then press Rebalance.</small></div><button class="btn danger" data-act="resetPart" ${S.P.length ? '' : 'disabled'}>Delete all participants</button></div>` : ''}
       <div class="dz"><div><b>Delete all staff</b><small class="muted">All ${nS} staff, real and test. Groups and companies lose their counselors and ACs. Accounts stay and link again automatically to the new list where the email or name matches.</small></div><button class="btn danger" data-act="resetStaff" ${nS ? '' : 'disabled'}>Delete all staff</button></div>
     </div></section>`;
 }
@@ -2669,14 +2682,19 @@ PAGE_IMPL.audit = {
 PAGE_IMPL.sessions = {
   frame() {
     UI.split = UI.split || { dest: 'new', name: '', team: 'same', sel: new Set() };
-    return `<section class="pagehead"><div><p class="th">Sessions · registration admin, Area Seventy, Head of Logistics & Session Directing Couple</p><h1>Split or reorganise</h1><p class="note">Move participants by stake, district, ward or branch into a new session or another existing one. Only participants move: staff for the new session come from its own staff upload.</p></div></section>
+    return `<section class="pagehead"><div><p class="th">Sessions · registration admin, Area Seventy, Head of Logistics & Session Directing Couple</p><h1>Sessions</h1><p class="note">Start a new session from its own data, or move participants by stake, district, ward or branch into another session.</p></div>${allowedPages().some(p => p[0] === 'planner') ? '<div class="btnrow"><button class="btn primary" data-act="nav" data-v="planner">Plan sessions</button></div>' : ''}</section>
     <section class="panel"><div class="panel-head"><h2>Sessions</h2></div><div id="sessList" class="sess-list"></div></section>
+    <section class="panel" id="newSessPanel"><div class="panel-head"><h2>Start a new session from its own data</h2></div>
+      <p class="note" style="margin-top:-4px">An empty session with its own participants, staff, groups and settings. Nothing is copied from ${esc(sessName(S.sid))}. After creating it, open it and upload its participant file on Data & areas and its staff on the Staff page.</p>
+      <div class="form ns-form"><label>Session name<input id="nsName" placeholder="e.g. FSY Kenya 3rd 2026" autocomplete="off"></label>
+        <label>First day of the session<input id="nsStart" type="date"></label>
+        <div class="ns-go"><button class="btn primary" data-act="nsGo">Create the session</button></div></div></section>
     <section class="panel" id="splitPanel"></section>`;
   },
   update() {
     if (!UI.sessCounts) { UI.sessCounts = {}; loadSessionCounts(); }
     $('#sessList').innerHTML = Object.keys(S.sessions).filter(id => S.mySessions.includes(id)).map(id => { const cur = id === S.sid; const n = cur ? S.P.filter(isExpected).length : UI.sessCounts[id], left = cur ? S.P.filter(p => !p.inc && p.src !== 'walkin').length : (UI.sessLeft || {})[id], wk = cur ? S.P.filter(p => p.src === 'walkin').length : (UI.sessWalk || {})[id]; const x = S.sessions[id];
-      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${wk ? ` <span class="muted">+ ${nn(wk, 'walk-in')}</span>` : ''}${left ? ` <span class="muted">(+${left} cancelled or left out)</span>` : ''}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div>${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}</div>`; }).join('');
+      return `<div class="sess ${cur ? 'cur' : ''}"><div><b>${esc(sessName(id))}</b><small class="muted">${n == null ? 'Counting…' : n + ' participants'}${wk ? ` <span class="muted">+ ${nn(wk, 'walk-in')}</span>` : ''}${left ? ` <span class="muted">(+${left} cancelled or left out)</span>` : ''}${x.from ? ' · split from ' + esc(sessName(x.from)) : ''}${x.at ? ' · ' + esc(fmtTime(x.at)) : ''}</small></div><div class="sess-act">${cur ? '<span class="chip good">Open now</span>' : `<button class="btn small" data-act="switchSession" data-v="${esc(id)}">Open</button>`}${canDelSession(id) ? `<button class="btn small danger" data-act="sessDel" data-v="${esc(id)}">Delete</button>` : ''}</div></div>`; }).join('') + (Object.keys(S.sessions).length > 1 ? '<p class="note" style="margin:8px 0 0">The first session and the one that is open can\'t be deleted. To delete this one, open another first.</p>' : '');
     const sp = UI.split, others = S.mySessions.filter(id => id !== S.sid);
     const T = {}; S.P.forEach(p => { const { st, un } = areaOf(p); const x = T[st] = T[st] || { n: 0, u: {} }; x.n++; const u = x.u[un] = x.u[un] || { n: 0, inn: 0 }; u.n++; if (p.s === 'in') u.inn++; });
     const picked = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)), pIn = picked.filter(p => p.s === 'in').length;
@@ -2696,6 +2714,227 @@ PAGE_IMPL.sessions = {
       <button class="btn primary" data-act="spGo" ${picked.length && (sp.dest !== 'new' || sp.name.trim()) ? '' : 'disabled'}>Move ${picked.length || ''} participants</button></div>
       <p class="note" style="margin:8px 0 0">Moved youth leave their groups here. Press Rebalance afterwards in both sessions. Registration admins and the Area Seventy can open every session.</p>`;
     document.querySelectorAll('[data-mixed]').forEach(el => el.indeterminate = true);
+  }
+};
+/* Deleting a session: the registration admin, Area Seventy and Head of Logistics, or the person who created it.
+   Never the first session ("main", whose data sits at the top level) and never the one that is open. */
+function canDelSession(id) { const x = S.sessions[id] || {}; return id !== 'main' && id !== S.sid && (TOP_ROLES.includes(realRole()) || (realRole() === 'sdc' && x.creator && x.creator === S.email)) && !S.viewAs; }
+async function purgeSession(id) {
+  /* each part is deleted on its own: one refusal no longer stops the rest, and the session always leaves the list */
+  let failed = 0;
+  /* off the list first, so it disappears straight away; the data is removed behind it */
+  const left = Object.assign({}, S.sessions); delete left[id]; S.sessions = left; S.mySessions = S.mySessions.filter(x => x !== id); render();
+  await FB.fs.doc('meta/sessions').update({ ['s.' + id]: firebase.firestore.FieldValue.delete() });
+  for (const c of ['roster', 'state', 'staff', 'org', 'headcount', 'medical', 'share', 'intake', 'reports', 'config']) {
+    try { const sn = await FB.fs.collection(rawPath(id, c)).get(); for (const d of sn.docs) await FB.fs.doc(rawPath(id, c + '/' + d.id)).delete().catch(() => { failed++; }); } catch (e) { failed++; }
+  }
+  if (failed) console.warn(`Session ${id}: ${failed} parts could not be deleted (publish the latest firestore.rules)`);
+  if (can.accounts()) for (const e in S.invites) { const v = S.invites[e]; if (v && Array.isArray(v.sessions) && v.sessions.includes(id)) await FB.fs.doc('invites/' + e).set({ sessions: v.sessions.filter(x => x !== id) }, { merge: true }).catch(() => { }); }
+}
+async function deleteSession(id) {
+  const name = sessName(id);
+  const ok = await confirmTyped(`Delete ${name}?`, `Every participant, check-in, staff record, group, company, headcount, health concern and setting in <b>${esc(name)}</b> is deleted for good. Other sessions are not touched. Export what you need first (open the session, then Data & areas, Export everything).`, 'DELETE', 'Delete session');
+  if (!ok) return;
+  toast('Deleting the session…');
+  try {
+    await purgeSession(id);
+    audit('session', `Deleted the session ${name}`); UI.sessCounts = null; render(); toast(`${name} deleted`);
+  } catch (e) { fail(e); }
+}
+/* page: plan sessions (registration admin, Area Seventy, Head of Logistics)
+   Every session side by side. Try moving stakes or units between sessions and watch the numbers; nothing changes
+   until Apply, which moves those youth (and, if chosen, their staff) for real. */
+const PLAN = { data: null, loading: false, moves: {}, staffMove: true, open: new Set(), sel: new Set(), virt: {}, to: '' };
+function planYouth(id, b, r, st, cfg) {
+  const status = normStatus(r.status), uk = (r.stake || '') + '|' + (r.unit || '');
+  let inc = !((status && (cfg.excludedStatuses || []).includes(status)) || (cfg.excludedStakes || []).includes(r.stake) || (cfg.excludedUnits || []).includes(uk) || (cfg.excludeNonMembers && r.member === false && r.src !== 'walkin'));
+  if (st.ov === 'inc') inc = true; if (st.ov === 'exc') inc = false;
+  const age = r.bday ? ageOn(r.bday, cfg.sessionStart || '') : (r.ageCsv != null ? r.ageCsv : null);
+  return { id, b, st: r.stake || NO_STAKE, un: r.unit || NO_UNIT, gender: r.gender || '', band: bandOfAge(age), inc, walk: r.src === 'walkin', in: st.s === 'in' };
+}
+async function planLoad() {
+  PLAN.loading = true; render();
+  try {
+    const ids = uniq(['main'].concat(Object.keys(S.sessions || {})));
+    const out = {};
+    for (const id of ids) {
+      const cd = await FB.fs.doc(rawPath(id, 'config/session')).get();
+      if (!cd.exists && id !== 'main') continue;
+      const cfg = Object.assign({}, DEFAULT_CONFIG, cd.exists ? cd.data() : {});
+      const [ro, sts, sf] = await Promise.all([FB.fs.collection(rawPath(id, 'roster')).get(), FB.fs.collection(rawPath(id, 'state')).get(), FB.fs.doc(rawPath(id, 'staff/all')).get()]);
+      const state = {}; sts.docs.forEach(d => Object.assign(state, (d.data() || {}).p || {}));
+      const youth = []; ro.docs.forEach(d => { const m = (d.data() || {}).p || {}; for (const pid in m) { const r = m[pid]; if (!r) continue; const st = state[pid] || {}; if (st.del) continue; youth.push(planYouth(pid, d.id, r, st, cfg)); } });
+      const staff = Object.values(((sf.exists && sf.data()) || {}).s || {}).filter(x => x && !x.test && !x.fromAccount).map(x => ({ id: x.id, role: x.role, gender: x.gender || '', st: x.stake || NO_STAKE, un: x.unit || NO_UNIT }));
+      out[id] = { id, name: cfg.sessionName || sessName(id), cfg, youth, staff };
+    }
+    for (const v in PLAN.virt) out[v] = PLAN.virt[v];
+    const ud = await FB.fs.doc('meta/planUndo').get(); PLAN.undo = ud.exists && (ud.data().moves || []).length ? ud.data() : null;
+    PLAN.data = out;
+  } catch (e) { fail(e); }
+  PLAN.loading = false; render();
+}
+function planDest(src, st, un) { return PLAN.moves[src + '\u0001' + st + '\u0001' + un] || src; }
+function planTotals() {
+  const D = PLAN.data, T = {};
+  for (const id in D) T[id] = { y: [], staff: [], now: { y: D[id].youth.filter(x => x.inc).length, c: D[id].staff.filter(x => x.role === 'counselor').length } };
+  for (const id in D) {
+    D[id].youth.forEach(x => { const d = planDest(id, x.st, x.un); if (T[d]) T[d].y.push(x); });
+    D[id].staff.forEach(x => { const d = PLAN.staffMove ? planDest(id, x.st, x.un) : id; if (T[d]) T[d].staff.push(x); });
+  }
+  for (const id in T) {
+    const t = T[id], cfg = D[id].cfg, y = t.y.filter(x => x.inc), c = t.staff.filter(x => x.role === 'counselor');
+    t.n = y.length; t.walk = y.filter(x => x.walk).length; t.inn = y.filter(x => x.in).length;
+    t.F = y.filter(x => x.gender === 'F').length; t.M = y.filter(x => x.gender === 'M').length; t.Y = y.filter(x => x.band === 'Y').length; t.O = y.filter(x => x.band === 'O').length;
+    t.gap = {}; for (const g of ['F', 'M']) { const size = gsize(cfg, g), yy = y.filter(x => x.gender === g); const need = ['Y', 'O'].reduce((a, b) => a + Math.ceil(yy.filter(x => x.band === b).length / size), 0) + Math.ceil(yy.filter(x => !x.band).length / size); const have = c.filter(x => x.gender === g).length; t.gap[g] = { need, have, short: Math.max(0, need - have), size }; }
+    t.c = c.length; t.ac = t.staff.filter(x => x.role === 'ac').length; t.coord = t.staff.filter(x => x.role === 'coordinator').length;
+  }
+  return T;
+}
+function planChanges() {
+  const D = PLAN.data, out = [];
+  for (const k in PLAN.moves) { const [src, st, un] = k.split('\u0001'), dest = PLAN.moves[k]; if (!D[src] || !D[dest] || dest === src) continue;
+    const youth = D[src].youth.filter(x => x.st === st && x.un === un), staff = PLAN.staffMove ? D[src].staff.filter(x => x.st === st && x.un === un) : [];
+    if (youth.length || staff.length) out.push({ src, dest, st, un, youth, staff }); }
+  return out;
+}
+/* move youth (by roster bucket) and staff from one session to another; returns each youth's group in the old session.
+   gBack gives the groups to put them back into (used by Undo). */
+async function planMoveIds(src, dest, byB, staffIds, gBack) {
+  const del = firebase.firestore.FieldValue.delete, prevG = {};
+  for (const b in byB) {
+    const [ro, st, md] = await Promise.all(['roster', 'state', 'medical'].map(c => FB.fs.doc(rawPath(src, c + '/' + b)).get()));
+    const R = (ro.exists && ro.data().p) || {}, ST = (st.exists && st.data().p) || {}, MD = (md.exists && md.data().p) || {};
+    const r = {}, t = {}, m = {}, gone = {};
+    byB[b].forEach(id => { if (!R[id]) return; r[id] = R[id]; if (ST[id] && ST[id].g) prevG[id] = ST[id].g;
+      const back = gBack && gBack[id]; if (ST[id] || back) t[id] = Object.assign({}, ST[id] || {}, { g: back || null }); if (MD[id]) m[id] = MD[id]; gone['p.' + id] = del(); });
+    if (!Object.keys(r).length) continue;
+    await FB.fs.doc(rawPath(dest, 'roster/' + b)).set({ p: r }, { merge: true });
+    if (Object.keys(t).length) await FB.fs.doc(rawPath(dest, 'state/' + b)).set({ p: t }, { merge: true });
+    if (Object.keys(m).length) await FB.fs.doc(rawPath(dest, 'medical/' + b)).set({ p: m }, { merge: true });
+    await FB.fs.doc(rawPath(src, 'roster/' + b)).update(gone);
+    if (st.exists && Object.keys(r).some(id => ST[id])) await FB.fs.doc(rawPath(src, 'state/' + b)).update(gone).catch(() => { });
+    if (md.exists && Object.keys(r).some(id => MD[id])) await FB.fs.doc(rawPath(src, 'medical/' + b)).update(gone).catch(() => { });
+  }
+  if (staffIds && staffIds.length) {
+    const sd = await FB.fs.doc(rawPath(src, 'staff/all')).get(); const all = (sd.exists && sd.data().s) || {};
+    const recs = {}, gone = {}; staffIds.forEach(id => { if (all[id]) { recs[id] = all[id]; gone['s.' + id] = del(); } });
+    if (Object.keys(recs).length) { await FB.fs.doc(rawPath(dest, 'staff/all')).set({ s: recs }, { merge: true }); await FB.fs.doc(rawPath(src, 'staff/all')).update(gone); }
+  }
+  return prevG;
+}
+/* Undo the last applied plan: everyone goes back to the session they came from, into their old group where it still exists */
+async function planUndoLast() {
+  const d = await FB.fs.doc('meta/planUndo').get(); const U = d.exists ? d.data() : null; if (!U || !U.moves || !U.moves.length) { toast('There is no plan to undo'); return; }
+  const ny = U.moves.reduce((a, m) => a + Object.values(m.byB || {}).reduce((x, l) => x + l.length, 0), 0), ns = U.moves.reduce((a, m) => a + (m.staff || []).length, 0);
+  const made = (U.created || []).filter(id => S.sessions[id]).map(id => sessName(id));
+  if (!await confirmTyped('Undo the last plan?', `The plan applied ${esc(fmtWhen(U.at))}${U.by ? ' by ' + esc(U.by) : ''} is reversed: ${nn(ny, 'youth')}${ns ? ` and ${nn(ns, 'staff member')}` : ''} go back to the session they came from, into their old group where it still exists. Check-ins and medical notes go with them.${made.length ? ` ${esc(made.join(', '))}, made by the plan, is deleted if nothing else is in it.` : ''} Anything changed since in those sessions stays as it is.`, 'UNDO', 'Undo plan')) return;
+  toast('Undoing…');
+  try {
+    for (const m of U.moves.slice().reverse()) await planMoveIds(m.dest, m.src, m.byB || {}, m.staff || [], m.g || {});
+    for (const id in (U.cfg || {})) await FB.fs.doc(rawPath(id, 'config/session')).set(U.cfg[id], { merge: true });
+    for (const id of (U.created || [])) {
+      const ro = await FB.fs.collection(rawPath(id, 'roster')).get(); const left = ro.docs.some(x => Object.keys((x.data() || {}).p || {}).length);
+      const sf = await FB.fs.doc(rawPath(id, 'staff/all')).get(); const staffLeft = sf.exists && Object.keys((sf.data() || {}).s || {}).length;
+      if (!left && !staffLeft && id !== S.sid) await purgeSession(id);
+    }
+    await FB.fs.doc('meta/planUndo').delete();
+    audit('session', `Undid the plan applied ${fmtWhen(U.at)}: ${nn(ny, 'youth')}${ns ? ` and ${nn(ns, 'staff member')}` : ''} moved back`);
+    PLAN.moves = {}; PLAN.data = null; toast('Plan undone. Press Rebalance in every session to fill any gaps.'); planLoad();
+  } catch (e) { fail(e); }
+}
+async function planApply() {
+  const ch = planChanges(); if (!ch.length) return;
+  const ny = ch.reduce((a, c) => a + c.youth.length, 0), ns = ch.reduce((a, c) => a + c.staff.length, 0), nin = ch.reduce((a, c) => a + c.youth.filter(x => x.in).length, 0);
+  if (!await confirmTyped(`Apply this plan?`, `${nn(ny, 'youth')}${ns ? ` and ${nn(ns, 'staff member')}` : ''} from ${nn(ch.length, 'ward or branch', 'wards and branches')} move to their new session${nin ? `, including ${nin} already checked in (their check-ins move with them)` : ''}. They leave their groups. Press Rebalance in every session afterwards.`, 'APPLY', 'Apply plan')) return;
+  toast('Moving…'); const del = firebase.firestore.FieldValue.delete;
+  try {
+    /* sessions that only exist in the plan are created first */
+    const real = {};
+    for (const v of uniq(ch.map(c => c.dest)).filter(d => PLAN.virt[d])) {
+      const id = 's' + rid(''), name = PLAN.virt[v].name, entry = { [id]: { name, at: Date.now(), by: S.meName || '', creator: S.email || '' } };
+      await FB.fs.doc('meta/sessions').set({ s: entry }, { merge: true }); Object.assign(S.sessions, entry);
+      await FB.fs.doc(rawPath(id, 'config/session')).set(Object.assign({}, DEFAULT_CONFIG, { sessionName: name }));
+      if (!S.mySessions.includes(id)) S.mySessions.push(id);
+      PLAN.data[id] = Object.assign({}, PLAN.data[v], { id }); real[v] = id; audit('session', `Created a new session from the plan: ${name}`);
+    }
+    ch.forEach(c => { if (real[c.dest]) c.dest = real[c.dest]; });
+    PLAN.virt = {};
+    const undo = { at: Date.now(), by: S.meName || S.email || '', moves: [], cfg: {}, created: Object.values(real) };
+    const pairs = {}; ch.forEach(c => { const k = c.src + '>' + c.dest; (pairs[k] = pairs[k] || { src: c.src, dest: c.dest, y: [], s: [], areas: [] }); pairs[k].y.push(...c.youth); pairs[k].s.push(...c.staff); pairs[k].areas.push([c.st, c.un]); });
+    for (const k in pairs) {
+      const { src, dest, y, s: sf, areas } = pairs[k];
+      const byB = {}; y.forEach(x => (byB[x.b] = byB[x.b] || []).push(x.id));
+      const prevG = await planMoveIds(src, dest, byB, sf.map(x => x.id), null);
+      undo.moves.push({ src, dest, byB, staff: sf.map(x => x.id), g: prevG, areas });
+      /* the moved areas must not be left out in the session they join */
+      const cd = await FB.fs.doc(rawPath(dest, 'config/session')).get(); const cfg = (cd.exists && cd.data()) || {};
+      const ks = new Set(areas.map(([st, un]) => st + '|' + un)), sts = new Set(areas.map(a => a[0]));
+      const exU = (cfg.excludedUnits || []).filter(u => !ks.has(u)), exS = (cfg.excludedStakes || []).filter(x => !sts.has(x));
+      if (exU.length !== (cfg.excludedUnits || []).length || exS.length !== (cfg.excludedStakes || []).length) { if (!undo.cfg[dest]) undo.cfg[dest] = { excludedUnits: cfg.excludedUnits || [], excludedStakes: cfg.excludedStakes || [] }; await FB.fs.doc(rawPath(dest, 'config/session')).set({ excludedUnits: exU, excludedStakes: exS }, { merge: true }); }
+      audit('session', `Plan applied: moved ${nn(y.length, 'youth')}${sf.length ? ` and ${nn(sf.length, 'staff member')}` : ''} from ${PLAN.data[src].name} to ${PLAN.data[dest].name} (${areas.map(a => a[1]).join(', ')})`);
+    }
+    await FB.fs.doc('meta/planUndo').set(undo);
+    PLAN.moves = {}; toast('Plan applied. Press Rebalance in every session.'); await planLoad();
+  } catch (e) { fail(e); }
+}
+PAGE_IMPL.planner = {
+  frame() {
+    return `<section class="pagehead"><div><p class="th"><a href="#sessions" class="th-link">Sessions</a> · registration admin, Area Seventy & Head of Logistics</p><h1>Plan sessions</h1><p class="note">Every session side by side. Move stakes or units between sessions to see the numbers. Nothing changes until you press Apply.</p></div><div class="btnrow"><button class="btn" data-act="plUndoLast" id="plUndoBtn" hidden>Undo last plan</button><button class="btn" data-act="plReload">Refresh data</button><button class="btn" data-act="plReset">Clear plan</button><button class="btn primary" data-act="plApply" id="plApplyBtn" disabled>Apply plan</button></div></section>
+    <div id="plBody"></div>`;
+  },
+  update() {
+    const box = $('#plBody'); if (!box) return;
+    if (!PLAN.data && !PLAN.loading) { planLoad(); }
+    if (!PLAN.data) { box.innerHTML = '<section class="panel"><p class="note">Loading every session…</p></section>'; return; }
+    const D = PLAN.data, ids = Object.keys(D), T = planTotals(), ch = planChanges();
+    const ub = $('#plUndoBtn'); if (ub) { ub.hidden = !PLAN.undo; if (PLAN.undo) ub.title = 'Applied ' + fmtWhen(PLAN.undo.at) + (PLAN.undo.by ? ' by ' + PLAN.undo.by : ''); }
+    const ab = $('#plApplyBtn'); if (ab) { ab.disabled = !ch.length; ab.textContent = ch.length ? `Apply plan (${nn(ch.length, 'change')})` : 'Apply plan'; }
+    const dlt = (a, b) => a === b ? '' : `<small class="pl-d ${a > b ? 'up' : 'down'}">${a > b ? '+' : ''}${a - b}</small>`;
+    const card = id => { const t = T[id], g = t.gap;
+      return `<div class="pl-card"><h3>${esc(D[id].name)}${id === S.sid ? ' <span class="chip good">Open now</span>' : ''}${PLAN.virt[id] ? ' <span class="chip info">Planned</span>' : ''}</h3>
+        <div class="pl-big"><b>${t.n}</b> youth ${dlt(t.n, t.now.y)}</div>
+        <ul class="pl-stats"><li>${t.F} young women · ${t.M} young men</li><li>${t.Y} aged 14–15 · ${t.O} aged 16–18</li>${t.inn ? `<li>${t.inn} already checked in</li>` : ''}
+          <li><b>${t.c}</b> counselors ${dlt(t.c, t.now.c)} · ${t.ac} ACs · ${t.coord} coordinators</li>
+          <li class="${g.F.short ? 'warn' : ''}">Young women: ${g.F.need} groups of ${g.F.size}, ${g.F.have} counselors${g.F.short ? ` · <b>${g.F.short} short</b>` : ''}</li>
+          <li class="${g.M.short ? 'warn' : ''}">Young men: ${g.M.need} groups of ${g.M.size}, ${g.M.have} counselors${g.M.short ? ` · <b>${g.M.short} short</b>` : ''}</li></ul></div>`; };
+    /* every unit that has participants, wherever it is now, listed under the session it will be in after the plan */
+    const sel = PLAN.sel, key = (src, st, un) => src + '\u0001' + st + '\u0001' + un, U = [];
+    for (const src of ids) {
+      const A = {}; D[src].youth.forEach(x => { const u = ((A[x.st] = A[x.st] || {})[x.un] = A[x.st][x.un] || { y: 0, inn: 0, c: 0, s: 0 }); if (x.inc) u.y++; if (x.in) u.inn++; });
+      D[src].staff.forEach(x => { const u = A[x.st] && A[x.st][x.un]; if (!u) return; u.s++; if (x.role === 'counselor') u.c++; });
+      for (const st in A) for (const un in A[st]) U.push(Object.assign({ src, st, un, k: key(src, st, un), dest: planDest(src, st, un) }, A[st][un]));
+    }
+    const group = d => {
+      const mine = U.filter(u => u.dest === d), byS = {}; mine.forEach(u => (byS[u.st] = byS[u.st] || []).push(u));
+      let h = '';
+      for (const st of Object.keys(byS).sort((a, b) => a.localeCompare(b))) {
+        const us = byS[st].sort((a, b) => a.un.localeCompare(b.un)), gk = d + '\u0001' + st, open = PLAN.open.has(gk);
+        const all = us.every(u => sel.has(u.k)), some = us.some(u => sel.has(u.k)), moved = us.filter(u => u.src !== d), froms = uniq(moved.map(u => D[u.src].name));
+        const y = us.reduce((a, u) => a + u.y, 0), c = us.reduce((a, u) => a + u.c, 0);
+        h += `<div class="pl-row st ${moved.length ? 'moved' : ''} ${some ? 'sel' : ''}"><input type="checkbox" data-act="plSelSt" data-v="${esc(gk)}" ${all ? 'checked' : ''} ${!all && some ? 'data-mixed="1"' : ''} aria-label="Select ${esc(st)}">
+          <button class="pl-name" data-act="plOpen" data-v="${esc(gk)}"><span class="caret">${open ? '▾' : '▸'}</span><b>${esc(st)}</b><small class="muted">${nn(us.length, 'unit')} · ${y} youth · ${c} counselors</small></button>
+          ${moved.length ? `<span class="pl-to">${moved.length === us.length ? 'Moved here' : `${moved.length} of ${us.length} units moved here`} from ${esc(froms.join(', '))}<button class="x" data-act="plUndoSt" data-v="${esc(gk)}" aria-label="Move back" title="Move back">×</button></span>` : ''}</div>`;
+        if (open) for (const u of us) h += `<label class="pl-row un ${u.src !== d ? 'moved' : ''} ${sel.has(u.k) ? 'sel' : ''}"><input type="checkbox" data-act="plSel" data-v="${esc(u.k)}" ${sel.has(u.k) ? 'checked' : ''}>
+            <span class="pl-name"><span>${esc(u.un)}</span><small class="muted">${u.y} youth${u.inn ? ` (${u.inn} checked in)` : ''} · ${u.c} counselors</small></span>${u.src !== d ? `<span class="pl-to">from ${esc(D[u.src].name)}<button class="x" data-act="plUndo" data-v="${esc(u.k)}" aria-label="Move back" title="Move back">×</button></span>` : ''}</label>`;
+      }
+      return h || '<p class="note" style="padding:10px 14px;margin:0">Nothing here yet. Tick stakes or units in another session and move them here.</p>';
+    };
+    const nSel = sel.size, selY = U.filter(u => sel.has(u.k)).reduce((a, u) => a + u.y, 0);
+    if (!PLAN.to || !D[PLAN.to]) PLAN.to = ids.find(id => !U.some(u => sel.has(u.k) && u.dest === id)) || ids[0];
+    const step = (n, on, done, body) => `<div class="pl-step ${on ? 'on' : ''} ${done ? 'done' : ''}"><span class="pl-num">${done ? '✓' : n}</span><div class="pl-step-b">${body}</div></div>`;
+    const bar = `<div class="pl-bar">
+      ${step(1, !nSel, nSel > 0, nSel ? `<b>${nn(nSel, 'unit')} ticked</b> <small class="muted">${selY} youth</small> <button class="linkbtn" data-act="plSelClear">Untick all</button>` : '<b>Tick</b> the stakes or units to move')}
+      ${step(2, nSel > 0, false, `<label class="inline"><b>Move to</b> <select id="plTo" data-act="plTo">${ids.map(id => opt(id, D[id].name + (PLAN.virt[id] ? ' (new)' : ''), id === PLAN.to)).join('')}</select></label> <button class="btn small primary" data-act="plMoveSel" ${nSel ? '' : 'disabled'}>Move ${nSel ? nn(nSel, 'unit') : ''}</button> <button class="linkbtn" data-act="plNewSess">+ New session</button>`)}
+      ${step(3, !nSel && ch.length > 0, false, ch.length ? `<button class="btn small apply" data-act="plApply">Apply ${nn(ch.length, 'change')}</button> <button class="linkbtn" data-act="plReset">Clear plan</button>` : '<span class="muted">Apply when the numbers look right</span>')}
+    </div>`;
+    box.innerHTML = `<div class="pl-cards">${ids.map(card).join('')}</div>
+      <section class="panel"><div class="panel-head"><h2>Move stakes and units</h2><label class="inline"><input type="checkbox" data-act="plStaff" ${PLAN.staffMove ? 'checked' : ''}> Staff move with their unit</label></div>
+        ${bar}
+        <p class="note" style="margin:0 0 8px">Moved units appear under their new session in amber. Press × to move one back. Nothing changes in any session until you apply.</p>
+        ${ids.map(d => { const t = T[d]; return `<details class="pl-src ${PLAN.virt[d] ? 'virt' : ''}" open><summary><b>${esc(D[d].name)}</b>${PLAN.virt[d] ? ' <span class="chip info">New</span>' : ''} <span class="muted">· ${t.n} youth after the plan</span></summary><div class="pl-tree">${group(d)}</div></details>`; }).join('')}
+        ${ch.length ? (() => { const g = {}; ch.forEach(c => { const k = c.src + '>' + c.dest; const x = g[k] = g[k] || { src: c.src, dest: c.dest, st: new Set(), un: 0, y: 0, s: 0 }; x.st.add(c.st); x.un++; x.y += c.youth.filter(y => y.inc).length; x.s += c.staff.length; });
+          return `<div class="pl-sum"><ul>${Object.values(g).map(x => `<li><b>${x.y} youth</b>${x.s ? ` and ${nn(x.s, 'staff member')}` : ''} from ${esc(D[x.src].name)} to <b>${esc(D[x.dest].name)}</b> <span class="muted">· ${nn(x.un, 'unit')} in ${nn(x.st.size, 'stake or district', 'stakes and districts')}</span></li>`).join('')}</ul><button class="btn primary" data-act="plApply">Apply ${nn(ch.length, 'change')}</button></div>`; })() : ''}</section>`;
+    document.querySelectorAll('#plBody [data-mixed]').forEach(el => el.indeterminate = true);
   }
 };
 async function loadSessionCounts() {
@@ -2840,13 +3079,53 @@ function renderNonMembers() {
   box.innerHTML = `<div class="fold-tools"><button class="btn small" data-act="nmCsv">Export CSV for bishops</button></div><p class="note" style="margin:0 0 8px">${out ? 'Left out of the expected list and groups (unticked under Registration statuses).' : 'Counted as registered (ticked under Registration statuses).'} Tap a stake, then a unit. Include or leave out one person on their row.</p>
     <div class="nm-list">${h}</div>`;
 }
+/* Which record of a pair to keep: the one checked in, then an approved one, then one linked to an account (staff), then the older one */
+function dupKeepFirst(d) {
+  const sc = x => { const r = x.rec; return x.kind === 'p' ? [r.s === 'in' || r.s === 'out' ? 0 : 1, r.status && r.status !== 'APPROVED' ? 1 : 0, dupWhen(x) || 9e15] : [0, dupLinked(r.id) ? 0 : 1, dupWhen(x) || 9e15]; };
+  const a = sc(d.a), b = sc(d.b); for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? [d.a, d.b] : [d.b, d.a];
+  return [d.a, d.b];
+}
+function dupLinked(id) { return Object.values(S.invites || {}).some(v => v && v.staffId === id); }
+/* the extra copies to delete, one per pair; a person with three copies loses two */
+function dupPlan(onlyLikely) {
+  const gone = new Map(), kept = new Set();
+  for (const d of findDuplicates()) {
+    if (onlyLikely && !d.high) continue;
+    if (d.a.kind === 'p' ? !can.deleteP() : !can.staff()) continue;
+    if (gone.has(d.a.id) || gone.has(d.b.id)) continue;
+    const [keep, drop] = dupKeepFirst(d);
+    if (drop.kind === 's' && drop.rec.fromAccount) continue;
+    if (kept.has(drop.id)) continue;
+    gone.set(drop.id, drop); kept.add(keep.id);
+  }
+  return [...gone.values()];
+}
+async function deleteDuplicates(onlyLikely) {
+  const plan = dupPlan(onlyLikely); if (!plan.length) { toast('Nothing to delete'); return; }
+  const P = plan.filter(x => x.kind === 'p'), T = plan.filter(x => x.kind === 's');
+  const ok = await confirmTyped(`Delete ${nn(plan.length, 'extra record')}?`, `${P.length ? nn(P.length, 'participant record') : ''}${P.length && T.length ? ' and ' : ''}${T.length ? nn(T.length, 'staff record') : ''} ${plan.length === 1 ? 'is' : 'are'} deleted, one from each ${onlyLikely ? '<b>Likely</b> ' : ''}pair. In each pair the app keeps the record that is checked in, then the approved one, then the older one.${onlyLikely ? '' : ' Pairs marked <b>Possible</b> are included: mark any that are two different people as <b>Not a duplicate</b> first.'} Press Rebalance afterwards.`, 'DELETE', 'Delete all');
+  if (!ok) return;
+  toast('Deleting…');
+  try {
+    if (P.length) {
+      const byB = {}; P.forEach(x => (byB[bucketOf(x.id)] = byB[bucketOf(x.id)] || []).push(x.id));
+      for (const b in byB) { const m = Object.assign({}, S.roster[b]); byB[b].forEach(id => delete m[id]); S.roster = Object.assign({}, S.roster, { [b]: m }); await setDoc('roster/' + b, { p: m }); }
+      const st = {}; P.forEach(x => st[x.id] = { del: true, g: null }); await setStates(st);
+    }
+    if (T.length) { const ids = new Set(T.map(x => x.id)); unlinkDeleted(ids); const s2 = {}; for (const k in S.staff) if (!ids.has(k)) s2[k] = S.staff[k]; S.staff = s2; recompute(true); await setDoc('staff/all', { s: s2 }); }
+    audit('settings', `Deleted ${plan.length} duplicate records (${onlyLikely ? 'likely pairs' : 'all pairs'}): ${plan.slice(0, 30).map(x => x.name).join(', ')}${plan.length > 30 ? '…' : ''}`);
+    recompute(true); toast(`${nn(plan.length, 'duplicate')} deleted. Press Rebalance on Companies & groups.`);
+  } catch (e) { fail(e); }
+}
 function renderDups() {
   const box = $('#dDup'); if (!box) return;
   const D = findDuplicates(), n = $('#dupN'); if (n) { n.textContent = D.length || 'None'; n.className = 'chip ' + (D.some(d => d.high) ? 'bad' : D.length ? 'warn' : 'good'); }
   if (!D.length) { box.innerHTML = '<p class="note">None found.</p>'; return; }
   const show = UI.dupAll ? D : D.slice(0, DUP_LIMIT);
   const pp = D.filter(d => d.a.kind === 'p'), nm = pp.filter(d => d.a.rec.member === false || d.b.rec.member === false).length, known = S.P.some(p => p.member != null);
-  box.innerHTML = `${known && pp.length ? `<p class="note" style="margin:0 0 8px"><b>${nm} of ${nn(pp.length, 'participant pair')}</b> involve a youth with no MRN.</p>` : ''}<div class="dup-list">${show.map(d => `<div class="dup ${d.high ? 'high' : ''}"><div class="dup-why"><span class="chip ${d.high ? 'bad' : 'warn'}">${d.high ? 'Likely' : 'Possible'}</span>${d.why.map(w => `<span class="chip">${esc(w)}</span>`).join('')}<button class="linkbtn adm" data-act="dupIgnore" data-v="${esc(d.key)}">Not a duplicate</button></div>${(() => { const [o, n] = dupWhen(d.a) <= dupWhen(d.b) ? [d.a, d.b] : [d.b, d.a], same = dupWhen(o) === dupWhen(n) || !dupWhen(o) || !dupWhen(n), df = dupDiffs(o, n); return `<div class="dup-pair">${dupCard(o, same ? '' : 'Older')}${dupCard(n, same ? '' : 'Newer')}</div>${df.length ? `<p class="note dup-diff"><b>${same ? 'Differs' : 'Changed in the newer one'}:</b> ${df.map(esc).join(' · ')}</p>` : ''}`; })()}</div>`).join('')}</div>
+  const nA = dupPlan(false).length;
+  const bulk = nA ? `<div class="fold-tools dup-bulk"><button class="btn small danger" data-act="dupDelAll" data-v="all">Delete all duplicates (${nA})</button></div>` : '';
+  box.innerHTML = `${bulk}${known && pp.length ? `<p class="note" style="margin:0 0 8px"><b>${nm} of ${nn(pp.length, 'participant pair')}</b> involve a youth with no MRN.</p>` : ''}<div class="dup-list">${show.map(d => `<div class="dup ${d.high ? 'high' : ''}"><div class="dup-why"><span class="chip ${d.high ? 'bad' : 'warn'}">${d.high ? 'Likely' : 'Possible'}</span>${d.why.map(w => `<span class="chip">${esc(w)}</span>`).join('')}<button class="linkbtn adm" data-act="dupIgnore" data-v="${esc(d.key)}">Not a duplicate</button></div>${(() => { const [o, n] = dupWhen(d.a) <= dupWhen(d.b) ? [d.a, d.b] : [d.b, d.a], same = dupWhen(o) === dupWhen(n) || !dupWhen(o) || !dupWhen(n), df = dupDiffs(o, n); return `<div class="dup-pair">${dupCard(o, same ? '' : 'Older')}${dupCard(n, same ? '' : 'Newer')}</div>${df.length ? `<p class="note dup-diff"><b>${same ? 'Differs' : 'Changed in the newer one'}:</b> ${df.map(esc).join(' · ')}</p>` : ''}`; })()}</div>`).join('')}</div>
     ${D.length > DUP_LIMIT ? `<button class="btn small" data-act="dupAll">${UI.dupAll ? 'Show fewer' : `Show all ${D.length}`}</button>` : ''}`;
 }
 
@@ -2870,6 +3149,7 @@ PAGE_IMPL.data = {
     <div class="panel"><h2>Data problems</h2><div id="dIss"></div></div></div>
     ${foldSec('nmPanel', 'No MRN', 'nmN', '', '<div id="dNm"></div>', 'Youth registered without a membership record number (the portal\'s hasMrn), usually added by leaders as non-members. Whether they count is set under Registration statuses.')}
     ${foldSec('dupPanel', 'Possible duplicates', 'dupN', '', '<div id="dDup"></div>', 'Same first name and another name, plus the same birthday, age, contact or ward. Check each pair, then delete the extra record or mark it as not a duplicate.')}
+    ${can.deleteP() ? `<div id="dzData">${resetPanel()}</div>` : ''}
     <div class="panel"><div class="panel-head"><h2>Stakes, wards and branches in this session</h2><span class="note">Untick an area to leave its youth out of the expected list and the groups.</span></div><div id="dAreas" class="arealist"></div></div>`;
   },
   update() {
@@ -3191,6 +3471,7 @@ document.addEventListener('click', async e => {
     case 'nmCsv': { const L = S.P.filter(p => p.member === false && p.src !== 'walkin').sort((a, b) => areaOf(a).st.localeCompare(areaOf(b).st) || areaOf(a).un.localeCompare(areaOf(b).un) || a.name.localeCompare(b.name));
       exportCSV('no-mrn-youth-' + new Date().toISOString().slice(0, 10) + '.csv', [['Stake / district', 'Ward / branch', 'Bishop or branch president', 'Bishop email', 'First name', 'Last name', 'Birthday', 'Age', 'Phone', 'Contact 1 name', 'Contact 1 phone', 'Registration ID', 'Is a member? (bishop to fill in)']].concat(L.map(p => [areaOf(p).st, areaOf(p).un, p.bishopN || '', p.bishopE || '', p.first || '', p.last || '', p.bday || '', p.age ?? '', p.phone || '', p.c1n || '', p.c1p || '', p.id, '']))); audit('settings', `Exported the list of ${L.length} youth with no MRN`); break; }
     case 'nmToggle': { const o = UI.nmOpen || (UI.nmOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); renderNonMembers(); break; }
+    case 'dupDelAll': await deleteDuplicates(v === 'likely'); break;
     case 'nmShow': openFold('nmPanel'); break;
     case 'dupAll': UI.dupAll = !UI.dupAll; renderDups(); break;
     case 'logClose': UI.genLog = null; render(); break;
@@ -3226,6 +3507,33 @@ document.addEventListener('click', async e => {
       openModal(`<div class="modal-head"><div><h2>${esc(inv0.name)}</h2><small class="muted">${esc(id)} · ${esc(ROLES[inv0.role] || inv0.role)}</small></div><button class="x" data-act="close" aria-label="Close">×</button></div><p class="note" style="margin:0">Sessions this account can open</p><div class="sheetlist">${S.mySessions.map(sid => `<label class="sess-pick"><input type="checkbox" class="pickSess" value="${esc(sid)}" ${cur.includes(sid) ? 'checked' : ''}> ${esc(sessName(sid))}</label>`).join('')}</div><button class="btn primary" data-act="invSessSave" data-id="${esc(id)}">Save</button>`); break; }
     case 'invSessSave': { const inv0 = S.invites[id]; const mine = new Set(S.mySessions); const keepOther = invSessions(inv0).filter(x => !mine.has(x)); const picked = [...document.querySelectorAll('.pickSess:checked')].map(x => x.value); const sessions = uniq(keepOther.concat(picked)); if (!sessions.length) { toast('Choose at least one session', true); break; } audit('accounts', `Changed which sessions ${inv0.name} can open: ${sessions.map(x => sessName(x)).join(', ')}`, id); await upd('invites/' + id, { sessions }, true).catch(fail); closeModal(); toast('Sessions updated'); break; }
     case 'switchSession': { try { localStorage.setItem('fsy.session.' + S.uid, v); } catch (e) { } closeModal(); location.hash = ''; location.reload(); break; }
+    case 'plReload': PLAN.data = null; planLoad(); break;
+    case 'plReset': PLAN.moves = {}; PLAN.sel = new Set(); for (const v in PLAN.virt) delete PLAN.data[v]; PLAN.virt = {}; PLAN.to = ''; render(); break;
+    case 'plApply': await planApply(); break;
+    case 'plUndoLast': await planUndoLast(); break;
+    case 'plMoveSel': { const to = PLAN.to; if (!to) break; const n = PLAN.sel.size; PLAN.sel.forEach(k => { const [src, st] = k.split('\u0001'); if (to === src) delete PLAN.moves[k]; else PLAN.moves[k] = to; PLAN.open.add(to + '\u0001' + st); }); PLAN.sel = new Set(); render(); toast(`${nn(n, 'unit')} moved to ${PLAN.data[to].name} in the plan. Apply when ready.`); break; }
+    case 'plUndoSt': { const [d, st] = v.split('\u0001'); for (const k of Object.keys(PLAN.moves)) { const p = k.split('\u0001'); if (p[1] === st && PLAN.moves[k] === d) delete PLAN.moves[k]; } render(); break; }
+    case 'plSelClear': PLAN.sel = new Set(); render(); break;
+    case 'plUndo': { const parts = v.split('\u0001'); if (parts.length === 3) delete PLAN.moves[v]; else for (const k in PLAN.moves) if (k.startsWith(v + '\u0001')) delete PLAN.moves[k]; render(); break; }
+    case 'plNewSess': { const name = await askText('New session in the plan', 'Name for the planned session (it is only created if you apply the plan)'); if (!name) break; const id = 'v' + rid('');
+      PLAN.virt[id] = { id, name, cfg: Object.assign({}, DEFAULT_CONFIG, { sessionName: name }), youth: [], staff: [] }; PLAN.data[id] = PLAN.virt[id]; PLAN.to = id; render(); break; }
+    case 'plOpen': PLAN.open.has(v) ? PLAN.open.delete(v) : PLAN.open.add(v); render(); break;
+    case 'sessDel': if (canDelSession(v)) await deleteSession(v); break;
+    case 'nsGo': { if (!can.split()) break; const name = clean(($('#nsName') || {}).value || ''), start = ($('#nsStart') || {}).value || '';
+      if (!name) { toast('Give the new session a name', true); break; }
+      if (Object.values(S.sessions).some(x => x && clean(x.name).toLowerCase() === name.toLowerCase())) { toast('A session with that name already exists', true); break; }
+      if (!await confirmBox(`Create ${esc(name)}?`, 'An empty session is created. You can open it straight away and upload its participants and staff. Registration admins, the Area Seventy and the Head of Logistics can open every session; give other people access on the Accounts page.', 'Create session')) break;
+      const target = 's' + rid(''); toast('Creating the session…');
+      try {
+        const entry = { [target]: { name, at: Date.now(), by: S.meName || '', creator: S.email || '' } };
+        await FB.fs.doc('meta/sessions').set({ s: entry }, { merge: true }); Object.assign(S.sessions, entry);
+        if (realRole() === 'sdc') { const k = emailKey(S.email || ''), mine = invSessions(S.invites[k] || {}); if (!mine.includes(target)) await FB.fs.doc('invites/' + k).set({ sessions: mine.concat(target) }, { merge: true }); }
+        await FB.fs.doc(rawPath(target, 'config/session')).set(Object.assign({}, DEFAULT_CONFIG, { sessionName: name, sessionStart: start }));
+        if (!S.mySessions.includes(target)) S.mySessions.push(target);
+        audit('session', `Created a new empty session: ${name}`); UI.sessCounts = null; if ($('#nsName')) $('#nsName').value = ''; if ($('#nsStart')) $('#nsStart').value = ''; render();
+        toast(`${name} created`, false, { label: 'Open it', fn: () => { try { localStorage.setItem('fsy.session.' + S.uid, target); } catch (e) { } location.hash = 'data'; location.reload(); } });
+      } catch (e) { fail(e); }
+      break; }
     case 'spGo': { if (!can.split()) break; const sp = UI.split; const list = S.P.filter(p => sp.sel.has(areaOf(p).st + '|' + areaOf(p).un)); if (!list.length) break;
       const isNew = sp.dest === 'new', name = isNew ? clean(sp.name) : sessName(sp.dest); if (isNew && !name) { toast('Give the new session a name', true); break; }
       const units = uniq(list.map(p => areaOf(p).un)).length;
@@ -3235,6 +3543,15 @@ document.addEventListener('click', async e => {
       catch (e) { fail(e); }
       break; }
     case 'resetOrg': { if (!can.reset()) break; if (S.config.regenLock) { toast('Companies are official. Unlock them first.', true); break; } if (!await confirmTyped('Undo all groups and companies?', `All ${Object.keys(S.org.groups).length} groups and ${Object.keys(S.org.companies).length} companies are removed, and every participant goes back to having no group. Check-ins stay. You can generate new companies afterwards.`, 'UNDO', 'Undo all groups and companies')) break; audit('groups', 'Undid all groups and companies'); await resetOrg(); toast('Groups and companies removed'); break; }
+    case 'resetPart': { if (!can.deleteP()) break; const n = S.P.length; if (!n) break;
+      if (!await confirmTyped(`Delete all ${n} participants?`, `Every youth and walk-in in <b>${esc(sessName(S.sid))}</b> is deleted, with their check-ins, medical notes and headcounts. Other sessions are not touched. Staff, groups and companies stay, so after uploading the participant file again, press Rebalance to fill the groups.${PLAN.undo ? ' <br><br>If the last applied plan caused the problem, <b>Undo last plan</b> on Plan sessions may fix it without deleting anyone.' : ''}`, 'DELETE', 'Delete all participants')) break;
+      toast('Deleting participants…'); let failed = 0;
+      for (const c of ['roster', 'state', 'medical', 'intake', 'share', 'headcount']) {
+        try { const sn = await FB.fs.collection(rawPath(S.sid, c)).get(); for (const d of sn.docs) await FB.fs.doc(rawPath(S.sid, c + '/' + d.id)).delete().catch(() => { failed++; }); } catch (e) { failed++; }
+      }
+      S.roster = {}; S.state = {}; S.medical = {}; S.rosterEx = new Set(); S.stateEx = new Set(); S.medicalEx = new Set(); S.hc = {}; recompute(true);
+      audit('settings', `Deleted all ${n} participants in ${sessName(S.sid)}`);
+      toast(failed ? `Participants deleted, but ${failed} parts were refused. Check that the latest firestore.rules are published.` : `All ${n} participants deleted. Upload the participant file on Data & areas.`, !!failed); break; }
     case 'resetTest': { if (!can.reset()) break; const tests = S.staffList.filter(x => x.test); if (!await confirmTyped(`Delete ${tests.length} test staff?`, 'Groups and companies they lead lose their counselor or AC. Press Rebalance afterwards to give them to real staff, or undo all groups and generate again.', 'DELETE', 'Delete test staff')) break; audit('staff', `Deleted ${tests.length} test staff (Start over)`); const keep = {}; S.staffList.filter(x => !x.test).forEach(x => keep[x.id] = x); S.staff = keep; recompute(true); await setDoc('staff/all', { s: keep }).catch(fail); toast(`${tests.length} test staff deleted`); break; }
     case 'resetType': { if (!can.reset()) break; const r = ($('#rsType') || {}).value || 'counselor'; UI.rsType = r; const gone = S.staffList.filter(x => x.role === r && !x.fromAccount); if (!gone.length) { toast(`There are no ${ROLES[r].toLowerCase()}s to delete.`); break; }
       if (!await confirmTyped(`Delete all ${gone.length} ${ROLES[r].toLowerCase()}s?`, `Every ${esc(ROLES[r].toLowerCase())} record is deleted, real and test. Other staff types are kept.${r === 'counselor' ? ' Groups lose their counselors; press Rebalance after uploading the new list.' : r === 'ac' ? ' Companies lose their ACs; press Rebalance after uploading the new list.' : ''} Sign-in accounts are kept.`, 'DELETE', 'Delete ' + ROLES[r].toLowerCase() + 's')) break;
@@ -3305,6 +3622,12 @@ document.addEventListener('change', async e => {
   if (t.id === 'accAll') { UI.accAll = t.checked; render(); return; }
   if (t.id === 'spDest') { UI.split.dest = t.value; t.blur(); render(); return; }
   if (t.name === 'spTeam') { UI.split.team = t.value; return; }
+  if (act === 'plSel') { t.checked ? PLAN.sel.add(v) : PLAN.sel.delete(v); render(); return; }
+  if (act === 'plSelSt') { const [d, st] = v.split('\u0001'); for (const src in PLAN.data) uniq(PLAN.data[src].youth.filter(x => x.st === st).map(x => x.un)).forEach(un => { if (planDest(src, st, un) !== d) return; const k = src + '\u0001' + st + '\u0001' + un; t.checked ? PLAN.sel.add(k) : PLAN.sel.delete(k); }); render(); return; }
+  if (t.id === 'plTo') { PLAN.to = t.value; return; }
+  if (act === 'plMove') { const src = v.split('\u0001')[0]; if (t.value === src) delete PLAN.moves[v]; else PLAN.moves[v] = t.value; render(); return; }
+  if (act === 'plMoveSt') { if (!t.value) return; const [src, st] = v.split('\u0001'); const D = PLAN.data[src]; const units = uniq(D.youth.filter(x => x.st === st).map(x => x.un).concat(D.staff.filter(x => x.st === st).map(x => x.un))); units.forEach(un => { const k = src + '\u0001' + st + '\u0001' + un; if (t.value === src) delete PLAN.moves[k]; else PLAN.moves[k] = t.value; }); render(); return; }
+  if (act === 'plStaff') { PLAN.staffMove = t.checked; render(); return; }
   if (t.id === 'stStakeSel') { stAreaSync('stake'); return; }
   if (t.id === 'stUnitSel') { stAreaSync('unit'); return; }
   if (t.id === 'stBday') { const o = $('#stAgeOut'); if (o) o.innerHTML = stAgeText(t.value, null); return; }
