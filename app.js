@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-19h · my details for everyone';
+const APP_VERSION = '2026-11-20b · counselors needed in the summary';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1894,9 +1894,31 @@ PAGE_IMPL.tally = {
 /* Repeated checks (one line per group) fold into a single line that opens to show them. */
 const CHECK_KINDS = [[/^Group \d+ has \d+ participants/, n => `${n} groups are over the group size`], [/^Group \d+ has no counselor/, n => `${n} groups have no counselor`], [/^Group \d+ is not in a company/, n => `${n} groups are not in a company`], [/^Company \d+ has no assistant/, n => `${n} companies have no assistant coordinator`], [/^Company \d+ does not have both/, n => `${n} companies do not have both young men and young women`]];
 /** Short advice shown under a check. */
+/* How many more counselors each gender needs so every group stays within the group size.
+   Groups never mix gender or age band, so each band is counted on its own. */
+function counselorGap() {
+  const sh = shadowedCounselors(S.staffList), out = {};
+  for (const g of ['F', 'M']) {
+    const size = gsize(S.config, g), youth = S.P.filter(p => p.elig && p.gender === g);
+    const need = ['Y', 'O'].reduce((a, b) => a + Math.ceil(youth.filter(p => p.band === b).length / size), 0) + Math.ceil(youth.filter(p => !p.band).length / size);
+    const have = S.staffList.filter(x => x.role === 'counselor' && x.gender === g && !x.test && !sh[x.id]).length;
+    out[g] = { size, youth: youth.length, need, have, short: Math.max(0, need - have) };
+  }
+  return out;
+}
+function gapSummary() {
+  const G = counselorGap(), parts = [];
+  if (G.F.short) parts.push(`${G.F.short} young women's`); if (G.M.short) parts.push(`${G.M.short} young men's`);
+  if (!parts.length) return 'There are enough counselors: press Rebalance to give them groups.';
+  return `Add ${parts.join(' and ')} counselor${G.F.short + G.M.short === 1 ? '' : 's'}, or raise the group size, then press Rebalance.`;
+}
+function gapGuide() {
+  const G = counselorGap(), row = (g, l) => { const x = G[g]; return `<li><b>${l}:</b> ${x.short ? `<b class="gap-n">${nn(x.short, 'more counselor')}</b> needed` : 'enough counselors. If their groups are still over, press Rebalance'} <span class="muted">· ${x.youth} youth in groups of ${x.size} need ${nn(x.need, 'counselor')}, you have ${x.have}</span></li>`; };
+  return `<div class="gap-guide"><b>How this is worked out</b><ul>${row('F', 'Young women')}${row('M', 'Young men')}</ul><small class="muted">Counselors lead only their own gender, so a spare young men's counselor can't take a young women's group. Each age band is counted separately.</small></div>`;
+}
 function checkHint(t) {
   if (/participants? (is|are) not in a group/.test(t)) return 'Press Rebalance to place them.';
-  if (/has \d+ participants|over the group size/.test(t)) return 'Add counselors or raise the group size, then press Rebalance.';
+  if (/has \d+ participants|over the group size/.test(t)) return gapSummary();
   if (/Press Rebalance/.test(t)) return '';
   if (/no counselor/.test(t)) return 'Press Rebalance, or choose a counselor inside the group.';
   if (/not in a company/.test(t)) return 'Press Rebalance, or pick a company inside the group.';
@@ -1925,7 +1947,8 @@ function checksList(w) {
     if (t === 'one') return li(x);
     const list = kinds[x]; if (list.length < 3) return list.map(li).join('');
     const lv = list.some(y => y[0] === 'bad') ? 'bad' : 'warn', head = CHECK_KINDS[x][1](list.length);
-    return `<li class="wgroup"><details><summary>${chip(lv)}<span>${esc(head)}${hint(head)}</span></summary><ul class="warnlist sub">${list.map(li).join('')}</ul></details></li>`;
+    const over = /over the group size/.test(head) && !lim;
+    return `<li class="wgroup"><details><summary>${chip(lv)}<span>${esc(head)}${hint(head)}</span></summary>${over ? gapGuide() : ''}<ul class="warnlist sub">${list.map(li).join('')}</ul></details></li>`;
   }).join('')}</ul>`;
 }
 
@@ -2309,7 +2332,7 @@ PAGE_IMPL.wellness = {
 PAGE_IMPL.staff = {
   frame() {
     const real = S.staffList.filter(s => !s.test && !s.fromAccount).length;
-    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Counselors aged 19–22 are matched to 14–15 groups first, 23 and over to 16–18. Import the staff sign-up form or add people one at a time.</p></div><div class="btnrow">${can.staff() ? '<button class="btn adm" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm" data-act="stAdd">+ Add staff member</button>${can.staff() ? infoBtn('sf', 'About importing staff') : ''}</div></section>
+    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Import the staff sign-up form or add people one at a time.</p></div><div class="btnrow">${can.staff() ? '<button class="btn adm" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm" data-act="stAdd">+ Add staff member</button>${can.staff() ? infoBtn('sf', 'About importing staff') : ''}</div></section>
     ${can.staff() ? infoCard('sf', 'Importing staff', `<ul><li>Pick an Excel or .csv file, such as the Google Form responses for counselors, ACs and coordinators.</li><li>A <b>Type</b> column (AC, Counselor or Coordinator) sets each person's role.</li><li>Blank rows are skipped and people who sent the form more than once are merged.</li><li>Each ward or branch is matched to its stake or district. You confirm any it can't place.</li><li>Import again any time: people already on the list are updated, not added twice.</li></ul>`) : ''}
     ${can.staff() ? `<input type="file" id="sfFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><section class="panel adm" id="sfPanel" hidden><div class="panel-head"><h2>Import staff</h2><label class="btn small" for="sfFile">Choose another file</label></div>
       <div id="sfBox"></div></section>` : ''}
