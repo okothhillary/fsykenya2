@@ -721,3 +721,40 @@ tr.acc-h td{background:var(--surface2);padding-top:10px;padding-bottom:10px}
 .gap-guide ul{margin:4px 0 6px;padding-left:18px}
 .gap-guide li{margin:2px 0}
 .gap-guide .gap-n{color:#9a5a00}
+
+/* possible duplicates (Data & areas) */
+.dup-list{display:grid;gap:10px;margin-bottom:10px}
+.dup{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface)}
+.dup.high{border-color:rgba(214,75,58,.45)}
+.dup-why{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.dup-why .linkbtn{margin-left:auto}
+.dup-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dup-card{display:flex;flex-direction:column;gap:2px;align-items:flex-start;padding:8px 10px;border-radius:10px;background:rgba(0,74,124,.04)}
+.dup-card small{line-height:1.4}
+.dup-card .btn{margin-top:6px}
+@media (max-width:640px){.dup-pair{grid-template-columns:1fr}}
+
+/* a short note under a folding section's title, visible while it is folded */
+details.fold > summary{flex-wrap:wrap}
+details.fold > summary::after{order:5}
+details.fold > summary .fold-sub{order:10;flex:0 0 100%;max-width:none;margin:2px 0 0;padding-right:min(30%,240px);font-weight:400}
+.dup-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:2px}
+.dup-when{font-weight:700;color:var(--ink)}
+.dup-diff{margin:8px 0 0;font-size:.84rem}
+
+/* staff list: role and Delete share the last column, so Delete stays on screen on tablets */
+td.st-act{white-space:nowrap}
+td.st-act select{width:auto;min-width:140px;max-width:170px;padding-top:6px;padding-bottom:6px}
+td.st-act .st-del{display:block;margin-top:6px}
+@media (max-width:1000px){th.bf,td.bf{display:none}}
+
+/* no MRN list: stakes and units fold open like the check-in area list */
+.nm-list{border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.nm-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--surface);border:0;border-top:1px solid var(--line);padding:12px 14px;cursor:pointer;font:inherit;color:inherit;flex-wrap:wrap}
+.nm-list>.nm-row:first-child{border-top:0}
+.nm-row.un{padding-left:34px;background:rgba(0,74,124,.035)}
+.nm-row .caret{color:var(--blue25);width:12px}
+.nm-row small{flex-basis:auto}
+.nm-row .nm-n{margin-left:auto;font-weight:700;font-size:.88rem}
+.nm-row:hover{background:rgba(0,125,165,.07)}
+.nm-tbl{border:0;border-radius:0;border-top:1px solid var(--line);margin:0 0 0 34px}

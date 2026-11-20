@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-20b · counselors needed in the summary';
+const APP_VERSION = '2026-11-20k · no MRN list folds by stake and unit';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -69,6 +69,8 @@ function titleCase(s) {
   if (s === s.toUpperCase() || s === s.toLowerCase()) return s.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
   return s;
 }
+/* Church member or not, from the portal's hasMrn (the scraper writes Yes or No). Blank means not known. */
+function normMember(v) { const t = clean(v).toLowerCase(); if (/^(yes|y|true|1|member)$/.test(t)) return true; if (/^(no|n|false|0|non.?member|not a member)$/.test(t)) return false; return null; }
 function normGender(g) { g = clean(g).toLowerCase(); if (/^(m|male|man|boy|brother|br)$/.test(g)) return 'M'; if (/^(f|female|woman|girl|sister|sis)$/.test(g)) return 'F'; return ''; }
 function normStatus(s) {
   s = clean(s).toUpperCase().replace(/[\s-]+/g, '_');
@@ -153,6 +155,7 @@ const FIELDS = [
   ['unit', 'Ward / branch', ['ward - branch name', 'ward', 'branch', 'unit', 'ward/branch', 'ward name']],
   ['bishopE', "Bishop's email", ["bishop's email", 'bishop email', 'bishops email']],
   ['bishopN', "Bishop's name", ["bishop's name", 'bishop name', 'bishops name', 'branch president']],
+  ['member', 'Church member', ['member', 'church member', 'has mrn', 'hasmrn', 'membership', 'membership record']],
   ['regId', 'Registration ID', ['registration id', 'reg id', 'id', 'registration number']]
 ];
 function autoMap(headers) {
@@ -187,7 +190,8 @@ function rowsToRecords(rows, mapping, mode, now) {
       c1n: titleCase(o.c1n), c1e: clean(o.c1e).toLowerCase(), c1p: clean(o.c1p).replace(/\.0$/, ''),
       c2n: titleCase(o.c2n), c2e: clean(o.c2e).toLowerCase(), c2p: clean(o.c2p).replace(/\.0$/, ''),
       ageCsv: isNaN(ageNum) ? null : ageNum, regDate: clean(o.regDate), status: normStatus(o.status),
-      stake: clean(o.stake), unit: clean(o.unit), bishopE: clean(o.bishopE).toLowerCase(), bishopN: titleCase(o.bishopN)
+      stake: clean(o.stake), unit: clean(o.unit), bishopE: clean(o.bishopE).toLowerCase(), bishopN: titleCase(o.bishopN),
+      member: normMember(o.member)
     };
     const kind = mode === 'auto' ? (normType(o.type) || 'participant') : mode;
     const regId = clean(o.regId);
@@ -529,8 +533,9 @@ function derive(rosterBuckets, stateBuckets, cfg, org, staffMap) {
       if (p.age == null) flags.push('age');
       else if (p.age < 13 || p.age > 18) flags.push('agerange');
       if (!p.tshirt) flags.push('size');
+      if (p.member === false && p.src !== 'walkin') flags.push('nonmember');
       p.flags = flags;
-      p.inc = p.ov === 'inc' ? true : p.ov === 'exc' ? false : !(flags.includes('area') || flags.includes('status'));
+      p.inc = p.ov === 'inc' ? true : p.ov === 'exc' ? false : !(flags.includes('area') || flags.includes('status') || (cfg.excludeNonMembers && flags.includes('nonmember')));
       p.elig = p.inc && !!p.gender && !!p.band;
       p.medIssue = p.mo === 'n' ? null : (p.mo === 'y' || p.medF) ? (clean(p.med) || 'Flagged by admin') : issueText(p.med);
       p.dietIssue = p.dov === 'n' ? null : (p.dov === 'y' || p.dietF) ? (clean(p.diet) || 'Flagged by admin') : issueText(p.diet);
@@ -1091,7 +1096,7 @@ function chipBand(b) { return b ? `<span class="chip band">${BANDS[b]}</span>` :
 function pct(a, b) { return b ? Math.round(a * 100 / b) : 0; }
 function opt(v, label, sel) { return `<option value="${esc(v)}"${sel ? ' selected' : ''}>${esc(label)}</option>`; }
 function uniq(a) { return [...new Set(a)]; }
-const FLAG_TEXT = { walkin: ['Walk-in', 'info'], area: ['Excluded area', 'bad'], status: ['Cancelled', 'bad'], pending: ['Not approved yet', 'warn'], gender: ['No gender', 'bad'], age: ['No age', 'bad'], agerange: ['Outside 13–18', 'warn'], size: ['No T-shirt size', 'warn'] };
+const FLAG_TEXT = { walkin: ['Walk-in', 'info'], area: ['Excluded area', 'bad'], status: ['Cancelled', 'bad'], pending: ['Not approved yet', 'warn'], gender: ['No gender', 'bad'], age: ['No age', 'bad'], agerange: ['Outside 13–18', 'warn'], size: ['No T-shirt size', 'warn'], nonmember: ['No MRN', 'info'] };
 function flagChips(p, which) {
   const fs = p.flags.filter(f => !which || which.includes(f)).map(f => `<span class="chip ${FLAG_TEXT[f][1]}">${FLAG_TEXT[f][0]}</span>`);
   if (p.ov === 'inc' && (p.flags.includes('area') || p.flags.includes('status'))) fs.push('<span class="chip good">Included by admin</span>');
@@ -1914,7 +1919,7 @@ function gapSummary() {
 }
 function gapGuide() {
   const G = counselorGap(), row = (g, l) => { const x = G[g]; return `<li><b>${l}:</b> ${x.short ? `<b class="gap-n">${nn(x.short, 'more counselor')}</b> needed` : 'enough counselors. If their groups are still over, press Rebalance'} <span class="muted">· ${x.youth} youth in groups of ${x.size} need ${nn(x.need, 'counselor')}, you have ${x.have}</span></li>`; };
-  return `<div class="gap-guide"><b>How this is worked out</b><ul>${row('F', 'Young women')}${row('M', 'Young men')}</ul><small class="muted">Counselors lead only their own gender, so a spare young men's counselor can't take a young women's group. Each age band is counted separately.</small></div>`;
+  return `<div class="gap-guide"><ul>${row('F', 'Young women')}${row('M', 'Young men')}</ul><small class="muted">Counselors lead only their own gender.</small></div>`;
 }
 function checkHint(t) {
   if (/participants? (is|are) not in a group/.test(t)) return 'Press Rebalance to place them.';
@@ -2298,7 +2303,7 @@ async function updateReport(owner, id, patch) { const r0 = ((S.reports || {})[ow
 /* page: wellness */
 function wlOpen(id) { return foldOpen(id); }
 function foldOpen(id) { const o = UI.foldSet || {}; return id in o ? o[id] : ['wl-rep', 'hc-missing', 'hc-late'].includes(id); }
-function foldSec(id, title, countId, tools, body) { return `<details class="panel fold" id="${id}" ${foldOpen(id) ? 'open' : ''}><summary><h2>${title}</h2><span class="chip" id="${countId}"></span></summary><div class="fold-body">${tools ? `<div class="fold-tools">${tools}</div>` : ''}${body}</div></details>`; }
+function foldSec(id, title, countId, tools, body, sub) { return `<details class="panel fold" id="${id}" ${foldOpen(id) ? 'open' : ''}><summary><h2>${title}</h2><span class="chip" id="${countId}"></span>${sub ? `<p class="note fold-sub">${sub}</p>` : ''}</summary><div class="fold-body">${tools ? `<div class="fold-tools">${tools}</div>` : ''}${body}</div></details>`; }
 function openFold(id) { UI.foldSet = Object.assign(UI.foldSet || {}, { [id]: true }); const d = document.getElementById(id); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
 PAGE_IMPL.wellness = {
   frame() {
@@ -2359,12 +2364,12 @@ PAGE_IMPL.staff = {
     $('#stView').innerHTML = list.length ? `<div class="chips"><button data-act="stView" data-v="az" aria-pressed="${!byArea}">A–Z</button><button data-act="stView" data-v="area" aria-pressed="${byArea}">By stake and unit</button><button data-act="stView" data-v="new" aria-pressed="${UI.staffView === 'new'}">Newest first</button></div><button class="btn small" data-act="stPdf" data-v="">Print ${esc(plural.toLowerCase())} list (PDF)</button>` : '';
     const G = Object.values(S.org.groups), C = Object.values(S.org.companies);
     const where = s => { if (s.role === 'counselor') { const g = G.find(g => g.counselorId === s.id); return g ? `G${g.num} · ${BANDS[g.band]}` : '<span class="chip warn">Unassigned</span>'; } if (s.role === 'ac') { const c = C.find(c => c.acId === s.id); return c ? `Company ${c.num}` : '<span class="chip warn">Spare</span>'; } if (s.role === 'coordinator') return 'All companies'; return '—'; };
-    const isC = UI.staffTab === 'counselor', ncol = isC ? 7 : 6;
+    const isC = UI.staffTab === 'counselor', ncol = isC ? 6 : 5;
     const shadowS = shadowedCounselors(S.staffList);
     const linkedIds = new Set(Object.values(S.invites || {}).map(v => v && v.staffId).filter(Boolean));
     const DAY = 86400000, newest = UI.staffView === 'new';
     const addedTxt = s => s.addedAt ? `Added ${fmtWhen(s.addedAt)}${s.addedBy ? ' by ' + s.addedBy : ''}` : '';
-    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.addedAt && Date.now() - s.addedAt < DAY ? `<span class="chip good" title="${esc(addedTxt(s))}">New</span>` : ''}${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}${newest && s.addedAt ? '<br>' + esc(addedTxt(s)) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td>${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '14–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select></td><td><button class="btn small danger adm" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.addedAt && Date.now() - s.addedAt < DAY ? `<span class="chip good" title="${esc(addedTxt(s))}">New</span>` : ''}${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}${newest && s.addedAt ? '<br>' + esc(addedTxt(s)) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td class="bf">${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '14–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td class="st-act"><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select><button class="btn small danger adm st-del" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
     let body = '';
     if (byArea) {
       const T = staffByArea(list);
@@ -2378,7 +2383,7 @@ PAGE_IMPL.staff = {
     const latestLine = withT.length ? `<p class="note st-latest">Latest ${esc((ROLES[UI.staffTab] || '').toLowerCase())} added: <b>${esc(withT[0].name)}</b> · ${esc(fmtWhen(withT[0].addedAt))}${withT[0].addedBy ? ' by ' + esc(withT[0].addedBy) : ''}${recent.length > 1 ? ` · <b>${recent.length}</b> added in the last 24 hours` : ''}${newest ? '' : ' · <a href="#" data-act="stView" data-v="new">See newest first</a>'}</p>` : '';
     const stFolded = !!UI.stFold && !clean(UI.stQ || '');
     { const L = $('#stList'), fb = $('#stFoldBtn'), fold = stFolded; L.classList.toggle('st-folded', fold); if (fb) { fb.textContent = fold ? 'Show table' : 'Hide table'; fb.setAttribute('aria-expanded', String(!fold)); } }
-    $('#stList').innerHTML = latestLine + (list.length ? `<div class="tablewrap"${stFolded ? ' hidden style="display:none"' : ''}><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th>Best fit</th>' : ''}<th>Assigned</th><th>Role</th><th></th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`);
+    $('#stList').innerHTML = latestLine + (list.length ? `<div class="tablewrap"${stFolded ? ' hidden style="display:none"' : ''}><table><thead><tr><th>Name</th><th>Gender</th><th class="n">Age</th>${isC ? '<th class="bf">Best fit</th>' : ''}<th>Assigned</th><th>Role</th></tr></thead><tbody>${body}</tbody></table></div>` : sq ? `<div class="empty"><h3>No staff match "${esc(UI.stQ)}"</h3></div>` : `<div class="empty"><h3>No ${esc(ROLES[UI.staffTab].toLowerCase())}s yet</h3><button class="btn primary" data-act="stAdd">+ Add staff member</button></div>`);
     renderSf();
   }
 };
@@ -2700,7 +2705,7 @@ async function loadSessionCounts() {
     const cd = await FB.fs.doc(rawPath(id, 'config/session')).get(); const cfg = Object.assign({}, DEFAULT_CONFIG, cd.exists ? cd.data() : {});
     const exS = new Set(cfg.excludedStatuses || []), exSt = new Set(cfg.excludedStakes || []), exU = new Set(cfg.excludedUnits || []);
     const sn = await FB.fs.collection(rawPath(id, 'roster')).get(); let n = 0, out = 0, wk = 0;
-    sn.docs.forEach(d => { const m = (d.data() || {}).p || {}; for (const k in m) { const r = m[k]; if (!r) continue; const st = normStatus(r.status); if (r.src === 'walkin') wk++; else if ((st && exS.has(st)) || exSt.has(r.stake) || exU.has((r.stake || '') + '|' + (r.unit || ''))) out++; else n++; } });
+    sn.docs.forEach(d => { const m = (d.data() || {}).p || {}; for (const k in m) { const r = m[k]; if (!r) continue; const st = normStatus(r.status); if (r.src === 'walkin') wk++; else if ((st && exS.has(st)) || (cfg.excludeNonMembers && r.member === false) || exSt.has(r.stake) || exU.has((r.stake || '') + '|' + (r.unit || ''))) out++; else n++; } });
     UI.sessCounts[id] = n; UI.sessLeft[id] = out; (UI.sessWalk = UI.sessWalk || {})[id] = wk;
   } catch (e) { UI.sessCounts[id] = '?'; } }
   if (currentPage() === 'sessions') render();
@@ -2744,6 +2749,106 @@ async function moveParticipants(list, target, opts) {
   else if (!S.mySessions.includes(target)) S.mySessions.push(target);
 }
 
+/* Possible duplicates: the same first name plus one more name, backed up by the same birthday or age, contact or ward.
+   Covers participants (walk-ins too) and staff. People are only compared within their own kind. */
+const DUP_LIMIT = 30;
+let dupMemo = { k: null, v: [] };
+function dupPeople() {
+  const P = S.P.map(p => ({ kind: 'p', id: p.id, rec: p, name: p.name || `${p.first || ''} ${p.last || ''}`, first: clean(p.first || p.name || '').split(/\s+/)[0], bday: p.bday || '', age: p.age,
+    phones: [p.phone, p.c1p, p.c2p].map(x => sfPhone(x || '')).filter(okPhone), email: String(p.email || '').toLowerCase(), unit: (p.unit || '').toLowerCase() }));
+  const T = S.staffList.filter(x => !x.test && !x.fromAccount).map(x => ({ kind: 's', id: x.id, rec: x, name: x.name, first: clean(x.name).split(/\s+/)[0], bday: x.bday || '', age: staffAge(x, S.config),
+    phones: [sfPhone(x.phone || '')].filter(okPhone), email: String(x.email || '').toLowerCase(), unit: (x.unit || '').toLowerCase() }));
+  return [P, T];
+}
+function tokSame(a, b) { return a === b || (a.length >= 4 && b.length >= 4 && editDist(a, b) <= 1); }
+function dupScore(a, b) {
+  const ta = nameTokens(a.name), tb = nameTokens(b.name), fa = nameTokens(a.first)[0], fb = nameTokens(b.first)[0];
+  if (!fa || !fb || !tb.some(t => tokSame(t, fa)) || !ta.some(t => tokSame(t, fb))) return null; /* each one's first name is in the other's name */
+  const shared = ta.filter(t => tb.some(u => tokSame(t, u))).length; if (shared < 2) return null;
+  const why = []; let pts = 0;
+  if (ta.join(' ') === tb.join(' ')) { pts += 1; why.push('Same name'); } else if (ta.length === tb.length && shared === ta.length) { pts += 1; why.push('Similar name'); }
+  if (a.bday && b.bday) { if (a.bday === b.bday) { pts += 3; why.push('Same birthday'); } else if (a.age != null && a.age === b.age) { pts += 1; why.push('Same age'); } else pts -= 2; }
+  else if (a.age != null && a.age === b.age) { pts += 1; why.push('Same age'); }
+  if (a.phones.some(x => b.phones.includes(x))) { pts += 2; why.push('Same phone'); }
+  if (a.email && a.email === b.email) { pts += 2; why.push('Same email'); }
+  if (a.unit && a.unit === b.unit) { pts += 1; why.push('Same ward'); }
+  return pts >= 2 ? { pts, why, high: pts >= 4 } : null;
+}
+function findDuplicates() {
+  const ign = new Set(S.config.dupIgnore || []), key = S.P.length + ':' + S.staffList.length + ':' + ign.size + ':' + (S.P[0] && S.P[0].id) + ':' + fnv(JSON.stringify(S.P.map(p => p.name + p.bday + p.unit + p.phone).join('|') + S.staffList.map(x => x.name + x.phone + x.bday + x.unit).join('|')));
+  if (dupMemo.k === key) return dupMemo.v;
+  const out = [];
+  for (const list of dupPeople()) {
+    /* every name word is a bucket, so "Abel Kiprop" and "Kiprop Abel" meet; first names alone feed the spelling pass below */
+    const byTok = {}, byFirst = {}; list.forEach((x, i) => { nameTokens(x.name).forEach(t => (byTok[t] = byTok[t] || []).push(i)); nameTokens(x.first).slice(0, 1).forEach(t => (byFirst[t] = byFirst[t] || []).push(i)); });
+    const seen = new Set();
+    for (const t in byTok) { const ids = byTok[t]; for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      const a = list[ids[i]], b = list[ids[j]], k = [a.id, b.id].sort().join('|'); if (seen.has(k) || ign.has(k)) continue; seen.add(k);
+      const r = dupScore(a, b); if (r) out.push(Object.assign({ a, b, key: k }, r)); } }
+    /* first names spelt slightly differently land in different buckets: compare those buckets too */
+    const toks = Object.keys(byFirst).filter(t => t.length >= 4);
+    for (let i = 0; i < toks.length; i++) for (let j = i + 1; j < toks.length; j++) { if (Math.abs(toks[i].length - toks[j].length) > 1 || editDist(toks[i], toks[j]) > 1) continue;
+      for (const x of byFirst[toks[i]]) for (const y of byFirst[toks[j]]) { const a = list[x], b = list[y], k = [a.id, b.id].sort().join('|'); if (seen.has(k) || ign.has(k)) continue; seen.add(k); const r = dupScore(a, b); if (r) out.push(Object.assign({ a, b, key: k }, r)); } }
+  }
+  out.sort((x, y) => y.pts - x.pts || x.a.name.localeCompare(y.a.name));
+  dupMemo = { k: key, v: out }; return out;
+}
+/* when a record came in: the portal's registration date, the time a staff member was added, or when a walk-in was recorded */
+function dupWhen(x) {
+  const r = x.rec; if (x.kind === 's') return r.addedAt || 0;
+  const t = r.regDate ? Date.parse(r.regDate) || Date.parse(parseDate(r.regDate)) : 0; return t || (r.src === 'walkin' ? r.imp || 0 : 0);
+}
+function dupDiffs(a, b) {
+  const L = [['tshirt', 'T-shirt'], ['phone', 'phone'], ['email', 'email'], ['status', 'status'], ['unit', 'ward'], ['bday', 'birthday']];
+  return L.filter(([k]) => String(a.rec[k] || '') !== String(b.rec[k] || '')).map(([k, l]) => { const f = v => !v ? 'blank' : k === 'status' ? String(v).replace(/_/g, ' ').toLowerCase() : k === 'bday' ? dmyStr(v) : v; return `${l}: ${f(a.rec[k])} → ${f(b.rec[k])}`; });
+}
+function dupCard(x, tag) {
+  const r = x.rec, isP = x.kind === 'p';
+  const kind = isP ? (r.src === 'walkin' ? 'Walk-in' : 'Participant') : (ROLES[r.role] || 'Staff');
+  const where = isP ? (r.s === 'in' ? 'Checked in' : r.s === 'out' ? 'Checked out' : 'Not arrived') + (r.group ? ` · G${r.group.num}` : '') : '';
+  const meta = [kind, isP && r.src !== 'walkin' ? 'ID ' + (r.id.length > 12 ? r.id.slice(0, 8) + '…' : r.id) : '', isP && r.status ? r.status.replace(/_/g, ' ').toLowerCase() : '', r.tshirt ? 'T-shirt ' + r.tshirt : '', x.age != null ? 'age ' + x.age : '', x.bday ? dmyStr(x.bday) : '', [r.unit, r.stake].filter(Boolean).join(', '), r.phone || '', r.email || '', where].filter(Boolean);
+  const del = isP ? (can.deleteP() ? `<button class="btn small danger adm" data-act="delP" data-id="${esc(r.id)}">Delete</button>` : '') : (can.staff() ? `<button class="btn small danger adm" data-act="stDel" data-id="${esc(r.id)}">Delete</button>` : '');
+  const w = dupWhen(x), when = w ? `${isP && r.src !== 'walkin' ? 'Registered' : 'Added'} ${new Date(w).toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : 'Date not known';
+  return `<div class="dup-card"><div class="dup-top">${tag ? `<span class="chip ${tag === 'Newer' ? 'info' : ''}">${tag}</span>` : ''}<small class="dup-when">${esc(when)}</small></div><a href="#" data-act="${isP ? 'detail' : 'stEdit'}" data-id="${esc(r.id)}"><b>${esc(x.name)}</b></a><small class="muted">${meta.map(esc).join(' · ')}</small>${del}</div>`;
+}
+function dmyStr(iso) { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; }
+function renderNonMembers() {
+  const box = $('#dNm'); if (!box) return;
+  const known = S.P.some(p => p.member === true || p.member === false), L = S.P.filter(p => p.member === false && p.src !== 'walkin');
+  const out = !!S.config.excludeNonMembers, n = $('#nmN');
+  if (n) { n.textContent = known ? (L.length || 'None') : 'Not known'; n.className = 'chip ' + (!known ? '' : L.length ? (out ? 'bad' : 'info') : 'good'); }
+  if (!known) { box.innerHTML = '<p class="note">The last upload had no Member column. Upload a file from the updated portal script.</p>'; return; }
+  if (!L.length) { box.innerHTML = '<p class="note">Every youth in the upload has an MRN.</p>'; return; }
+  const by = {}; L.forEach(p => { const a = areaOf(p); ((by[a.st] = by[a.st] || {})[a.un] = by[a.st][a.un] || []).push(p); });
+  const row = p => { const own = p.ov === 'inc' || p.ov === 'exc';
+    return `<tr><td><a href="#" data-act="detail" data-id="${esc(p.id)}">${esc(p.name)}</a></td><td class="n">${p.age ?? ''}</td><td>${esc((p.status || '').replace(/_/g, ' ').toLowerCase())}</td><td>${p.s === 'in' ? '<span class="chip good">Checked in</span>' : ''}</td>
+      <td><span class="chip ${p.inc ? 'good' : 'bad'}">${p.inc ? 'Counted' : 'Left out'}</span>${own ? ' <small class="muted">by hand</small>' : ''}</td>
+      <td class="adm">${p.inc ? `<button class="btn small" data-act="ovr" data-id="${esc(p.id)}" data-v="exc">Leave out</button>` : `<button class="btn small" data-act="ovr" data-id="${esc(p.id)}" data-v="inc">Include</button>`}${own ? ` <button class="linkbtn" data-act="ovr" data-id="${esc(p.id)}" data-v="">Undo</button>` : ''}</td></tr>`; };
+  const open = UI.nmOpen || (UI.nmOpen = new Set()), cnt = l => { const n = l.filter(p => p.inc).length; return `${nn(l.length, 'youth', 'youth')}${n && n < l.length ? ` · ${n} counted` : ''}`; };
+  const tbl = l => `<div class="tablewrap nm-tbl"><table><thead><tr><th>Name</th><th class="n">Age</th><th>Status</th><th></th><th>In this session</th><th class="adm"></th></tr></thead><tbody>${l.map(row).join('')}</tbody></table></div>`;
+  let h = '';
+  for (const st of Object.keys(by).sort((a, b) => a.localeCompare(b))) {
+    const units = by[st], all = Object.values(units).flat(), so = open.has(st), nu = Object.keys(units).length;
+    h += `<button class="nm-row st" data-act="nmToggle" data-v="${esc(st)}" aria-expanded="${so}"><span class="caret">${so ? '▾' : '▸'}</span><b>${esc(st)}</b><small class="muted">${nn(nu, 'ward or branch', 'wards and branches')}</small><span class="nm-n">${cnt(all)}</span></button>`;
+    if (!so) continue;
+    for (const un of Object.keys(units).sort((a, b) => a.localeCompare(b))) {
+      const l = units[un].sort((a, b) => a.name.localeCompare(b.name)), k = st + '|' + un, uo = open.has(k), bp = l.find(p => p.bishopN || p.bishopE);
+      h += `<button class="nm-row un" data-act="nmToggle" data-v="${esc(k)}" aria-expanded="${uo}"><span class="caret">${uo ? '▾' : '▸'}</span><b>${esc(un)}</b>${bp ? `<small class="muted">${esc(bp.bishopN || '')}${bp.bishopE ? ' · ' + esc(bp.bishopE) : ''}</small>` : ''}<span class="nm-n">${cnt(l)}</span></button>`;
+      if (uo) h += tbl(l);
+    }
+  }
+  box.innerHTML = `<div class="fold-tools"><button class="btn small" data-act="nmCsv">Export CSV for bishops</button></div><p class="note" style="margin:0 0 8px">${out ? 'Left out of the expected list and groups (unticked under Registration statuses).' : 'Counted as registered (ticked under Registration statuses).'} Tap a stake, then a unit. Include or leave out one person on their row.</p>
+    <div class="nm-list">${h}</div>`;
+}
+function renderDups() {
+  const box = $('#dDup'); if (!box) return;
+  const D = findDuplicates(), n = $('#dupN'); if (n) { n.textContent = D.length || 'None'; n.className = 'chip ' + (D.some(d => d.high) ? 'bad' : D.length ? 'warn' : 'good'); }
+  if (!D.length) { box.innerHTML = '<p class="note">None found.</p>'; return; }
+  const show = UI.dupAll ? D : D.slice(0, DUP_LIMIT);
+  box.innerHTML = `<div class="dup-list">${show.map(d => `<div class="dup ${d.high ? 'high' : ''}"><div class="dup-why"><span class="chip ${d.high ? 'bad' : 'warn'}">${d.high ? 'Likely' : 'Possible'}</span>${d.why.map(w => `<span class="chip">${esc(w)}</span>`).join('')}<button class="linkbtn adm" data-act="dupIgnore" data-v="${esc(d.key)}">Not a duplicate</button></div>${(() => { const [o, n] = dupWhen(d.a) <= dupWhen(d.b) ? [d.a, d.b] : [d.b, d.a], same = dupWhen(o) === dupWhen(n) || !dupWhen(o) || !dupWhen(n), df = dupDiffs(o, n); return `<div class="dup-pair">${dupCard(o, same ? '' : 'Older')}${dupCard(n, same ? '' : 'Newer')}</div>${df.length ? `<p class="note dup-diff"><b>${same ? 'Differs' : 'Changed in the newer one'}:</b> ${df.map(esc).join(' · ')}</p>` : ''}`; })()}</div>`).join('')}</div>
+    ${D.length > DUP_LIMIT ? `<button class="btn small" data-act="dupAll">${UI.dupAll ? 'Show fewer' : `Show all ${D.length}`}</button>` : ''}`;
+}
+
 /* page: data */
 PAGE_IMPL.data = {
   frame() {
@@ -2762,13 +2867,16 @@ PAGE_IMPL.data = {
       <div class="span2 adm"><button class="btn primary" type="submit">Save settings</button></div></form>
       <h3 style="margin:16px 0 6px">Registration statuses</h3><div id="dStat"></div></div>
     <div class="panel"><h2>Data problems</h2><div id="dIss"></div></div></div>
+    ${foldSec('nmPanel', 'No MRN', 'nmN', '', '<div id="dNm"></div>', 'Youth registered without a membership record number (the portal\'s hasMrn), usually added by leaders as non-members. Whether they count is set under Registration statuses.')}
+    ${foldSec('dupPanel', 'Possible duplicates', 'dupN', '', '<div id="dDup"></div>', 'Same first name and another name, plus the same birthday, age, contact or ward. Check each pair, then delete the extra record or mark it as not a duplicate.')}
     <div class="panel"><div class="panel-head"><h2>Stakes, wards and branches in this session</h2><span class="note">Untick an area to leave its youth out of the expected list and the groups.</span></div><div id="dAreas" class="arealist"></div></div>`;
   },
   update() {
     if ($('#fitRow')) $('#fitRow').innerHTML = fitHint();
+    renderDups(); renderNonMembers();
     const P = S.P, ex = new Set(S.config.excludedStatuses || []);
     const statuses = uniq(P.map(p => p.status).filter(Boolean)).sort();
-    $('#dStat').innerHTML = statuses.length ? statuses.map(s => `<label class="inline" style="padding:3px 0"><input type="checkbox" data-act="stat" data-v="${esc(s)}" ${ex.has(s) ? '' : 'checked'}> ${esc(s.replace(/_/g, ' ').toLowerCase())} <span class="muted num">${P.filter(p => p.status === s).length}</span></label>`).join('') + '<p class="note">Ticked statuses count as registered. Unticked ones show up as exceptions if they check in.</p>' : '<p class="note">Statuses appear after the first upload.</p>';
+    $('#dStat').innerHTML = statuses.length ? statuses.map(s => `<label class="inline" style="padding:3px 0"><input type="checkbox" data-act="stat" data-v="${esc(s)}" ${ex.has(s) ? '' : 'checked'}> ${esc(s.replace(/_/g, ' ').toLowerCase())} <span class="muted num">${P.filter(p => p.status === s).length}</span></label>`).join('') + (P.some(p => p.member === false) ? `<label class="inline" style="padding:3px 0;margin-top:4px;border-top:1px solid var(--line)"><input type="checkbox" data-act="nmStat" ${S.config.excludeNonMembers ? '' : 'checked'}> no MRN <span class="muted num">${P.filter(p => p.member === false && p.src !== 'walkin').length}</span> <button class="linkbtn" data-act="nmShow">See list</button></label>` : '') + '<p class="note">Ticked statuses count as registered. Unticked ones show up as exceptions if they check in.</p>' : '<p class="note">Statuses appear after the first upload.</p>';
     const exS = new Set(S.config.excludedStakes || []), exU = new Set(S.config.excludedUnits || []);
     const stakes = {}; P.filter(p => p.src !== 'walkin').forEach(p => { (stakes[p.stake] = stakes[p.stake] || {})[p.unit] = ((stakes[p.stake] || {})[p.unit] || 0) + 1; });
     $('#dAreas').innerHTML = Object.keys(stakes).length ? Object.keys(stakes).sort().map(s => { const u = stakes[s]; const tot = Object.values(u).reduce((a, b) => a + b, 0); return `<div class="st"><input type="checkbox" data-act="areaS" data-v="${esc(s)}" ${exS.has(s) ? '' : 'checked'} id="as${fnv(s)}"><label for="as${fnv(s)}" class="${exS.has(s) ? 'excluded' : ''}">${esc(s || '(No stake)')}</label><span class="cnt">${tot}</span></div>${Object.keys(u).sort().map(n => { const k = s + '|' + n; return `<div class="un"><input type="checkbox" data-act="areaU" data-v="${esc(k)}" ${exU.has(k) || exS.has(s) ? '' : 'checked'} ${exS.has(s) ? 'disabled' : ''} id="au${fnv(k)}"><label for="au${fnv(k)}" class="${exU.has(k) || exS.has(s) ? 'excluded' : ''}">${esc(n || '(No unit)')}</label><span class="cnt">${u[n]}</span></div>`; }).join('')}`; }).join('') : '<p class="note">Areas appear after the first upload.</p>';
@@ -2822,7 +2930,7 @@ function partValue(p, f) {
     case 'c1n': return p.c1n || ''; case 'c1e': return p.c1e || ''; case 'c1p': return p.c1p || ''; case 'c2n': return p.c2n || ''; case 'c2e': return p.c2e || ''; case 'c2p': return p.c2p || '';
     case 'age': return p.ageCsv != null ? p.ageCsv : (p.age != null ? p.age : ''); case 'regDate': return p.regDate || ''; case 'status': return p.status || (p.src === 'walkin' ? 'WALK_IN' : '');
     case 'type': return p.src === 'walkin' ? 'WALK-IN' : 'PARTICIPANT'; case 'stake': return p.stake || ''; case 'unit': return p.unit || '';
-    case 'bishopE': return p.bishopE || ''; case 'bishopN': return p.bishopN || ''; case 'regId': return /^X[a-z0-9]+$/.test(p.id) || p.src === 'walkin' ? '' : p.id;
+    case 'bishopE': return p.bishopE || ''; case 'bishopN': return p.bishopN || ''; case 'member': return p.member === true ? 'Yes' : p.member === false ? 'No' : ''; case 'regId': return /^X[a-z0-9]+$/.test(p.id) || p.src === 'walkin' ? '' : p.id;
   }
   return '';
 }
@@ -2899,7 +3007,7 @@ async function doImport() {
   try {
     const byB = {}, medB = {}; rec.participants.forEach(p => { const id = p.id; const b = bucketOf(id); const r = Object.assign({}, p); delete r.id; (medB[b] = medB[b] || {})[id] = { med: r.med || '', diet: r.diet || '' }; delete r.med; delete r.diet; (byB[b] = byB[b] || {})[id] = r; });
     const bs = Object.keys(byB); let n = 0;
-    for (const b of bs) { const mx = S.medicalEx.has(b); S.medicalEx.add(b); await upd('medical/' + b, { p: medB[b] }, mx); const ex = S.rosterEx.has(b); S.rosterEx.add(b); await upd('roster/' + b, { p: byB[b] }, ex); n++; I.busy = `Saving ${n} of ${bs.length}…`; renderImport(); }
+    for (const b of bs) { const mx = S.medicalEx.has(b); S.medicalEx.add(b); await upd('medical/' + b, { p: medB[b] }, mx); const ex = S.rosterEx.has(b); S.rosterEx.add(b); await upd('roster/' + b, { p: byB[b] }, ex); n++; I.busy = `Saving… ${Math.round(n / bs.length * 100)}%`; renderImport(); }
     if (rec.staff.length) { const s = {}; rec.staff.forEach(x => { if (!S.staff[x.id]) { x.addedAt = Date.now(); x.addedBy = S.meName || ''; } else if (S.staff[x.id].addedAt) x.addedAt = S.staff[x.id].addedAt; s[x.id] = x; }); const ex = S.staffEx; S.staffEx = true; await upd('staff/all', { s }, ex); }
     await saveConfig({ partCols: { headers: I.rows[0].map(h => String(h == null ? '' : h)), map: Object.fromEntries(Object.entries(I.map).map(([k, v]) => [String(k), v])) } });
     audit('settings', `Uploaded ${I.name}: ${rec.participants.length} participants and ${rec.staff.length} staff`);
@@ -3078,6 +3186,12 @@ document.addEventListener('click', async e => {
       await saveSizes(sz); if (on) await runRebalance(); else toast('Turned off. Rebalance now fills groups up to the set size before opening new ones.');
       UI.frameKey = ''; render(); break; }
     case 'renumber': await runRenumber(); break;
+    case 'dupIgnore': { const l = (S.config.dupIgnore || []).concat([v]); audit('settings', 'Marked a possible duplicate pair as two different people'); await saveConfig({ dupIgnore: l }); toast('Marked as not a duplicate'); break; }
+    case 'nmCsv': { const L = S.P.filter(p => p.member === false && p.src !== 'walkin').sort((a, b) => areaOf(a).st.localeCompare(areaOf(b).st) || areaOf(a).un.localeCompare(areaOf(b).un) || a.name.localeCompare(b.name));
+      exportCSV('no-mrn-youth-' + new Date().toISOString().slice(0, 10) + '.csv', [['Stake / district', 'Ward / branch', 'Bishop or branch president', 'Bishop email', 'First name', 'Last name', 'Birthday', 'Age', 'Phone', 'Contact 1 name', 'Contact 1 phone', 'Registration ID', 'Is a member? (bishop to fill in)']].concat(L.map(p => [areaOf(p).st, areaOf(p).un, p.bishopN || '', p.bishopE || '', p.first || '', p.last || '', p.bday || '', p.age ?? '', p.phone || '', p.c1n || '', p.c1p || '', p.id, '']))); audit('settings', `Exported the list of ${L.length} youth with no MRN`); break; }
+    case 'nmToggle': { const o = UI.nmOpen || (UI.nmOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); renderNonMembers(); break; }
+    case 'nmShow': openFold('nmPanel'); break;
+    case 'dupAll': UI.dupAll = !UI.dupAll; renderDups(); break;
     case 'logClose': UI.genLog = null; render(); break;
     case 'info': { const c = $('#info-' + v); if (!c) break; c.hidden = !c.hidden; document.querySelectorAll(`.ibtn[data-v="${v}"]`).forEach(b => { b.setAttribute('aria-expanded', String(!c.hidden)); b.classList.toggle('on', !c.hidden); }); if (!c.hidden) c.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); break; }
     case 'hcReset': await resetHeadcounts(v); break;
@@ -3214,6 +3328,7 @@ document.addEventListener('change', async e => {
     case 'grpCo': { t.blur(); audit('groups', `Moved ${gName(id)} to ${t.value && S.org.companies[t.value] ? 'Company ' + S.org.companies[t.value].num : 'no company'}`); await patchOrg({ groups: { [id]: { companyId: t.value || null } } }); toast('Group moved'); break; }
     case 'coAc': { const c = S.org.companies[id], a = t.value || null; t.blur(); audit('groups', `Set the assistant coordinator of Company ${c.num} to ${stName(a)}`); const patch = { companies: { [id]: { acId: a } } }; const other = a && Object.values(S.org.companies).find(x => x.acId === a && x.id !== id); if (other) patch.companies[other.id] = { acId: c.acId || null }; await patchOrg(patch); toast(other ? `Swapped ACs with Company ${other.num}` : 'Assistant coordinator updated'); break; }
     case 'coCoord': { t.blur(); await patchOrg({ companies: { [id]: { coordId: t.value || null } } }); toast('Coordinator updated'); break; }
+    case 'nmStat': { const on = !t.checked; audit('settings', on ? 'Stopped counting youth with no MRN as registered' : 'Counted youth with no MRN as registered'); await saveConfig({ excludeNonMembers: on }); toast(on ? 'Youth with no MRN are left out. Press Rebalance on Companies & groups.' : 'Youth with no MRN count as registered. Press Rebalance to give them groups.'); break; }
     case 'stat': { audit('settings', `${t.checked ? 'Counted' : 'Stopped counting'} the status ${v.replace(/_/g, ' ').toLowerCase()} as registered`); const ex = new Set(S.config.excludedStatuses || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStatuses: [...ex] }); break; }
     case 'areaS': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the area ${v}`); const ex = new Set(S.config.excludedStakes || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStakes: [...ex] }); break; }
     case 'areaU': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the unit ${v.replace('|', ' · ')}`); const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
