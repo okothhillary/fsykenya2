@@ -478,9 +478,9 @@ Watch out for:
 
 ### Participant export (Data & areas, Upload participants or staff)
 
-Matching is stricter here (`FIELDS` and `autoMap`). It first looks for an exact column name such as "First Name", "Birthday" or "Stake - District Name", then for a name that contains one. **The preview lets you change any match** before saving. The FSY portal export works as it is.
+Use the same format as in the csv download from the official fsy portal. Matching is stricter here (`FIELDS` and `autoMap`). It first looks for an exact column name such as "First Name", "Birthday" or "Stake - District Name", then for a name that contains one. **The preview lets you change any match** before saving. The FSY portal export works as it is.
 
-- **Registration ID** is the key, so a newer export updates people without losing check-ins or groups. Without it, a code made from the name, birthday and ward is used instead.
+- **Registration ID** is the key, so a newer export updates people without losing check-ins or groups. The app will generate the registration ID column for you: a code made from the name, birthday and ward is used instead.
 - A **Type** column decides participant, counselor or assistant coordinator. Without it, choose the mode in the preview.
 
 ### Reusing this for another event
