@@ -815,3 +815,4 @@ label.pl-row{cursor:pointer}
 .pl-warn{margin:0 0 8px;padding:10px 14px;border-radius:12px;background:rgba(214,75,58,.08);border:1px solid rgba(214,75,58,.35);border-left:4px solid #d64b3a;font-size:.92rem}
 .tee-order-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.tee-order-head .btn svg{width:16px;height:16px;vertical-align:-3px}
 .tee-blank{margin:10px 0 4px;padding:10px 14px;border-radius:12px;background:rgba(252,180,73,.14);border:1px solid rgba(252,180,73,.5);border-left:4px solid #fcb449;font-size:.92rem}
+.yc{color:var(--muted,#5b6b7b);font-weight:600;font-size:.88em}tr.st-h .yc{color:rgba(255,255,255,.85)}

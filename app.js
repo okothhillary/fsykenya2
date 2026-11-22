@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-22a · email when access is given';
+const APP_VERSION = '2026-11-22c · participants beside staff by area';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1044,6 +1044,10 @@ const can = {
   orgEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'coordinator'].includes(role()),
   // marking companies official (which locks Regenerate and Undo all groups) is for the registration admin and the Session Directing Couple only
   lockRegen: () => ['regadmin', 'sdc'].includes(role()),
+  // closing or opening the addition of staff: the registration admin, Session Directing Couple, Area Seventy and Head of Logistics
+  lockStaff: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
+  // adding staff (new records, imports, making someone a counselor): anyone with staff rights, but once closed only the roles above
+  addStaff: () => can.staff() && (!S.config.staffLock || ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role())),
   logistics: () => !!role() && role() !== 'wellness',
   wellness: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'wellness', 'logistics'].includes(role()),
   // resolving and following up on health concerns (logistics only looks)
@@ -2458,18 +2462,23 @@ PAGE_IMPL.wellness = {
 PAGE_IMPL.staff = {
   frame() {
     const real = S.staffList.filter(s => !s.test && !s.fromAccount).length;
-    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Import the staff sign-up form or add people one at a time.</p></div><div class="btnrow">${can.staff() ? '<button class="btn adm" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm" data-act="stAdd">+ Add staff member</button>${can.staff() ? infoBtn('sf', 'About importing staff') : ''}</div></section>
+    return `<section class="pagehead"><div><p class="th">Staff</p><h1>Counselors and leaders</h1><p class="note">Import the staff sign-up form or add people one at a time.</p></div><div class="btnrow">${can.lockStaff() ? '<button class="btn" data-act="stLock" id="stLockBtn">Close addition of staff</button>' : ''}${can.staff() ? '<button class="btn adm st-add" data-act="sfPick">Import staff</button>' : ''}<button class="btn primary adm st-add" data-act="stAdd">+ Add staff member</button>${can.staff() ? infoBtn('sf', 'About importing staff') : ''}</div></section>
+    <div id="stLockNote"></div>
     ${can.staff() ? infoCard('sf', 'Importing staff', `<ul><li>Pick an Excel or .csv file, such as the Google Form responses for counselors, ACs and coordinators.</li><li>A <b>Type</b> column (AC, Counselor or Coordinator) sets each person's role.</li><li>Blank rows are skipped and people who sent the form more than once are merged.</li><li>Each ward or branch is matched to its stake or district. You confirm any it can't place.</li><li>Import again any time: people already on the list are updated, not added twice.</li></ul>`) : ''}
     ${can.staff() ? `<input type="file" id="sfFile" class="vh" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"><section class="panel adm" id="sfPanel" hidden><div class="panel-head"><h2>Import staff</h2><label class="btn small" for="sfFile">Choose another file</label></div>
       <div id="sfBox"></div></section>` : ''}
     <div id="stK" class="kpis"></div>
     <section class="panel"><div class="panel-head"><h2>By stake and unit</h2><button class="btn small" data-act="stCsv">Export CSV</button></div><div id="stTally"></div></section>
-    <section class="panel"><div class="panel-head"><h2>Staff list</h2><div class="btnrow"><button class="btn small fold-btn" data-act="stFold" id="stFoldBtn" aria-expanded="true" aria-controls="stList">Hide table</button><button class="btn small primary adm" data-act="stAdd">+ Add</button></div></div><input id="stQ" type="search" placeholder="Search staff by name, phone, email, ward or stake" autocomplete="off" value="${esc(UI.stQ || '')}" style="width:100%;margin-bottom:10px"><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stView" class="stview"></div><div id="stList"></div></section>
+    <section class="panel"><div class="panel-head"><h2>Staff list</h2><div class="btnrow"><button class="btn small fold-btn" data-act="stFold" id="stFoldBtn" aria-expanded="true" aria-controls="stList">Hide table</button><button class="btn small primary adm st-add" data-act="stAdd">+ Add</button></div></div><input id="stQ" type="search" placeholder="Search staff by name, phone, email, ward or stake" autocomplete="off" value="${esc(UI.stQ || '')}" style="width:100%;margin-bottom:10px"><div class="segscroll" style="margin-bottom:10px"><div class="chips" id="stTabs"></div></div><div id="stView" class="stview"></div><div id="stList"></div></section>
     <details class="panel adm"><summary><h2 style="display:inline">Test staff</h2></summary><p class="note">No counselors yet? Generate clearly marked test counselors, ACs, coordinators and a Session Directing Couple to try the company generator. Delete them when the real list is in, then press Rebalance or Regenerate.</p>
       <div class="inline"><label class="inline">ACs to create <input id="tsAcs" type="number" min="1" max="40" value="${Math.max(2, Math.round(S.P.filter(p => p.elig).length / 100))}" style="width:80px"></label><button class="btn" data-act="testGen">Generate test staff</button><button class="btn danger" data-act="testDel">Delete test staff</button></div></details>
     ${can.reset() ? resetPanel() : ''}`;
   },
   update() {
+    { const L = S.config.staffLock, lb = $('#stLockBtn'), note = $('#stLockNote');
+      if (lb) { lb.textContent = L ? 'Open addition of staff' : 'Close addition of staff'; lb.classList.toggle('danger', !L); }
+      document.querySelectorAll('.st-add').forEach(b => { b.hidden = !can.addStaff(); });
+      if (note) note.innerHTML = L ? `<div class="callout official"><b>Adding staff is closed.</b> ${esc(L.by || 'The Session Directing Couple')} closed it on ${esc(fmtWhen(L.at))}. Only the registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics can add staff, import the staff form or make someone a counselor.${can.lockStaff() ? ' Press <b>Open addition of staff</b> to let coordinators add again.' : ''} Editing and deleting existing records still works.</div>` : ''; }
     const cnt = r => S.staffList.filter(s => s.role === r).length;
     const PL = ROLE_PLURAL;
     $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
@@ -2491,13 +2500,16 @@ PAGE_IMPL.staff = {
     const DAY = 86400000, newest = UI.staffView === 'new';
     const addedTxt = s => s.addedAt ? `Added ${fmtWhen(s.addedAt)}${s.addedBy ? ' by ' + s.addedBy : ''}` : '';
     const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.addedAt && Date.now() - s.addedAt < DAY ? `<span class="chip good" title="${esc(addedTxt(s))}">New</span>` : ''}${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}${newest && s.addedAt ? '<br>' + esc(addedTxt(s)) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td class="bf">${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '14–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td class="st-act"><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select><button class="btn small danger adm st-del" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    /* participants registered in the same stake or unit, to compare with the staff listed there */
+    const yc = {}; S.P.forEach(p => { if (!p.inc) return; const a = (p.stake || '').trim(), b = (p.unit || '').trim(); yc[a] = (yc[a] || 0) + 1; yc[a + '|' + b] = (yc[a + '|' + b] || 0) + 1; });
+    const youthNote = (st, un, n) => { if (st === NO_STAFF_STAKE || un === NO_STAFF_UNIT) return ''; const y = yc[un == null ? st : st + '|' + un] || 0; return ` <span class="yc" title="Participants registered in this ${un == null ? 'stake or district' : 'ward or branch'}">(${nn(y, 'participant')}${isC && y && n ? ` · ${Math.round(y / n * 10) / 10} per counselor` : ''})</span>`; };
     let body = '';
     if (byArea) {
       const T = staffByArea(list);
       for (const st of Object.keys(T).sort(areaSort)) {
         const units = T[st], n = Object.values(units).reduce((a, l) => a + l.length, 0);
-        body += `<tr class="st-h"><td colspan="${ncol}"><b>${esc(st)}</b> <span class="muted">· ${n}</span> <button class="btn small" data-act="stPdf" data-v="${esc(st)}">Print</button></td></tr>`;
-        for (const un of Object.keys(units).sort(areaSort)) body += `<tr class="un-h"><td colspan="${ncol}">${esc(un)} <span class="muted">· ${units[un].length}</span></td></tr>` + units[un].map(row).join('');
+        body += `<tr class="st-h"><td colspan="${ncol}"><b>${esc(st)}</b> <span class="muted">· ${n}</span>${youthNote(st, null, n)} <button class="btn small" data-act="stPdf" data-v="${esc(st)}">Print</button></td></tr>`;
+        for (const un of Object.keys(units).sort(areaSort)) body += `<tr class="un-h"><td colspan="${ncol}">${esc(un)} <span class="muted">· ${units[un].length}</span>${youthNote(st, un, units[un].length)}</td></tr>` + units[un].map(row).join('');
       }
     } else body = (newest ? list.slice().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0) || a.name.localeCompare(b.name)) : list).map(row).join('');
     const withT = list.filter(x => x.addedAt).sort((a, b) => b.addedAt - a.addedAt), recent = withT.filter(x => Date.now() - x.addedAt < DAY);
@@ -3700,7 +3712,7 @@ document.addEventListener('click', async e => {
     case 'hcAll': { if (hcViewOnly()) break; const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
     case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); audit('headcount', `Submitted the ${hcDay()} headcount for G${S.org.groups[g].num}: ${x.present.length} present, ${x.missing.length} missing`); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
-    case 'stAdd': openStaffForm(null); break;
+    case 'stAdd': if (!can.addStaff()) { toast('Adding staff is closed. Ask the Session Directing Couple or the registration admin.', true); break; } openStaffForm(null); break;
     case 'stFold': UI.stFold = !UI.stFold; try { localStorage.setItem('fsy.stFold', UI.stFold ? '1' : '0'); } catch (e) { } if (PAGE_IMPL.staff && $('#stList')) PAGE_IMPL.staff.update(); else render(); break;
     case 'stView': UI.staffView = v; render(); break;
     case 'repNew': closeModal(); openReportForm(id); break;
@@ -3726,9 +3738,12 @@ document.addEventListener('click', async e => {
     case 'wlMore': UI.wlMore = true; render(); break;
     case 'wlCsv': { const rows = [['Who', 'Name', 'Role or group', 'Unit', 'Stake', 'Medical', 'Dietary', 'Checked in']]; registered().filter(p => p.medIssue || p.dietIssue).forEach(p => rows.push(['Youth', p.name, p.group ? 'G' + p.group.num : '', p.unit, p.stake, p.medIssue || '', p.dietIssue || '', p.s === 'in' ? 'yes' : ''])); S.staffList.filter(x => !x.test && (x.med || x.diet)).forEach(x => rows.push(['Staff', x.name, ROLES[x.role] || x.role, x.unit || '', x.stake || '', x.med || '', x.diet || '', ''])); rows.push([]); rows.push(['Concern', 'Participant', 'Kind', 'Urgent', 'Status', 'Reported', 'By', 'Details', 'Follow-up']); allReports().forEach(r => rows.push(['', r.pname || '', repKind(r.kind), r.urgent ? 'yes' : '', r.status, fmtWhen(r.at), r.byName || '', r.text, r.resNote || ''])); exportCSV('fsy-wellness.csv', rows); break; }
     case 'stPdf': printStaffList(UI.staffTab, v || ''); break;
-    case 'sfGo': await sfImport(); break;
+    case 'stLock': { if (!can.lockStaff()) break; const L = S.config.staffLock;
+      if (!L && !await confirmBox('Close addition of staff?', 'Coordinators and everyone else can no longer add staff, import the staff form or make someone a counselor. The registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics still can. Editing and deleting existing records still works.', 'Close addition', true)) break;
+      const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('staff', v ? 'Closed the addition of staff' : 'Opened the addition of staff'); await saveConfig({ staffLock: v }); toast(v ? 'Addition of staff closed' : 'Addition of staff opened'); break; }
+    case 'sfGo': if (!can.addStaff()) { toast('Adding staff is closed.', true); break; } await sfImport(); break;
     case 'sfCancel': { UI.sf = null; const f = $('#sfFile'); if (f) f.value = ''; renderSf(); break; }
-    case 'sfPick': { const f = $('#sfFile'); if (f) { f.value = ''; f.click(); } break; }
+    case 'sfPick': { if (!can.addStaff()) { toast('Adding staff is closed.', true); break; } const f = $('#sfFile'); if (f) { f.value = ''; f.click(); } break; }
     case 'sfNewCancel': UI.sf.adding = null; renderSf(); break;
     case 'sfNewSave': { const st = clean(($('#sfNewStake') || {}).value), un = sfName(($('#sfNewUnit') || {}).value || ''); if (!st || !un) { toast('Type both the stake or district and the ward or branch', true); break; } UI.sf.choices[v] = st + '|' + un; UI.sf.adding = null; sfRun(); renderSf(); break; }
     case 'stEdit': if (can.staff()) openStaffForm(id); break;
@@ -3787,7 +3802,7 @@ document.addEventListener('change', async e => {
     case 'areaS': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the area ${v}`); const ex = new Set(S.config.excludedStakes || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStakes: [...ex] }); break; }
     case 'areaU': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the unit ${v.replace('|', ' · ')}`); const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
     case 'impMap': { const i = +v; if (t.value) { for (const k in UI.imp.map) if (UI.imp.map[k] === t.value) delete UI.imp.map[k]; UI.imp.map[i] = t.value; } else delete UI.imp.map[i]; renderImport(); break; }
-    case 'stRole': { t.blur(); await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
+    case 'stRole': { t.blur(); if (t.value === 'counselor' && !can.addStaff() && (S.staffMap[id] || {}).role !== 'counselor') { toast('Adding counselors is closed. Ask the Session Directing Couple or the registration admin.', true); render(); break; } await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
     case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } audit('accounts', `Gave ${rq.name || rq.email} (${rq.email}) access as ${ROLES[t.value] || t.value}`); try { await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }); } catch (e) { fail(e); break; } await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); const sent = await notifyGranted(rq.email, rq.name, t.value); toast(sent ? `Access given. ${rq.name || rq.email} gets an email.` : 'Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
     case 'invGender': { audit('accounts', `Set the gender on ${(S.invites[id] || {}).name || id}'s account to ${t.value === 'F' ? 'female' : t.value === 'M' ? 'male' : 'not given'}`, id); await upd('invites/' + id, { gender: t.value || '' }, true).catch(fail); toast('Gender saved'); break; }
@@ -3814,6 +3829,7 @@ document.addEventListener('submit', async e => {
   if (f.id === 'sizeForm') { const F = Math.max(4, Math.min(25, parseInt(val('szF'), 10) || 10)), M = Math.max(4, Math.min(25, parseInt(val('szM'), 10) || 10)); await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: false }); UI.frameKey = ''; render(); toast(`Sizes saved: ${F} young women, ${M} young men. Press Rebalance to apply them.`); return; }
   if (f.id === 'meForm') { await saveMyDetails(); return; }
   if (f.id === 'stForm') {
+    if (!can.addStaff()) { const sid0 = f.dataset.id, old0 = sid0 ? S.staffMap[sid0] : null; if (!sid0 || (val('stRole') === 'counselor' && old0 && old0.role !== 'counselor')) { toast('Adding staff is closed. Ask the Session Directing Couple or the registration admin.', true); return; } }
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
     const bday = val('stBday') || '', age = bday ? ageOn(bday, S.config.sessionStart || '') : parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
     if (bday && (age < 15 || age > 90)) { toast('That birthdate does not look right', true); return; }
