@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-22c · participants beside staff by area';
+const APP_VERSION = '2026-11-22d · staff closed notice only on Add';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -2477,8 +2477,7 @@ PAGE_IMPL.staff = {
   update() {
     { const L = S.config.staffLock, lb = $('#stLockBtn'), note = $('#stLockNote');
       if (lb) { lb.textContent = L ? 'Open addition of staff' : 'Close addition of staff'; lb.classList.toggle('danger', !L); }
-      document.querySelectorAll('.st-add').forEach(b => { b.hidden = !can.addStaff(); });
-      if (note) note.innerHTML = L ? `<div class="callout official"><b>Adding staff is closed.</b> ${esc(L.by || 'The Session Directing Couple')} closed it on ${esc(fmtWhen(L.at))}. Only the registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics can add staff, import the staff form or make someone a counselor.${can.lockStaff() ? ' Press <b>Open addition of staff</b> to let coordinators add again.' : ''} Editing and deleting existing records still works.</div>` : ''; }
+      if (note) note.innerHTML = ''; }
     const cnt = r => S.staffList.filter(s => s.role === r).length;
     const PL = ROLE_PLURAL;
     $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
@@ -2629,6 +2628,14 @@ function stAreaSync(changed) {
   sn.hidden = !otherStake; un.hidden = !(otherStake || us.value === '__other');
   const nt = $('#stOtherNote'); if (nt) nt.hidden = sn.hidden && un.hidden;
   if (changed === 'stake' && otherStake) sn.focus(); else if (changed === 'unit' && !un.hidden) un.focus();
+}
+/* shown only when someone who may not add staff presses Add or Import while adding is closed */
+function staffClosedNotice() {
+  const L = S.config.staffLock || {};
+  openModal(`<div class="modal-head"><h2>Adding staff is closed</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <p>${esc(L.by || 'The Session Directing Couple')} closed it${L.at ? ' on ' + esc(fmtWhen(L.at)) : ''}. Only the registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics can add staff, import the staff form or make someone a counselor.</p>
+    <p class="note">You can still edit and delete existing records. To add someone, ask the Session Directing Couple or the registration admin.</p>
+    <div class="btnrow" style="justify-content:flex-end"><button class="btn primary" data-act="close">OK</button></div>`);
 }
 function openStaffForm(id) {
   const s = id ? S.staffMap[id] : null;
@@ -3712,7 +3719,7 @@ document.addEventListener('click', async e => {
     case 'hcAll': { if (hcViewOnly()) break; const x = hcGroup(S.org.groups[t.dataset.g], hcDay()); const m = {}; x.unmarked.forEach(p => m[p.id] = 'p'); await hcWrite(t.dataset.g, { marks: m }); break; }
     case 'hcSubmit': { if (hcViewOnly()) break; const g = t.dataset.g; const x = hcGroup(S.org.groups[g], hcDay()); if (x.unmarked.length) { toast('Mark everyone present or missing first', true); break; } const note = ($(`[data-hcnote="${g}"]`) || {}).value || ''; await hcWrite(g, { note: note.slice(0, 500) }, true); audit('headcount', `Submitted the ${hcDay()} headcount for G${S.org.groups[g].num}: ${x.present.length} present, ${x.missing.length} missing`); toast(`G${S.org.groups[g].num}: ${x.present.length} of ${x.expected} present${x.missing.length ? ', ' + x.missing.length + ' missing' : ''}.${hcChain() ? ' Sent to ' + hcChain() + '.' : ' Saved.'}`); break; }
     case 'hcCsv': { const day = hcDay(); const rows = [['Night', 'Company', 'Group', 'Counselor', 'Reported by', 'Reported at', 'Status', 'Expected', 'Present', 'Missing', 'Missing names', 'Note']]; Object.values(S.org.groups).sort((a, b) => a.num - b.num).forEach(g => { const x = hcGroup(g, day); if (!x.expected && !x.doc) return; const c = g.companyId && S.org.companies[g.companyId]; rows.push([day, c ? c.num : '', 'G' + g.num, sName(g.counselorId), x.doc ? x.doc.byName : '', x.doc && x.doc.at ? new Date(x.doc.at).toLocaleString() : '', x.submitted ? 'Submitted' : x.doc ? 'Started' : 'Not reported', x.expected, x.present.length, x.missing.length, x.missing.map(p => p.name + (x.doc.reasons && x.doc.reasons[p.id] ? ' (' + x.doc.reasons[p.id] + ')' : '')).join('; '), x.doc ? x.doc.note || '' : '']); }); exportCSV('fsy-headcount-' + day + '.csv', rows); break; }
-    case 'stAdd': if (!can.addStaff()) { toast('Adding staff is closed. Ask the Session Directing Couple or the registration admin.', true); break; } openStaffForm(null); break;
+    case 'stAdd': if (!can.addStaff()) { staffClosedNotice(); break; } openStaffForm(null); break;
     case 'stFold': UI.stFold = !UI.stFold; try { localStorage.setItem('fsy.stFold', UI.stFold ? '1' : '0'); } catch (e) { } if (PAGE_IMPL.staff && $('#stList')) PAGE_IMPL.staff.update(); else render(); break;
     case 'stView': UI.staffView = v; render(); break;
     case 'repNew': closeModal(); openReportForm(id); break;
@@ -3741,9 +3748,9 @@ document.addEventListener('click', async e => {
     case 'stLock': { if (!can.lockStaff()) break; const L = S.config.staffLock;
       if (!L && !await confirmBox('Close addition of staff?', 'Coordinators and everyone else can no longer add staff, import the staff form or make someone a counselor. The registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics still can. Editing and deleting existing records still works.', 'Close addition', true)) break;
       const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('staff', v ? 'Closed the addition of staff' : 'Opened the addition of staff'); await saveConfig({ staffLock: v }); toast(v ? 'Addition of staff closed' : 'Addition of staff opened'); break; }
-    case 'sfGo': if (!can.addStaff()) { toast('Adding staff is closed.', true); break; } await sfImport(); break;
+    case 'sfGo': if (!can.addStaff()) { staffClosedNotice(); break; } await sfImport(); break;
     case 'sfCancel': { UI.sf = null; const f = $('#sfFile'); if (f) f.value = ''; renderSf(); break; }
-    case 'sfPick': { if (!can.addStaff()) { toast('Adding staff is closed.', true); break; } const f = $('#sfFile'); if (f) { f.value = ''; f.click(); } break; }
+    case 'sfPick': { if (!can.addStaff()) { staffClosedNotice(); break; } const f = $('#sfFile'); if (f) { f.value = ''; f.click(); } break; }
     case 'sfNewCancel': UI.sf.adding = null; renderSf(); break;
     case 'sfNewSave': { const st = clean(($('#sfNewStake') || {}).value), un = sfName(($('#sfNewUnit') || {}).value || ''); if (!st || !un) { toast('Type both the stake or district and the ward or branch', true); break; } UI.sf.choices[v] = st + '|' + un; UI.sf.adding = null; sfRun(); renderSf(); break; }
     case 'stEdit': if (can.staff()) openStaffForm(id); break;
@@ -3802,7 +3809,7 @@ document.addEventListener('change', async e => {
     case 'areaS': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the area ${v}`); const ex = new Set(S.config.excludedStakes || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedStakes: [...ex] }); break; }
     case 'areaU': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the unit ${v.replace('|', ' · ')}`); const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
     case 'impMap': { const i = +v; if (t.value) { for (const k in UI.imp.map) if (UI.imp.map[k] === t.value) delete UI.imp.map[k]; UI.imp.map[i] = t.value; } else delete UI.imp.map[i]; renderImport(); break; }
-    case 'stRole': { t.blur(); if (t.value === 'counselor' && !can.addStaff() && (S.staffMap[id] || {}).role !== 'counselor') { toast('Adding counselors is closed. Ask the Session Directing Couple or the registration admin.', true); render(); break; } await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
+    case 'stRole': { t.blur(); if (t.value === 'counselor' && !can.addStaff() && (S.staffMap[id] || {}).role !== 'counselor') { render(); staffClosedNotice(); break; } await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
     case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } audit('accounts', `Gave ${rq.name || rq.email} (${rq.email}) access as ${ROLES[t.value] || t.value}`); try { await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }); } catch (e) { fail(e); break; } await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); const sent = await notifyGranted(rq.email, rq.name, t.value); toast(sent ? `Access given. ${rq.name || rq.email} gets an email.` : 'Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
     case 'invGender': { audit('accounts', `Set the gender on ${(S.invites[id] || {}).name || id}'s account to ${t.value === 'F' ? 'female' : t.value === 'M' ? 'male' : 'not given'}`, id); await upd('invites/' + id, { gender: t.value || '' }, true).catch(fail); toast('Gender saved'); break; }
@@ -3829,7 +3836,7 @@ document.addEventListener('submit', async e => {
   if (f.id === 'sizeForm') { const F = Math.max(4, Math.min(25, parseInt(val('szF'), 10) || 10)), M = Math.max(4, Math.min(25, parseInt(val('szM'), 10) || 10)); await saveSizes({ groupSizeF: F, groupSizeM: M, groupSize: F, useAll: false }); UI.frameKey = ''; render(); toast(`Sizes saved: ${F} young women, ${M} young men. Press Rebalance to apply them.`); return; }
   if (f.id === 'meForm') { await saveMyDetails(); return; }
   if (f.id === 'stForm') {
-    if (!can.addStaff()) { const sid0 = f.dataset.id, old0 = sid0 ? S.staffMap[sid0] : null; if (!sid0 || (val('stRole') === 'counselor' && old0 && old0.role !== 'counselor')) { toast('Adding staff is closed. Ask the Session Directing Couple or the registration admin.', true); return; } }
+    if (!can.addStaff()) { const sid0 = f.dataset.id, old0 = sid0 ? S.staffMap[sid0] : null; if (!sid0 || (val('stRole') === 'counselor' && old0 && old0.role !== 'counselor')) { staffClosedNotice(); return; } }
     const name = titleCase(val('stName')), gender = val('stGender'); if (!name || !gender) { toast('Name and gender are needed', true); return; }
     const bday = val('stBday') || '', age = bday ? ageOn(bday, S.config.sessionStart || '') : parseInt(val('stAge'), 10), sid = f.dataset.id; const old = sid ? S.staffMap[sid] || {} : {};
     if (bday && (age < 15 || age > 90)) { toast('That birthdate does not look right', true); return; }
