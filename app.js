@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-22e · clearer unit counts on staff PDF';
+const APP_VERSION = '2026-11-22f · Rebalance fixes age-group mix-ups';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -702,12 +702,15 @@ function rebalance(P, staffList, org, cfg) {
   const staffMap = {}; staffList.forEach(s => staffMap[s.id] = s);
   const log = []; const cur = {};
   const members = {}; for (const id in groups) members[id] = [];
-  let removed = 0;
+  let removed = 0, misfit = 0;
   for (const p of P) {
-    if (p.g && groups[p.g] && p.elig) { cur[p.id] = p.g; members[p.g].push(p); }
-    else { cur[p.id] = null; if (p.g) removed++; }
+    const g = p.g && groups[p.g];
+    /* someone whose age group or gender no longer matches their group (a corrected birthday, a new first day of session) is placed again */
+    if (g && p.elig && (p.gender === g.gender) && (!p.band || p.band === g.band)) { cur[p.id] = p.g; members[p.g].push(p); }
+    else { cur[p.id] = null; if (p.g) { if (g && p.elig) misfit++; else removed++; } }
   }
   if (removed) log.push(`${nn(removed, 'participant')} taken out of groups (deleted, excluded or group gone)`);
+  if (misfit) log.push(`${nn(misfit, 'participant')} moved to a group of their own age group and gender (their age or gender no longer matched their old group)`);
   // counselors still valid?
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
@@ -2041,7 +2044,8 @@ function checkHint(t) {
   if (/no counselor/.test(t)) return 'Press Rebalance, or choose a counselor inside the group.';
   if (/not in a company/.test(t)) return 'Press Rebalance, or pick a company inside the group.';
   if (/other age group/.test(t)) return 'Move the group to a company of its age group, or press Rebalance.';
-  if (/not the same gender|mixes young men|mixes the 13/.test(t)) return 'Press Rebalance.';
+  if (/mixes the 1\d/.test(t)) return 'Press Rebalance to move them to a group of their own age group.';
+  if (/not the same gender|mixes young men/.test(t)) return 'Press Rebalance.';
   if (/no assistant coordinator/.test(t)) return 'Choose an AC in the company card, or press Rebalance.';
   if (/does not have both/.test(t)) return 'Press Rebalance to share groups out.';
   return '';
