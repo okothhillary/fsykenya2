@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-22d · staff closed notice only on Add';
+const APP_VERSION = '2026-11-22e · clearer unit counts on staff PDF';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1911,8 +1911,11 @@ async function printStaffList(role, onlyStake) {
     for (const un of Object.keys(T[st]).sort(areaSort)) {
       const people = T[st][un];
       if (y < M + 60 + ROW * Math.min(2, people.length)) { newPage(st, true); }
-      pg.drawText(fit(un, bold, 11, W - 2 * M - 60), { x: M + 4, y, size: 11, font: bold, color: C('#002846') });
-      const cnt = String(people.length); pg.drawText(cnt, { x: W - M - 6 - bold.widthOfTextAtSize(cnt, 11), y, size: 11, font: bold, color: C('#007da5') });
+      /* the unit name, then on the right how many staff are listed and how many participants are registered there */
+      const yN = S.P.filter(p => p.inc && (p.stake || '').trim() === (st === NO_STAFF_STAKE ? '' : st) && (p.unit || '').trim() === (un === NO_STAFF_UNIT ? '' : un)).length;
+      const one = PLR.toLowerCase().replace(/s$/, ''), cnt = pdfSafe(`${people.length} ${people.length === 1 ? one : PLR.toLowerCase()}${st !== NO_STAFF_STAKE && un !== NO_STAFF_UNIT ? ` · ${yN} participant${yN === 1 ? '' : 's'}` : ''}`);
+      pg.drawText(fit(un, bold, 11, W - 2 * M - 30 - font.widthOfTextAtSize(cnt, 9.5)), { x: M + 4, y, size: 11, font: bold, color: C('#002846') });
+      pg.drawText(cnt, { x: W - M - 6 - font.widthOfTextAtSize(cnt, 9.5), y, size: 9.5, font, color: C('#007da5') });
       pg.drawLine({ start: { x: M, y: y - 5 }, end: { x: W - M, y: y - 5 }, thickness: 1, color: C('#fcb449') });
       y -= ROW + 2;
       people.forEach((s, i) => {
