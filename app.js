@@ -47,7 +47,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-21b · blank sizes notice';
+const APP_VERSION = '2026-11-22a · email when access is given';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -2351,6 +2351,19 @@ function notifyRequest(note) {
   fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body }).catch(() => { });
 }
 
+/** Email the person when they are given access (needs NOTIFY_URL and the updated notify.gs).
+    The signed-in admin's token goes along, so the script can check the account really exists before sending. */
+async function notifyGranted(email, name, role) {
+  const url = typeof NOTIFY_URL !== 'undefined' ? NOTIFY_URL : (window.NOTIFY_URL || '');
+  if (!url || !email) return false;
+  try {
+    const token = await FB.auth.currentUser.getIdToken();
+    const body = JSON.stringify({ type: 'access-granted', email: emailKey(email), name: name || '', role: ROLES[role] || role, session: sessName(S.sid), site: location.origin + location.pathname, by: S.meName || '', token });
+    await fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body });
+    return true;
+  } catch (e) { console.warn('notify', e); return false; }
+}
+
 /* Page width follows the menu: wide enough for every tab plus some breathing room, never narrower than 1280px. */
 let fitKey = '';
 function fitWidth() {
@@ -3775,7 +3788,7 @@ document.addEventListener('change', async e => {
     case 'areaU': { audit('settings', `${t.checked ? 'Included' : 'Excluded'} the unit ${v.replace('|', ' · ')}`); const ex = new Set(S.config.excludedUnits || []); t.checked ? ex.delete(v) : ex.add(v); await saveConfig({ excludedUnits: [...ex] }); break; }
     case 'impMap': { const i = +v; if (t.value) { for (const k in UI.imp.map) if (UI.imp.map[k] === t.value) delete UI.imp.map[k]; UI.imp.map[i] = t.value; } else delete UI.imp.map[i]; renderImport(); break; }
     case 'stRole': { t.blur(); await saveStaffRec(Object.assign({}, S.staffMap[id], { role: t.value })); toast('Role changed'); break; }
-    case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } audit('accounts', `Gave ${rq.name || rq.email} (${rq.email}) access as ${ROLES[t.value] || t.value}`); await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }).catch(fail); await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); toast('Access given'); break; }
+    case 'reqRole': { if (!t.value) break; const rq = S.requests[id] || {}; if (!rq.email) { toast('This request has no email.', true); break; } audit('accounts', `Gave ${rq.name || rq.email} (${rq.email}) access as ${ROLES[t.value] || t.value}`); try { await setDoc('invites/' + emailKey(rq.email), { name: rq.name || rq.email, role: t.value, staffId: null, sessions: [S.sid], at: Date.now() }); } catch (e) { fail(e); break; } await serial('requests/' + id, () => S.db.doc('requests/' + id).delete()).catch(() => { }); const sent = await notifyGranted(rq.email, rq.name, t.value); toast(sent ? `Access given. ${rq.name || rq.email} gets an email.` : 'Access given'); break; }
     case 'acRole': { if (!t.value) break; await setAccess(id, { role: t.value }); toast('Role changed'); break; }
     case 'invGender': { audit('accounts', `Set the gender on ${(S.invites[id] || {}).name || id}'s account to ${t.value === 'F' ? 'female' : t.value === 'M' ? 'male' : 'not given'}`, id); await upd('invites/' + id, { gender: t.value || '' }, true).catch(fail); toast('Gender saved'); break; }
     case 'invRole': { audit('accounts', `Changed ${(S.invites[id] || {}).name || id}'s role from ${ROLES[(S.invites[id] || {}).role] || '?'} to ${ROLES[t.value] || t.value}`, id); await upd('invites/' + id, { role: t.value }, true).catch(fail); toast('Role changed'); break; }
@@ -3819,7 +3832,7 @@ document.addEventListener('submit', async e => {
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !r) { toast('Enter a name, a valid email and a role', true); return; }
     const h = emailKey(email); if (S.invites[h]) { toast('There is already an account for ' + email, true); return; }
     const chosen = [...document.querySelectorAll('.invSessChk:checked')].map(x => x.value); const sessions = chosen.length ? chosen : [S.sid];
-    try { await setDoc('invites/' + h, { name, role: r, gender: val('invGender') || '', staffId: sid, sessions, at: Date.now() }); audit('accounts', `Created an account for ${name} (${email}) as ${ROLES[r] || r}`, h); f.reset(); toast('Account created for ' + name); } catch (err) { fail(err); }
+    try { await setDoc('invites/' + h, { name, role: r, gender: val('invGender') || '', staffId: sid, sessions, at: Date.now() }); audit('accounts', `Created an account for ${name} (${email}) as ${ROLES[r] || r}`, h); f.reset(); const sent = await notifyGranted(email, name, r); toast(`Account created for ${name}${sent ? '. They get an email.' : ''}`); } catch (err) { fail(err); }
   }
   if (f.id === 'cfgForm') { audit('settings', 'Saved the session settings'); if (can.split() && clean(val('cfName'))) FB.fs.doc('meta/sessions').set({ s: { [S.sid]: { name: clean(val('cfName')), at: (S.sessions[S.sid] || {}).at || 0 } } }, { merge: true }).then(() => { S.sessions[S.sid] = Object.assign({}, S.sessions[S.sid], { name: clean(val('cfName')) }); }).catch(console.error); await saveConfig({ sessionName: clean(val('cfName')) || 'FSY Kenya 2nd 2026', sessionStart: val('cfStart'), hcStart: val('cfHcStart') || DEFAULT_CONFIG.hcStart, hcEnd: val('cfHcEnd') || DEFAULT_CONFIG.hcEnd, useAll: false, groupSizeF: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)), groupSizeM: Math.max(4, Math.min(25, parseInt(val('cfSizeM'), 10) || 10)), groupSize: Math.max(4, Math.min(25, parseInt(val('cfSizeF'), 10) || 10)) }); toast('Settings saved. Press Rebalance on Companies & groups to apply group sizes.'); }
   if (f.id === 'edForm') { audit('settings', `Edited the record of ${pName(f.dataset.id)}`, f.dataset.id);
