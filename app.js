@@ -26,6 +26,8 @@ function shimCol(path) {
   const r = FB.fs.collection(scoped(path));
   return {
     path, doc: id => shimDoc(path + '/' + id),
+    /* a filtered live list: only the documents that match are loaded and sent on updates */
+    where: (f, op, v) => { const q = r.where(f, op, v); return { onSnapshot: (next, err) => q.onSnapshot(s => next({ docs: s.docs.map(fbSnap), size: s.size, empty: s.empty, metadata: { fromCache: s.metadata.fromCache } }), fbErr(err)), get: async () => { const s = await q.get(); return { docs: s.docs.map(fbSnap), size: s.size, empty: s.empty }; } }; },
     onSnapshot: (next, err) => r.onSnapshot({ includeMetadataChanges: true }, s => next({ docs: s.docs.map(fbSnap), size: s.size, empty: s.empty, metadata: { fromCache: s.metadata.fromCache }, docChanges: () => [] }), fbErr(err))
   };
 }
@@ -47,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-22f · Rebalance fixes age-group mix-ups';
+const APP_VERSION = '2026-11-23b · counselors load only their own youth';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1166,12 +1168,14 @@ function setState(pid, patch) {
   try { const b0 = bucketOf(pid); auditState(pid, (S.state[b0] || {})[pid], patch); } catch (e) { }
   const b = bucketOf(pid); S.state[b] = Object.assign({}, S.state[b] || {}); S.state[b][pid] = Object.assign({}, S.state[b][pid] || {}, patch);
   recompute(true); const ex = S.stateEx.has(b); S.stateEx.add(b);
+  if ('g' in patch) touchMoves();
   return upd('state/' + b, { p: { [pid]: patch } }, ex).catch(fail);
 }
 async function setStates(map) { // pid -> patch
   const byB = {}; for (const pid in map) { const b = bucketOf(pid); (byB[b] = byB[b] || {})[pid] = map[pid]; S.state[b] = Object.assign({}, S.state[b] || {}); S.state[b][pid] = Object.assign({}, S.state[b][pid] || {}, map[pid]); }
   recompute(true);
   for (const b in byB) { const ex = S.stateEx.has(b); S.stateEx.add(b); await upd('state/' + b, { p: byB[b] }, ex); }
+  if (Object.values(map).some(x => x && 'g' in x)) touchMoves();
 }
 function saveOrg(org, gen) { S.org = { groups: org.groups, companies: org.companies }; S.orgEx = true; recompute(true); return setDoc('org/structure', { groups: org.groups, companies: org.companies, gen: gen || null, lock: S.orgLock || null }).catch(fail); }
 function patchOrg(patch) { // {groups:{id:{...}}} merge
@@ -1192,6 +1196,7 @@ function recompute(now) {
     S.staffList = Object.values(S.staff).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
     S.staffMap = {}; S.staffList.forEach(s => S.staffMap[s.id] = s);
     S.P = derive(mergeMedical(), S.state, S.config, S.org, S.staffMap);
+    if (SC.on) { const ms = new Set(myGroups().map(g => g.id)); S.P = S.P.filter(p => p.g && ms.has(p.g)); }
     S.tee = teeRedistribute(S.P.filter(p => p.inc || p.s));
     render(); autoClaim(); adminSync();
   };
@@ -1297,15 +1302,43 @@ async function syncAccountStaff() {
   if (del.length) await setDoc('staff/all', { s }); else await upd('staff/all', { s: add }, ex);
   recompute();
 }
+/* Counselors' phones load only the storage documents that hold their own group's youth (about 10 of 64),
+   instead of the whole session, so each check-in elsewhere is not sent to every counselor. Everyone else loads everything.
+   One quick look at all check-in states finds which documents those are; it is repeated only when someone is moved between groups. */
+const SC = { on: false, key: null, subs: {}, busy: false, again: false, mv: null };
+function scopeOn() { return S.myRole === 'counselor' && !S.isOwner; }
+async function scopeRefresh(force) {
+  if (!SC.on || !S.loaded.org || !S.loaded.inv) return;
+  const mine = myGroups().map(g => g.id).sort(), key = mine.join(',');
+  if (!force && key === SC.key) return;
+  if (SC.busy) { SC.again = true; return; }
+  SC.busy = true; SC.key = key;
+  try {
+    const ms = new Set(mine), want = new Set();
+    if (mine.length) { const sn = await FB.fs.collection(scoped('state')).get(); sn.docs.forEach(d => { const p = (d.data() || {}).p || {}; for (const id in p) if (p[id] && ms.has(p[id].g)) want.add(d.id); }); }
+    for (const b of Object.keys(SC.subs)) if (!want.has(b)) { SC.subs[b].forEach(u => { try { u(); } catch (e) { } }); delete SC.subs[b]; const r = Object.assign({}, S.roster), t = Object.assign({}, S.state); delete r[b]; delete t[b]; S.roster = r; S.state = t; }
+    for (const b of want) if (!SC.subs[b]) SC.subs[b] = [
+      S.db.doc('roster/' + b).onSnapshot(d => { S.roster = Object.assign({}, S.roster, { [b]: Object.assign({}, (d.exists && (d.data() || {}).p) || {}) }); if (d.exists) S.rosterEx.add(b); recompute(); }, e => console.error(e)),
+      S.db.doc('state/' + b).onSnapshot(d => { S.state = Object.assign({}, S.state, { [b]: Object.assign({}, (d.exists && (d.data() || {}).p) || {}) }); if (d.exists) S.stateEx.add(b); recompute(); }, e => console.error(e))
+    ];
+    S.loaded.roster = S.loaded.state = true; recompute();
+  } catch (e) { console.error(e); SC.key = null; }
+  SC.busy = false; if (SC.again) { SC.again = false; scopeRefresh(true); }
+}
+/* tells counselors' phones that someone changed group, so they look again */
+function touchMoves() { setDoc('state/_mv', { at: Date.now() }).catch(() => { }); }
 function subscribe() {
   const db = S.db; const onErr = e => { console.error(e); if (e.code === 'revoked') { S.noDb = true; render(); } };
   const mark = (k, meta) => { if (!meta.fromCache) S.loaded[k] = true; };
   setTimeout(() => { if (!loadedAll()) { S.slow = true; render(); } }, 10000);
+  if (scopeOn()) { SC.on = true; SC.key = null; db.doc('state/_mv').onSnapshot(d => { const v = d.exists ? d.data().at : 0; if (SC.mv != null && v !== SC.mv) scopeRefresh(true); SC.mv = v; }, () => { }); }
+  else {
   db.collection('roster').onSnapshot(sn => { const r = {}; S.rosterEx = new Set(); sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.rosterEx.add(d.id); }); S.roster = r; mark('roster', sn.metadata); recompute(); }, onErr);
   db.collection('state').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.stateEx.add(d.id); }); S.state = r; mark('state', sn.metadata); recompute(); }, onErr);
+  }
   db.doc('staff/all').onSnapshot(d => { S.staffCols = d.exists ? d.data().cols || null : null; S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
   db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
-  db.collection('headcount').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.hc = r; S.hcLoaded = true; recompute(); }, onErr);
+  S.hcSub = null; hcSubscribe(); /* headcounts load only what this person needs (see hcSubscribe) */
   db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
   S.access = {}; S.loaded.access = true;
   if (S.medAdmin) {
@@ -1522,11 +1555,13 @@ function render() {
   if (UI.pending) return;
   const ae = document.activeElement;
   if (ae && $('#main').contains(ae) && (ae.tagName === 'SELECT' || ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && (ae.dataset.region || ae.dataset.hcreason)))) { UI.pending = true; ae.addEventListener('blur', () => { setTimeout(() => { UI.pending = false; render(); }, 250); }, { once: true }); return; }
+  if (SC.on && S.loaded && S.loaded.org) scopeRefresh(false); /* before the loading screen, so a counselor's data can start loading */
   renderHeader(); renderNav();
   const gate = gateView();
   if (gate) { const gk = 'gate' + fnv(gate); if (UI.frameKey !== gk) { $('#main').innerHTML = gate; UI.frameKey = gk; } return; }
   const pg = currentPage(); const key = pg + '|' + role() + '|' + (myStaffId() || '');
   const page = PAGE_IMPL[pg];
+  if (S.loaded && S.loaded.org) hcSubscribe();
   let keepY = null, refocus = null, inner = null;
   if (UI.frameKey !== key) { $('#main').innerHTML = page.frame(); UI.frameKey = key; window.scrollTo(0, 0); }
   else {
@@ -2088,7 +2123,7 @@ PAGE_IMPL.companies = {
     <div class="btnrow">${can.lockRegen() ? (S.config.regenLock ? '<button class="btn" data-act="regenLock" data-v="off">Unlock companies</button>' : '<button class="btn" data-act="regenLock" data-v="on">Mark companies official</button>') : ''}${adm ? `<button class="btn primary" data-act="rebalance">Rebalance, keep groups</button><button class="btn" data-act="renumber" id="rnBtn">Renumber groups by company<span class="lockbadge" id="rnLock" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V7a3 3 0 0 0-6 0z" fill="currentColor"/></svg>Numbers locked</span></button>${S.config.regenLock ? '' : '<button class="btn" data-act="regen">Regenerate all</button>'}<button class="btn" data-act="addCo">Add company</button>` : ''}<button class="btn" data-act="rosterCsv">Export rosters</button></div></section>
     ${adm ? foldSec('co-sizes', 'Group sizes', 'coSizeN', '', '<div id="coSizes"></div>') : ''}
     <div id="coLog"></div><div class="co-top"><div class="panel"><h2>Leadership</h2><div id="coChart"></div></div><details class="panel checks" id="coChecks" ${UI.checksOpen === false ? '' : 'open'}><summary><h2>Checks</h2><span id="coWarnSum" class="checks-sum"></span></summary><div id="coWarn"></div></details></div>
-    <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${[['', 'All companies'], ['Y', '14–15'], ['O', '16–18']].concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
+    <div class="toolbar"><div class="seg" role="group" aria-label="Age group">${(SC.on ? [] : [['', 'All companies'], ['Y', '14–15'], ['O', '16–18']]).concat(['ac', 'counselor'].includes(role()) ? [['mine', 'Mine']] : []).map(([v, l]) => `<button data-act="coBand" data-v="${v}" aria-pressed="${UI.band === v}">${l}</button>`).join('')}</div><input id="coQ" class="co-q" type="search" placeholder="Find a counselor, AC, youth, group (G12) or company (Co 3)" autocomplete="off" value="${esc(UI.coQ || '')}"></div>
     <div id="coFind"></div><div id="coGrid" class="companies"></div>
     ${can.reset() ? resetPanel() : ''}`;
   },
@@ -2757,6 +2792,28 @@ function hcOverview(groups, day) {
   return h;
 }
 let hcNoteT = {};
+/* Headcounts: each phone listens only to the reports it needs, so a tap on one phone is not sent to all 140.
+   Counselors: their own group. ACs: their company. Admins and coordinators: tonight (admins: every night, for resets).
+   Others with headcount access: tonight. Re-subscribes when the night, the role or someone's group changes. */
+function hcSubscribe() {
+  if (!S.db || !role() || !can.headcount()) return;
+  const r = role(), day = hcDay();
+  let field = 'date', vals = [day];
+  if (r === 'counselor') { field = 'groupId'; vals = myGroups().map(g => g.id).slice(0, 30); }
+  else if (r === 'ac') { field = 'companyId'; vals = myCompanies().map(c => c.id).slice(0, 30); }
+  else if (can.admin()) { field = ''; vals = []; }
+  const key = S.sid + '|' + r + '|' + field + '|' + vals.join(',');
+  if (S.hcKey === key) return; S.hcKey = key;
+  if (S.hcSub) { try { S.hcSub(); } catch (e) { } S.hcSub = null; }
+  if (field && !vals.length) { S.hc = {}; S.hcLoaded = true; return; }
+  const col = S.db.collection('headcount'), q = !field ? col : vals.length === 1 ? col.where(field, '==', vals[0]) : col.where(field, 'in', vals);
+  S.hcSub = q.onSnapshot(sn => { const m = {}; sn.docs.forEach(d => m[d.id] = d.data()); for (const id in HC_PENDING) m[id] = Object.assign({}, m[id] || {}, HC_PENDING[id]); S.hc = m; S.hcLoaded = true; recompute(); }, e => console.error(e));
+}
+/* present/missing taps are saved together a moment after the last tap, instead of one save per tap */
+const HC_PENDING = {}; let hcTimer = null;
+function hcFlush() { clearTimeout(hcTimer); hcTimer = null; const ids = Object.keys(HC_PENDING); ids.forEach(id => { const next = HC_PENDING[id]; delete HC_PENDING[id]; setDoc('headcount/' + id, next).catch(fail); }); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && hcTimer) hcFlush(); });
+window.addEventListener('pagehide', () => { if (hcTimer) hcFlush(); });
 async function resetHeadcounts(which) {
   if (!can.admin()) return;
   const day = hcDay(), ids = Object.keys(S.hc || {}).filter(id => which === 'all' || (S.hc[id] && S.hc[id].date === day));
@@ -2775,7 +2832,9 @@ async function hcWrite(gid, patch, submit) {
   const next = Object.assign({}, cur, base, patch, { marks: Object.assign({}, cur.marks || {}, patch.marks || {}), reasons: Object.assign({}, cur.reasons || {}, patch.reasons || {}) });
   if (submit) Object.assign(next, { submitted: true, at: Date.now(), expected: hcGroup(g, day).people.map(p => p.id) });
   S.hc = Object.assign({}, S.hc, { [id]: next }); render();
-  await setDoc('headcount/' + id, next).catch(fail);
+  HC_PENDING[id] = next;
+  if (submit) { hcFlush(); return; }
+  clearTimeout(hcTimer); hcTimer = setTimeout(hcFlush, 2500);
 }
 
 /* page: sessions (split and move participants) */
