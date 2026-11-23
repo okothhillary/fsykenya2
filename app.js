@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-23b · counselors load only their own youth';
+const APP_VERSION = '2026-11-23c · edit blank T-shirt sizes';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1050,6 +1050,8 @@ const can = {
   // marking companies official (which locks Regenerate and Undo all groups) is for the registration admin and the Session Directing Couple only
   lockRegen: () => ['regadmin', 'sdc'].includes(role()),
   // closing or opening the addition of staff: the registration admin, Session Directing Couple, Area Seventy and Head of Logistics
+  // splitting blank T-shirt sizes by hand: admins and the logistics team
+  teeEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'logistics', 'coordinator'].includes(role()),
   lockStaff: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
   // adding staff (new records, imports, making someone a counselor): anyone with staff rights, but once closed only the roles above
   addStaff: () => can.staff() && (!S.config.staffLock || ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role())),
@@ -1339,6 +1341,7 @@ function subscribe() {
   db.doc('staff/all').onSnapshot(d => { S.staffCols = d.exists ? d.data().cols || null : null; S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
   db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
   S.hcSub = null; hcSubscribe(); /* headcounts load only what this person needs (see hcSubscribe) */
+  db.doc('config/tee').onSnapshot(d => { const v = d.exists ? d.data() : null; S.teeCustom = v && (v.y || v.s) ? v : null; recompute(); }, () => { });
   db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
   S.access = {}; S.loaded.access = true;
   if (S.medAdmin) {
@@ -1817,15 +1820,45 @@ async function printForm(stake, unit) {
   toast(`Check-in form ready: ${people.length} participants${unitNames.length > 1 ? ' in ' + unitNames.length + ' units' : ''}`);
 }
 /* The full T-shirt order as rows: size, youth (given and estimated), staff (given and estimated), total */
-function teeOrderRows(L) {
+/* the suggested split of blank sizes, and the custom split if someone saved one that still adds up */
+function teeBlanks(L) {
   const { ST, est } = staffTee(), R = teeRedistribute(L);
+  const sug = { y: {}, s: Object.assign({}, est) }; for (const k in R.totals) if (R.totals[k].est) sug.y[k] = R.totals[k].est;
+  const sum = o => Object.values(o || {}).reduce((a, b) => a + (+b || 0), 0), n = { y: sum(sug.y), s: sum(sug.s) };
+  const C = S.teeCustom, ok = !!C && sum(C.y) === n.y && sum(C.s) === n.s;
+  return { ST, R, sug, n, custom: ok ? C : null, stale: !!C && !ok, use: ok ? { y: C.y || {}, s: C.s || {} } : sug };
+}
+function teeOrderRows(L) {
+  const B = teeBlanks(L), { ST, R } = B;
   const giv = {}; ST.forEach(x => { if (x.tshirt) giv[x.tshirt] = (giv[x.tshirt] || 0) + 1; });
   const rows = [];
-  for (const s of sizesIn(giv, est, R.totals)) {
-    const yg = R.totals[s] ? R.totals[s].given : 0, ye = R.totals[s] ? R.totals[s].est : 0, sg = giv[s] || 0, se = est[s] || 0;
+  for (const s of sizesIn(giv, B.use.s, B.use.y, R.totals)) {
+    const yg = R.totals[s] ? R.totals[s].given : 0, ye = +(B.use.y[s] || 0), sg = giv[s] || 0, se = +(B.use.s[s] || 0);
     if (yg + ye + sg + se) rows.push({ s, label: SIZE_LABEL[s] || s, yg, ye, sg, se, y: yg + ye, st: sg + se, t: yg + ye + sg + se });
   }
   return rows;
+}
+/* Edit blank sizes: decide by hand how the people who gave no size are spread across sizes */
+function openTeeEditor() {
+  const B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)), cur = B.use, sizes = SIZE_ORDER;
+  const row = (k, lbl) => `<tr><th>${lbl} <small class="muted">${B.n[k]} blank${B.n[k] === 1 ? '' : 's'}</small></th>${sizes.map(z => `<td><input type="number" min="0" inputmode="numeric" class="te-in" data-k="${k}" data-z="${z}" value="${+(cur[k][z] || 0)}" aria-label="${lbl} ${SIZE_LABEL[z] || z}"><small class="muted te-sug">${+(B.sug[k][z] || 0)}</small></td>`).join('')}<td class="te-left" id="teLeft-${k}"></td></tr>`;
+  openModal(`<div class="modal-head"><h2>Edit blank sizes</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <p class="note" style="margin-top:-6px">Spread the people who gave no size across sizes yourself. Each row must add up to its number of blanks. The small grey number under each box is the app's suggestion.</p>
+    <div class="tablewrap"><table class="te-tbl"><thead><tr><th></th>${sizes.map(z => `<th class="n">${esc(SIZE_LABEL[z] || z)}</th>`).join('')}<th></th></tr></thead><tbody>${B.n.y ? row('y', 'Youth') : ''}${B.n.s ? row('s', 'Staff') : ''}</tbody></table></div>
+    <div class="btnrow" style="justify-content:space-between;margin-top:12px"><button class="btn" data-act="teeSug">Use the suggestion</button><span><button class="btn" data-act="close">Cancel</button> <button class="btn primary" data-act="teeSave" id="teSave">Save split</button></span></div>`);
+  UI.teeN = B.n; teeLeft();
+}
+function teeRead() { const o = { y: {}, s: {} }; document.querySelectorAll('.te-in').forEach(i => { const v = Math.max(0, parseInt(i.value, 10) || 0); if (v) o[i.dataset.k][i.dataset.z] = v; }); return o; }
+function teeLeft() {
+  const o = teeRead(), n = UI.teeN || { y: 0, s: 0 }; let ok = true;
+  for (const k of ['y', 's']) { const el = $('#teLeft-' + k); if (!el) continue; const left = n[k] - Object.values(o[k]).reduce((a, b) => a + b, 0); ok = ok && left === 0;
+    el.innerHTML = left === 0 ? '<span class="chip good">Adds up</span>' : left > 0 ? `<span class="chip warn">${left} still to place</span>` : `<span class="chip bad">${-left} too many</span>`; }
+  const b = $('#teSave'); if (b) b.disabled = !ok;
+}
+async function saveTeeSplit(custom) {
+  try { await setDoc('config/tee', custom ? Object.assign({}, custom, { at: Date.now(), by: S.meName || S.email || '' }) : { y: null, s: null }); } catch (e) { fail(e); return; }
+  audit('settings', custom ? 'Saved a custom split of blank T-shirt sizes' : 'Went back to the suggested split of blank T-shirt sizes');
+  closeModal(); toast(custom ? 'Custom split saved. The order and PDF use it.' : 'Back to the suggested split');
 }
 /** Printable T-shirt order (A4), in the same style as the check-in forms */
 async function printTeeOrder() {
@@ -1878,9 +1911,9 @@ async function printTeeOrder() {
   right(T.t, X.t, y, bold, 14);
   y -= 34;
   /* blank sizes: how many, and that they can be shared out differently */
-  const nb = T.ye + T.se;
+  const nb = T.ye + T.se, Bk = teeBlanks(L);
   if (nb) {
-    const msg = pdfSafe(`${nb} T-shirt${nb === 1 ? ' was' : 's were'} ordered for people who gave no size (${T.ye} youth, ${T.se} staff). They are shared out above in the same proportions as everyone who did give a size. Adjust them to suit the group, for example more small sizes for younger youth.`);
+    const msg = pdfSafe(`${nb} T-shirt${nb === 1 ? ' was' : 's were'} ordered for people who gave no size (${T.ye} youth, ${T.se} staff). ${Bk.custom ? `They were split across sizes by hand${Bk.custom.by ? ' by ' + Bk.custom.by : ''}.` : 'They are shared out above in the same proportions as everyone who did give a size. Adjust them to suit the group, for example more small sizes for younger youth.'}`);
     const lines = []; let line = ''; for (const w of msg.split(' ')) { const nx = line ? line + ' ' + w : w; if (font.widthOfTextAtSize(nx, 10) > W - 2 * M - 40) { lines.push(line); line = w; } else line = nx; } if (line) lines.push(line);
     const bh = 26 + lines.length * 14;
     pg.drawRectangle({ x: M, y: y - bh + 14, width: W - 2 * M, height: bh, color: C('#fff4e0'), borderColor: C('#fcb449'), borderWidth: 1 });
@@ -2381,11 +2414,13 @@ function staffTeeBlock(L) {
   const blanks = ST.filter(x => !x.tshirt);
   h += `<p class="note">${blanks.length ? `${blanks.length} staff gave no size (${blanks.slice(0, 6).map(x => esc(x.name)).join(', ')}${blanks.length > 6 ? ' and ' + (blanks.length - 6) + ' more' : ''}). Each blank is estimated from staff of the same gender who did give a size.` : 'Every staff member gave a size.'} Test staff are left out.</p>`;
   UI.teeL = L;
-  h += `<div class="tee-order-head"><p class="th" style="margin:18px 0 6px">Full order: youth and staff</p><button class="btn small" data-act="teePdf">${ICONS.print} Download order (PDF)</button></div><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Youth</th><th class="n">Staff</th><th class="n">Total to order</th></tr></thead><tbody>`;
+  const B = teeBlanks(L), rows = teeOrderRows(L), edit = can.teeEdit();
+  h += `<div class="tee-order-head"><p class="th" style="margin:18px 0 6px">Full order: youth and staff${B.custom ? ' <span class="chip info">Custom split of blanks</span>' : ''}</p><div class="btnrow">${edit && (B.n.y + B.n.s) ? `<button class="btn small" data-act="teeEdit">Edit blank sizes</button>` : ''}<button class="btn small" data-act="teePdf">${ICONS.print} Download order (PDF)</button></div></div><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Youth</th><th class="n">Staff</th><th class="n">Total to order</th></tr></thead><tbody>`;
   let ty = 0, ts = 0;
-  for (const s of sizes) { const y = R.totals[s] ? R.totals[s].given + R.totals[s].est : 0, st = (giv[s] || 0) + (est[s] || 0); if (!y && !st) continue; ty += y; ts += st; h += `<tr><td><b>${esc(SIZE_LABEL[s] || s)}</b></td><td class="n">${y}</td><td class="n">${st}</td><td class="n"><b>${y + st}</b></td></tr>`; }
-  const yBlank = Object.values(R.totals).reduce((a, x) => a + (x.est || 0), 0), sBlank = Object.values(est).reduce((a, b) => a + b, 0);
-  h += `<tr class="total"><td>All</td><td class="n">${ty}</td><td class="n">${ts}</td><td class="n">${ty + ts}</td></tr></tbody></table></div>${yBlank + sBlank ? `<div class="tee-blank"><b>${nn(yBlank + sBlank, 'blank size')}</b> (${yBlank} youth, ${sBlank} staff) ${yBlank + sBlank === 1 ? 'is' : 'are'} included above, shared out like everyone who gave a size. Adjust them to suit the group, for example more small sizes for younger youth.</div>` : ''}<p class="note">Youth follow the "${UI.logScope === 'in' ? 'Checked in now' : 'Everyone registered'}" choice at the top of the page.</p>`;
+  for (const r of rows) { ty += r.y; ts += r.st; h += `<tr><td><b>${esc(r.label)}</b></td><td class="n">${r.y}</td><td class="n">${r.st}</td><td class="n"><b>${r.t}</b></td></tr>`; }
+  h += `<tr class="total"><td>All</td><td class="n">${ty}</td><td class="n">${ts}</td><td class="n">${ty + ts}</td></tr></tbody></table></div>`;
+  if (B.n.y + B.n.s) h += `<div class="tee-blank"><b>${nn(B.n.y + B.n.s, 'blank size')}</b> (${B.n.y} youth, ${B.n.s} staff) ${B.n.y + B.n.s === 1 ? 'is' : 'are'} included above, ${B.custom ? `split by hand${B.custom.by ? ' by ' + esc(B.custom.by) : ''}${B.custom.at ? ' on ' + esc(fmtWhen(B.custom.at)) : ''}.` : 'shared out like everyone who gave a size.'}${B.stale ? ' <b>The custom split no longer adds up</b> because the number of blanks changed, so the suggestion is used. Edit it again.' : ''}${edit ? (B.custom ? ' <button class="linkbtn" data-act="teeEdit">Edit</button>' : ' <button class="linkbtn" data-act="teeEdit">Split them yourself</button>') : ''}</div>`;
+  h += `<p class="note">Youth follow the "${UI.logScope === 'in' ? 'Checked in now' : 'Everyone registered'}" choice at the top of the page.</p>`;
   return h;
 }
 
@@ -3684,6 +3719,9 @@ document.addEventListener('click', async e => {
     case 'nmToggle': { const o = UI.nmOpen || (UI.nmOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); renderNonMembers(); break; }
     case 'dupDelAll': await deleteDuplicates(v === 'likely'); break;
     case 'teePdf': await printTeeOrder(); break;
+    case 'teeEdit': if (can.teeEdit()) openTeeEditor(); break;
+    case 'teeSug': { const B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)); document.querySelectorAll('.te-in').forEach(i => { i.value = +(B.sug[i.dataset.k][i.dataset.z] || 0); }); teeLeft(); break; }
+    case 'teeSave': { const o = teeRead(); const B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)); const same = ['y', 's'].every(k => SIZE_ORDER.every(z => (+(o[k][z] || 0)) === (+(B.sug[k][z] || 0)))); await saveTeeSplit(same ? null : o); break; }
     case 'nmShow': openFold('nmPanel'); break;
     case 'dupAll': UI.dupAll = !UI.dupAll; renderDups(); break;
     case 'logClose': UI.genLog = null; render(); break;
@@ -3933,7 +3971,7 @@ document.addEventListener('submit', async e => {
   }
 });
 let qT = null;
-document.addEventListener('input', e => { if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
+document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('te-in')) { teeLeft(); return; } if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'coQ') { UI.coQ = t.value; clearTimeout(UI.coT); UI.coT = setTimeout(() => PAGE_IMPL.companies.update(), 200); return; }

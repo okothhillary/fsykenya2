@@ -816,3 +816,9 @@ label.pl-row{cursor:pointer}
 .tee-order-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.tee-order-head .btn svg{width:16px;height:16px;vertical-align:-3px}
 .tee-blank{margin:10px 0 4px;padding:10px 14px;border-radius:12px;background:rgba(252,180,73,.14);border:1px solid rgba(252,180,73,.5);border-left:4px solid #fcb449;font-size:.92rem}
 .yc{color:var(--muted,#5b6b7b);font-weight:600;font-size:.88em}tr.st-h .yc{color:rgba(255,255,255,.85)}
+/* edit blank sizes */
+.te-tbl th,.te-tbl td{padding:8px 6px;vertical-align:top}
+.te-tbl input{width:64px;padding:6px 8px;text-align:right}
+.te-sug{display:block;text-align:right;margin-top:2px}
+.te-left{white-space:nowrap}
+.tee-order-head .btnrow{display:flex;gap:8px;flex-wrap:wrap}
