@@ -1,8 +1,9 @@
 # How the FSY Check-in app works (code guide)
 
-This is a simple fsy check-in app built on a focus-perspective: considering what check-in processes look like at fsy and building backwards from that. All functions purely come from mapping those processes, to avoid a bloated app.
+This is a simple FSY check-in app built on a focused perspective: considering what check-in processes look like at FSY and what teams need administratively, and building backwards strictly from that. All functions purely come from mapping those processes to avoid a bloated app.
 
 This guide explains how `app.js` is built and what every function does, grouped by the tab or part of the app it serves, which represent what leaders and teams at fsy need for check-in and company generation. 
+
 ---
 
 ## 1. The files
