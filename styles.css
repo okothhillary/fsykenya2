@@ -822,3 +822,11 @@ label.pl-row{cursor:pointer}
 .te-sug{display:block;text-align:right;margin-top:2px}
 .te-left{white-space:nowrap}
 .tee-order-head .btnrow{display:flex;gap:8px;flex-wrap:wrap}
+tr.sub-total td{background:rgba(0,74,124,.05)}
+/* logistics people added by hand */
+.xl-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.xl-grid label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:.86rem}
+.xl-grid input{padding:8px 10px;text-align:right}
+.xl-tot{margin:10px 0 6px}
+@media (max-width:520px){.xl-grid{grid-template-columns:repeat(2,1fr)}}
+td.st-act .st-spare{display:block;margin-top:6px}

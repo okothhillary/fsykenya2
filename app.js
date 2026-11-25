@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-25c · order by role, one line per role';
+const APP_VERSION = '2026-11-25e · mark staff as spare';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -612,7 +612,7 @@ function gsize(cfg, gender) { const g = gender === 'F' ? cfg && cfg.groupSizeF :
 /** For each gender: how many youth per counselor would give every usable counselor a group. */
 function fitSizes() {
   const sh = shadowedCounselors(S.staffList), out = {};
-  for (const g of ['F', 'M']) { const y = S.P.filter(p => p.elig && p.gender === g).length, c = S.staffList.filter(x => x.role === 'counselor' && x.gender === g && !x.test && !sh[x.id]).length; const now = gsize(S.config, g), f = c ? Math.max(6, Math.ceil(y / c)) : null; out[g] = { y, c, fit: f && f < now ? f : null, now, short: !!(c && Math.ceil(y / c) > now) }; }
+  for (const g of ['F', 'M']) { const y = S.P.filter(p => p.elig && p.gender === g).length, c = S.staffList.filter(x => x.role === 'counselor' && x.gender === g && !x.test && !sh[x.id] && !x.spare).length; const now = gsize(S.config, g), f = c ? Math.max(6, Math.ceil(y / c)) : null; out[g] = { y, c, fit: f && f < now ? f : null, now, short: !!(c && Math.ceil(y / c) > now) }; }
   return out;
 }
 function fitHint() {
@@ -650,7 +650,7 @@ function fullGenerate(P, staffList, cfg) {
   const size = +cfg.groupSize || 10;
   const groups = {}, companies = {}, assign = {}, log = [];
   const elig = P.filter(p => p.elig);
-  const shadow = shadowedCounselors(staffList); const counselors = staffList.filter(s => s.role === 'counselor' && s.gender && !shadow[s.id]);
+  const shadow = shadowedCounselors(staffList); const counselors = staffList.filter(s => s.role === 'counselor' && s.gender && !shadow[s.id] && !s.spare);
   // Every participant goes to a counselor. With enough counselors groups are the set size; with too few,
   // there is one group per counselor and groups run larger until more counselors are added (then Rebalance).
   for (const gender of ['F', 'M']) {
@@ -675,7 +675,7 @@ function fullGenerate(P, staffList, cfg) {
     else if (!C.length && (lists.Y.length || lists.O.length)) log.push(`No ${gender === 'F' ? 'women' : 'men'} counselors yet: their groups have no counselor`);
   }
   assignCounselors(Object.values(groups), counselors, new Set(), cfg);
-  const acs = staffList.filter(s => s.role === 'ac');
+  const acs = staffList.filter(s => s.role === 'ac' && !s.spare);
   const gY = Object.values(groups).filter(g => g.band === 'Y').length, gO = Object.values(groups).filter(g => g.band === 'O').length;
   const A = acs.length; let cY = 0, cO = 0;
   if (A > 0) {
@@ -717,14 +717,15 @@ function rebalance(P, staffList, org, cfg) {
   for (const g of Object.values(groups)) {
     const c = g.counselorId && staffMap[g.counselorId];
     const sh = g.counselorId && shadowedCounselors(staffList)[g.counselorId];
-    if (g.counselorId && (!c || c.role !== 'counselor')) { log.push(c ? `${c.name} is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}, so group ${g.num} needs a new counselor` : `Group ${g.num} lost its counselor`); g.counselorId = null; }
+    if (c && c.spare) { log.push(`${c.name} is marked spare, so group ${g.num} needs a new counselor`); g.counselorId = null; }
+    else if (g.counselorId && (!c || c.role !== 'counselor')) { log.push(c ? `${c.name} is now ${ROLES[c.role] ? (/^[aeiou]/i.test(ROLES[c.role]) ? 'an ' : 'a ') + ROLES[c.role].toLowerCase() : 'not a counselor'}, so group ${g.num} needs a new counselor` : `Group ${g.num} lost its counselor`); g.counselorId = null; }
     else if (sh) { log.push(`${c.name} is also listed as ${ROLES[sh.role].toLowerCase()}, so they were taken off group ${g.num}`); g.counselorId = null; }
     else if (c && c.gender && c.gender !== g.gender) { log.push(`${c.name} no longer matches the gender of group ${g.num}, so they were taken off it and will get a ${c.gender === 'F' ? 'young women' : 'young men'}'s group if one is needed`); g.counselorId = null; }
   }
   // empty groups
   for (const g of Object.values(groups)) if (!members[g.id].length) { log.push(`Group ${g.num} was empty and was removed`); delete groups[g.id]; delete members[g.id]; }
   const used = new Set(Object.values(groups).map(g => g.counselorId).filter(Boolean));
-  const shadow = shadowedCounselors(staffList); const counselors = staffList.filter(s => s.role === 'counselor' && s.gender && !shadow[s.id]);
+  const shadow = shadowedCounselors(staffList); const counselors = staffList.filter(s => s.role === 'counselor' && s.gender && !shadow[s.id] && !s.spare);
   const needy = Object.values(groups).filter(g => !g.counselorId);
   assignCounselors(needy, counselors, used, cfg);
   needy.forEach(g => { if (g.counselorId) log.push(`Group ${g.num} now led by ${staffMap[g.counselorId].name}`); });
@@ -838,10 +839,11 @@ function rebalance(P, staffList, org, cfg) {
   if (still) log.push(`${still === 1 ? '1 group is' : still + ' groups are'} still over the group size: add counselors and press Rebalance again`);
   else if (overfull && !opened) log.push(`${nn(overfull, 'placement')} went over the group size: add counselors to open new groups`);
   // ACs
-  const acs = staffList.filter(s => s.role === 'ac');
+  const acs = staffList.filter(s => s.role === 'ac' && !s.spare);
   for (const c of Object.values(companies)) {
     const a = c.acId && staffMap[c.acId];
     if (c.acId && (!a || a.role !== 'ac')) { log.push(`Company ${c.num} lost its assistant coordinator`); c.acId = null; }
+    else if (a && a.spare) { log.push(`${a.name} is marked spare, so company ${c.num} needs a new assistant coordinator`); c.acId = null; }
   }
   const usedAc = new Set(Object.values(companies).map(c => c.acId).filter(Boolean));
   let freeAcs = acs.filter(a => !usedAc.has(a.id));
@@ -1341,7 +1343,7 @@ function subscribe() {
   db.doc('staff/all').onSnapshot(d => { S.staffCols = d.exists ? d.data().cols || null : null; S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
   db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
   S.hcSub = null; hcSubscribe(); /* headcounts load only what this person needs (see hcSubscribe) */
-  db.doc('config/tee').onSnapshot(d => { const v = d.exists ? d.data() : null; S.teeCustom = v && (v.y || v.s) ? v : null; recompute(); }, () => { });
+  db.doc('config/tee').onSnapshot(d => { const v = d.exists ? d.data() : null; S.teeDoc = v || {}; S.teeCustom = v && (v.y || v.s) ? v : null; S.teeExtra = (v && v.extra) || {}; recompute(); }, () => { });
   db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
   S.access = {}; S.loaded.access = true;
   if (S.medAdmin) {
@@ -1856,7 +1858,7 @@ function teeLeft() {
   const b = $('#teSave'); if (b) b.disabled = !ok;
 }
 async function saveTeeSplit(custom) {
-  try { await setDoc('config/tee', custom ? Object.assign({}, custom, { at: Date.now(), by: S.meName || S.email || '' }) : { y: null, s: null }); } catch (e) { fail(e); return; }
+  try { await setDoc('config/tee', Object.assign(custom ? Object.assign({}, custom, { at: Date.now(), by: S.meName || S.email || '' }) : { y: null, s: null }, { extra: S.teeExtra || {} })); } catch (e) { fail(e); return; }
   audit('settings', custom ? 'Saved a custom split of blank T-shirt sizes' : 'Went back to the suggested split of blank T-shirt sizes');
   closeModal(); toast(custom ? 'Custom split saved. The order and PDF use it.' : 'Back to the suggested split');
 }
@@ -2040,8 +2042,8 @@ PAGE_IMPL.tally = {
     const P = S.P;
     const exp = isExpected;
     const T = { exp: P.filter(exp).length, inn: P.filter(p => p.s === 'in').length, out: P.filter(p => p.s === 'out').length, arrived: P.filter(p => exp(p) && p.s).length, wk: P.filter(p => p.src === 'walkin').length, exc: P.filter(p => !p.inc && p.s).length };
-    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin')).length + S.staffList.filter(x => !x.test).length + (S.config.otherRoles || []).reduce((t, o) => t + Math.max(0, +o.count || 0), 0)}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
-    const ST = S.staffList.filter(x => !x.test);
+    $('#tK').innerHTML = `<div class="kpi hero"><span>Checked in now</span><b>${T.inn}</b></div><div class="kpi"><span>Expected</span><b>${T.exp}</b></div><div class="kpi"><span>Everyone, with staff</span><b>${P.filter(p => exp(p) || (p.src === 'walkin')).length + S.staffList.filter(x => !x.test).length + extraLogisticsN() + (S.config.otherRoles || []).reduce((t, o) => t + Math.max(0, +o.count || 0), 0)}</b></div><div class="kpi"><span>Arrived of expected</span><b>${T.arrived} <small class="muted">${pct(T.arrived, T.exp)}%</small></b></div><div class="kpi"><span>Not arrived</span><b>${T.exp - T.arrived}</b></div><div class="kpi"><span>Walk-ins</span><b>${T.wk}</b></div><div class="kpi"><span>From excluded list</span><b>${T.exc}</b></div><div class="kpi"><span>Checked out</span><b>${T.out}</b></div>`;
+    const ST = S.staffList.filter(x => !x.test).concat(extraLogistics());
     const gc = (list, g) => list.filter(x => x.gender === g).length;
     const yp = P.filter(p => exp(p) || (p.src === 'walkin'));
     const rowsAll = [['Participants expected', P.filter(exp)], ['Walk-ins', P.filter(p => p.src === 'walkin')]].map(([l, L]) => [l, gc(L, 'F'), gc(L, 'M'), L.length])
@@ -2053,7 +2055,7 @@ PAGE_IMPL.tally = {
     const stN = ST.length + otherN, allN = yp.length + stN;
     $('#tAll').innerHTML = `<div class="tablewrap"><table><thead><tr><th></th><th class="n">Women</th><th class="n">Men</th><th class="n">Total</th></tr></thead><tbody>${rowsAll.map(([l, f, m, t], i) => `<tr${i === 2 ? ' class="divide"' : ''}><td>${esc(l)}</td><td class="n">${f}</td><td class="n">${m}</td><td class="n"><b>${t}</b></td></tr>`).join('')}
       <tr class="subtot"><td><b>Youth</b></td><td class="n">${gc(yp, 'F')}</td><td class="n">${gc(yp, 'M')}</td><td class="n"><b>${yp.length}</b></td></tr><tr class="subtot"><td><b>Staff</b></td><td class="n">${gc(ST, 'F')}</td><td class="n">${gc(ST, 'M')}</td><td class="n"><b>${stN}</b></td></tr>
-      <tr class="total"><td>Everyone</td><td class="n">${gc(yp, 'F') + gc(ST, 'F')}</td><td class="n">${gc(yp, 'M') + gc(ST, 'M')}</td><td class="n">${allN}</td></tr></tbody></table></div><p class="note">Youth expected plus walk-ins, every staff member on the Staff page (test staff left out)${otherN ? `, and ${nn(otherN, 'other person', 'other people')} in roles added below, who are in the totals but not split into women and men` : ''}. ${ST.filter(x => !x.gender).length ? `${ST.filter(x => !x.gender).length} staff with no gender are only in the totals.` : ''}</p>`;
+      <tr class="total"><td>Everyone</td><td class="n">${gc(yp, 'F') + gc(ST, 'F')}</td><td class="n">${gc(yp, 'M') + gc(ST, 'M')}</td><td class="n">${allN}</td></tr></tbody></table></div><p class="note">Youth expected plus walk-ins, every staff member on the Staff page (test staff left out)${otherN ? `, and ${nn(otherN, 'other person', 'other people')} in roles added below, who are in the totals but not split into women and men` : ''}. ${extraLogisticsN() ? `Logistics includes ${nn(extraLogisticsN(), 'person', 'people')} added by hand on the Logistics page, in the totals only. ` : ''}${ST.filter(x => !x.gender && !x.extra).length ? `${ST.filter(x => !x.gender && !x.extra).length} staff with no gender are only in the totals.` : ''}</p>`;
     const ed = $('#orEdit');
     if (ed && !(ed.contains(document.activeElement) && document.activeElement.tagName === 'INPUT')) {
       const list = S.config.otherRoles || [];
@@ -2090,7 +2092,7 @@ function counselorGap() {
   for (const g of ['F', 'M']) {
     const size = gsize(S.config, g), youth = S.P.filter(p => p.elig && p.gender === g);
     const need = ['Y', 'O'].reduce((a, b) => a + Math.ceil(youth.filter(p => p.band === b).length / size), 0) + Math.ceil(youth.filter(p => !p.band).length / size);
-    const have = S.staffList.filter(x => x.role === 'counselor' && x.gender === g && !x.test && !sh[x.id]).length;
+    const have = S.staffList.filter(x => x.role === 'counselor' && x.gender === g && !x.test && !sh[x.id] && !x.spare).length;
     out[g] = { size, youth: youth.length, need, have, short: Math.max(0, need - have) };
   }
   return out;
@@ -2171,6 +2173,7 @@ PAGE_IMPL.companies = {
     const ledIds = new Set(Object.values(G).map(g => g.counselorId).filter(Boolean)), shadowC = shadowedCounselors(S.staffList);
     const memN = {}; S.P.forEach(p => { if (p.g) memN[p.g] = (memN[p.g] || 0) + 1; });
     const spare = by('counselor').filter(c => !ledIds.has(c.id)).map(c => {
+      if (c.spare) return [c, 'marked spare by hand: kept in reserve, Rebalance leaves them out'];
       if (c.test) return [c, 'test record'];
       if (shadowC[c.id]) return [c, `extra record: also listed as ${ROLES[shadowC[c.id].role].toLowerCase()}. Delete this record on the Staff page`];
       if (!c.gender) return [c, 'no gender on their record, so they cannot be matched to a group. Add it on the Staff page'];
@@ -2335,7 +2338,7 @@ PAGE_IMPL.logistics = {
   ${foldSec('sec-diet', 'Dietary', 'lgDietN', '<button class="btn small" data-act="lgCsv" data-v="diet">Export CSV</button>', '<div id="lgDiet"></div>')}
   ${foldSec('sec-tee', 'T-shirts', 'lgTeeN', '<button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button>', '<div id="lgSize"></div>')}
   ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-steee', 'Staff T-shirts', 'lgStN', '<button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button>', '<div id="lgStaffSize"></div>')}
-  ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-strole', 'T-shirt sizes by role', 'lgSrN', `<button class="btn small" data-act="teeRolePdf">${ICONS.print} Download order by role (PDF)</button>`, '<div id="lgStaffRole"></div>')}`; },
+  ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-strole', 'T-shirt sizes by role', 'lgSrN', `${can.teeEdit() ? '<button class="btn small" data-act="xlEdit">+ Logistics people</button>' : ''}<button class="btn small" data-act="teeRolePdf">${ICONS.print} Download order by role (PDF)</button>`, '<div id="lgStaffRole"></div>')}`; },
   scope() { const mine = role() === 'counselor' ? new Set(myGroups().map(g => g.id)) : null; return (UI.logScope === 'in' ? S.P.filter(p => p.s === 'in') : registered()).filter(p => seesPrivate(p) && (!mine || (p.g && mine.has(p.g)))); },
   update() {
     const L = this.scope(), H = lgHash();
@@ -2389,8 +2392,31 @@ function teeBlock(L, H) {
 }
 
 /** Staff sizes. Blanks get a size in the proportions of staff of the same gender who gave one. */
+/* logistics people added by hand (not on the staff list): counted in the T-shirt order, the Staff page and the Tally */
+function extraLogistics() {
+  const E = S.teeExtra || {}, out = [];
+  Object.keys(E).forEach(z => { const n = Math.max(0, parseInt(E[z], 10) || 0); for (let i = 0; i < n; i++) out.push({ id: 'xlog:' + z + ':' + i, name: 'Logistics (added by hand)', role: 'logistics', gender: '', tshirt: z === 'none' ? '' : z, extra: true }); });
+  return out;
+}
+function extraLogisticsN() { return extraLogistics().length; }
+function openExtraLogistics() {
+  const E = S.teeExtra || {};
+  openModal(`<div class="modal-head"><h2>Logistics people added by hand</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <p class="note" style="margin-top:-6px">For logistics helpers who are not on the staff list. They count in the T-shirt order, the Logistics number on the Staff page and the Tally totals. Enter how many need each size.</p>
+    <div class="xl-grid">${SIZE_ORDER.map(z => `<label>${esc(SIZE_LABEL[z] || z)}<input type="number" min="0" inputmode="numeric" class="xl-in" data-z="${z}" value="${+(E[z] || 0)}"></label>`).join('')}<label>No size yet<input type="number" min="0" inputmode="numeric" class="xl-in" data-z="none" value="${+(E.none || 0)}"></label></div>
+    <p class="xl-tot" id="xlTot"></p>
+    <div class="btnrow" style="justify-content:flex-end"><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="xlSave">Save</button></div>`);
+  xlTotal();
+}
+function xlTotal() { const t = [...document.querySelectorAll('.xl-in')].reduce((a, i) => a + Math.max(0, parseInt(i.value, 10) || 0), 0); const el = $('#xlTot'); if (el) el.innerHTML = `<b>${nn(t, 'person', 'people')}</b> added by hand`; }
+async function saveExtraLogistics() {
+  const E = {}; document.querySelectorAll('.xl-in').forEach(i => { const v = Math.max(0, parseInt(i.value, 10) || 0); if (v) E[i.dataset.z] = v; });
+  const n = Object.values(E).reduce((a, b) => a + b, 0), doc = Object.assign({}, S.teeDoc || {}, { extra: E });
+  try { await setDoc('config/tee', doc); } catch (e) { fail(e); return; }
+  S.teeExtra = E; audit('staff', `Set logistics people added by hand to ${n}`); closeModal(); recompute(true); toast(n ? `${nn(n, 'logistics person', 'logistics people')} added by hand` : 'No logistics people added by hand');
+}
 function staffTee() {
-  const ST = S.staffList.filter(x => !x.test);
+  const ST = S.staffList.filter(x => !x.test).concat(extraLogistics());
   const est = {}, perPerson = {};
   for (const g of ['F', 'M', '']) {
     const known = ST.filter(x => x.tshirt && (g ? x.gender === g : true)), blanks = ST.filter(x => !x.tshirt && (x.gender || '') === g);
@@ -2499,8 +2525,8 @@ function staffTeeBlock(L) {
   let tg = 0, te = 0;
   for (const s of sizes) { const a = giv[s] || 0, b = est[s] || 0; if (!a && !b) continue; tg += a; te += b; h += `<tr><td><b>${esc(SIZE_LABEL[s] || s)}</b></td><td class="n">${g(s, 'F')}</td><td class="n">${g(s, 'M')}</td><td class="n">${a}</td><td class="n est">+${b}</td><td class="n"><b>${a + b}</b></td></tr>`; }
   h += `<tr><td><b>All</b></td><td class="n">${ST.filter(x => x.tshirt && x.gender === 'F').length}</td><td class="n">${ST.filter(x => x.tshirt && x.gender === 'M').length}</td><td class="n">${tg}</td><td class="n est">+${te}</td><td class="n"><b>${tg + te}</b></td></tr></tbody></table></div>`;
-  const blanks = ST.filter(x => !x.tshirt);
-  h += `<p class="note">${blanks.length ? `${blanks.length} staff gave no size (${blanks.slice(0, 6).map(x => esc(x.name)).join(', ')}${blanks.length > 6 ? ' and ' + (blanks.length - 6) + ' more' : ''}). Each blank is estimated from staff of the same gender who did give a size.` : 'Every staff member gave a size.'} Test staff are left out.</p>`;
+  const blanks = ST.filter(x => !x.tshirt && !x.extra), xb = ST.filter(x => !x.tshirt && x.extra).length, xn = ST.filter(x => x.extra).length;
+  h += `<p class="note">${xn ? `Includes ${nn(xn, 'logistics person', 'logistics people')} added by hand${xb ? `, ${xb} with no size yet` : ''}. ` : ''}${blanks.length ? `${blanks.length} staff gave no size (${blanks.slice(0, 6).map(x => esc(x.name)).join(', ')}${blanks.length > 6 ? ' and ' + (blanks.length - 6) + ' more' : ''}). Each blank is estimated from staff of the same gender who did give a size.` : 'Every staff member gave a size.'} Test staff are left out.</p>`;
   UI.teeL = L;
   const B = teeBlanks(L), rows = teeOrderRows(L), edit = can.teeEdit();
   h += `<div class="tee-order-head"><p class="th" style="margin:18px 0 6px">Full order: youth and staff${B.custom ? ' <span class="chip info">Custom split of blanks</span>' : ''}</p><div class="btnrow">${edit && (B.n.y + B.n.s) ? `<button class="btn small" data-act="teeEdit">Edit blank sizes</button>` : ''}<button class="btn small" data-act="teePdf">${ICONS.print} Download order (PDF)</button></div></div><div class="tablewrap"><table><thead><tr><th>Size</th><th class="n">Youth</th><th class="n">Staff</th><th class="n">Total to order</th></tr></thead><tbody>`;
@@ -2645,7 +2671,7 @@ PAGE_IMPL.staff = {
       if (note) note.innerHTML = ''; }
     const cnt = r => S.staffList.filter(s => s.role === r).length;
     const PL = ROLE_PLURAL;
-    $('#stK').innerHTML = STAFF_ROLES.map(r => `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r)}</b></div>`).join('');
+    $('#stK').innerHTML = STAFF_ROLES.map(r => { const x = r === 'logistics' ? extraLogisticsN() : 0; return `<div class="kpi"><span>${PL[r]}</span><b>${cnt(r) + x}</b>${x ? `<small class="muted">${x} added by hand</small>` : ''}</div>`; }).join('');
     $('#stTally').innerHTML = areaTally(S.staffList.map(s => ({ stake: s.stake, unit: s.unit, key: s.role })), STAFF_ROLES.map(r => [r, ({ counselor: 'Counselors', ac: 'ACs', coordinator: 'Coord.', sdc: 'SDC', logistics: 'Logistics', wellness: 'Wellness' })[r]]), 'openStaff');
     const sq = (UI.stQ || '').toLowerCase().trim();
     const sm = s => !sq || [s.name, s.phone, s.email, s.unit, s.stake, s.unitRaw].join(' ').toLowerCase().includes(sq) || String(s.phone || '').replace(/\D/g, '').includes(sq.replace(/\D/g, '') || '~');
@@ -2663,7 +2689,7 @@ PAGE_IMPL.staff = {
     const linkedIds = new Set(Object.values(S.invites || {}).map(v => v && v.staffId).filter(Boolean));
     const DAY = 86400000, newest = UI.staffView === 'new';
     const addedTxt = s => s.addedAt ? `Added ${fmtWhen(s.addedAt)}${s.addedBy ? ' by ' + s.addedBy : ''}` : '';
-    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.addedAt && Date.now() - s.addedAt < DAY ? `<span class="chip good" title="${esc(addedTxt(s))}">New</span>` : ''}${s.test ? '<span class="chip info">Test</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}${newest && s.addedAt ? '<br>' + esc(addedTxt(s)) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td class="bf">${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '14–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td class="st-act"><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select><button class="btn small danger adm st-del" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
+    const row = s => { const a = staffAge(s, S.config); return `<tr><td><a href="#" data-act="stEdit" data-id="${esc(s.id)}"><b>${esc(s.name)}</b></a> ${s.addedAt && Date.now() - s.addedAt < DAY ? `<span class="chip good" title="${esc(addedTxt(s))}">New</span>` : ''}${s.test ? '<span class="chip info">Test</span>' : ''}${s.spare ? '<span class="chip warn" title="Kept in reserve: Rebalance leaves them out">Spare</span>' : ''}${s.fromAccount ? '<span class="chip">From Accounts</span>' : ''}${shadowS[s.id] ? ` <span class="chip bad" title="The same person has two staff records">Also listed as ${esc(ROLES[shadowS[s.id].role].toLowerCase())}: delete this record</span>` : ''}<br><small class="muted">${byArea ? '' : esc([s.unit, s.stake].filter(Boolean).join(' · ') || 'No unit given') + (s.phone ? ' · ' : '')}${s.phone ? esc(s.phone) : ''}${s.email ? ' · ' + esc(s.email) : ''}${newest && s.addedAt ? '<br>' + esc(addedTxt(s)) : ''}</small>${linkedIds.has(s.id) ? ' <span class="chip good">Account linked</span>' : ''}${s.diet ? `<br><span class="chip warn" title="Food needs">Food: ${esc(s.diet)}</span>` : ''}</td><td>${chipG(s.gender)}</td><td class="n">${a ?? '—'}</td>${isC ? `<td class="bf">${a == null ? '<span class="muted">Unknown age</span>' : a >= 23 ? '16–18' : a >= 19 ? '14–15' : '<span class="chip warn">Under 19</span>'}</td>` : ''}<td>${where(s)}</td><td class="st-act"><select data-act="stRole" data-id="${esc(s.id)}" aria-label="Role"${s.fromAccount ? ' disabled title="Change the role under Accounts"' : ''}>${STAFF_ROLES.map(r => opt(r, ROLES[r], r === s.role)).join('')}</select>${['counselor', 'ac'].includes(s.role) ? `<button class="btn small adm st-spare" data-act="stSpare" data-id="${esc(s.id)}">${s.spare ? 'Not spare' : 'Mark spare'}</button>` : ''}<button class="btn small danger adm st-del" data-act="stDel" data-id="${esc(s.id)}">Delete</button></td></tr>`; };
     /* participants registered in the same stake or unit, to compare with the staff listed there */
     const yc = {}; S.P.forEach(p => { if (!p.inc) return; const a = (p.stake || '').trim(), b = (p.unit || '').trim(); yc[a] = (yc[a] || 0) + 1; yc[a + '|' + b] = (yc[a + '|' + b] || 0) + 1; });
     const youthNote = (st, un, n) => { if (st === NO_STAFF_STAKE || un === NO_STAFF_UNIT) return ''; const y = yc[un == null ? st : st + '|' + un] || 0; return ` <span class="yc" title="Participants registered in this ${un == null ? 'stake or district' : 'ward or branch'}">(${nn(y, 'participant')}${isC && y && n ? ` · ${Math.round(y / n * 10) / 10} per counselor` : ''})</span>`; };
@@ -3807,6 +3833,8 @@ document.addEventListener('click', async e => {
     case 'nmToggle': { const o = UI.nmOpen || (UI.nmOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); renderNonMembers(); break; }
     case 'dupDelAll': await deleteDuplicates(v === 'likely'); break;
     case 'teePdf': await printTeeOrder(); break;
+    case 'xlEdit': if (can.teeEdit()) openExtraLogistics(); break;
+    case 'xlSave': await saveExtraLogistics(); break;
     case 'teeRolePdf': await printTeeByRole(); break;
     case 'teeEdit': if (can.teeEdit()) openTeeEditor(); break;
     case 'teeSug': { const B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)); document.querySelectorAll('.te-in').forEach(i => { i.value = +(B.sug[i.dataset.k][i.dataset.z] || 0); }); teeLeft(); break; }
@@ -3938,6 +3966,9 @@ document.addEventListener('click', async e => {
     case 'wlMore': UI.wlMore = true; render(); break;
     case 'wlCsv': { const rows = [['Who', 'Name', 'Role or group', 'Unit', 'Stake', 'Medical', 'Dietary', 'Checked in']]; registered().filter(p => p.medIssue || p.dietIssue).forEach(p => rows.push(['Youth', p.name, p.group ? 'G' + p.group.num : '', p.unit, p.stake, p.medIssue || '', p.dietIssue || '', p.s === 'in' ? 'yes' : ''])); S.staffList.filter(x => !x.test && (x.med || x.diet)).forEach(x => rows.push(['Staff', x.name, ROLES[x.role] || x.role, x.unit || '', x.stake || '', x.med || '', x.diet || '', ''])); rows.push([]); rows.push(['Concern', 'Participant', 'Kind', 'Urgent', 'Status', 'Reported', 'By', 'Details', 'Follow-up']); allReports().forEach(r => rows.push(['', r.pname || '', repKind(r.kind), r.urgent ? 'yes' : '', r.status, fmtWhen(r.at), r.byName || '', r.text, r.resNote || ''])); exportCSV('fsy-wellness.csv', rows); break; }
     case 'stPdf': printStaffList(UI.staffTab, v || ''); break;
+    case 'stSpare': { const st = S.staffMap[id]; if (!st || !can.staff()) break; const on = !st.spare;
+      if (on && !await confirmBox(`Mark ${esc(st.name)} as spare?`, `They stay on the staff list but are kept in reserve. Rebalance and Regenerate leave them out${st.role === 'counselor' ? ': no group is given to them, and if they lead a group now, the next Rebalance gives it to another counselor' : ': no company is given to them, and if they oversee one now, the next Rebalance gives it to another AC'}.`, 'Mark spare')) break;
+      await saveStaffRec(Object.assign({}, S.staff[id] || st, { spare: on || null })); audit('staff', `${on ? 'Marked' : 'Unmarked'} ${st.name} as spare`, id); toast(on ? `${st.name} is spare. Press Rebalance to apply.` : `${st.name} is available again. Press Rebalance to give them a group.`); break; }
     case 'stLock': { if (!can.lockStaff()) break; const L = S.config.staffLock;
       if (!L && !await confirmBox('Close addition of staff?', 'Coordinators and everyone else can no longer add staff, import the staff form or make someone a counselor. The registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics still can. Editing and deleting existing records still works.', 'Close addition', true)) break;
       const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('staff', v ? 'Closed the addition of staff' : 'Opened the addition of staff'); await saveConfig({ staffLock: v }); toast(v ? 'Addition of staff closed' : 'Addition of staff opened'); break; }
@@ -4060,7 +4091,7 @@ document.addEventListener('submit', async e => {
   }
 });
 let qT = null;
-document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('te-in')) { teeLeft(); return; } if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
+document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('te-in')) { teeLeft(); return; } if (e.target.classList && e.target.classList.contains('xl-in')) { xlTotal(); return; } if (e.target.id === 'spName') { UI.split.name = e.target.value; const b = $('[data-act=spGo]'); if (b) b.disabled = !(e.target.value.trim() && S.P.some(p => UI.split.sel.has(areaOf(p).st + '|' + areaOf(p).un))); } });
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'coQ') { UI.coQ = t.value; clearTimeout(UI.coT); UI.coT = setTimeout(() => PAGE_IMPL.companies.update(), 200); return; }
