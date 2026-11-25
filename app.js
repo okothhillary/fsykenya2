@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-23c · edit blank T-shirt sizes';
+const APP_VERSION = '2026-11-25c · order by role, one line per role';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -2334,7 +2334,8 @@ PAGE_IMPL.logistics = {
   ${foldSec('sec-med', 'Medical', 'lgMedN', '<button class="btn small" data-act="lgCsv" data-v="med">Export CSV</button>', '<div id="lgMed"></div>')}
   ${foldSec('sec-diet', 'Dietary', 'lgDietN', '<button class="btn small" data-act="lgCsv" data-v="diet">Export CSV</button>', '<div id="lgDiet"></div>')}
   ${foldSec('sec-tee', 'T-shirts', 'lgTeeN', '<button class="btn small" data-act="lgCsv" data-v="size">Export order</button><button class="btn small" data-act="lgCsv" data-v="blank">Export blanks</button>', '<div id="lgSize"></div>')}
-  ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-steee', 'Staff T-shirts', 'lgStN', '<button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button>', '<div id="lgStaffSize"></div>')}`; },
+  ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-steee', 'Staff T-shirts', 'lgStN', '<button class="btn small" data-act="lgCsv" data-v="staffsize">Export staff and full order</button>', '<div id="lgStaffSize"></div>')}
+  ${['counselor', 'ac'].includes(role()) ? '' : foldSec('sec-strole', 'T-shirt sizes by role', 'lgSrN', `<button class="btn small" data-act="teeRolePdf">${ICONS.print} Download order by role (PDF)</button>`, '<div id="lgStaffRole"></div>')}`; },
   scope() { const mine = role() === 'counselor' ? new Set(myGroups().map(g => g.id)) : null; return (UI.logScope === 'in' ? S.P.filter(p => p.s === 'in') : registered()).filter(p => seesPrivate(p) && (!mine || (p.g && mine.has(p.g)))); },
   update() {
     const L = this.scope(), H = lgHash();
@@ -2360,6 +2361,7 @@ PAGE_IMPL.logistics = {
     $('#lgDiet').innerHTML = block(diet, 'dietIssue', DIET_CATS, 'do', 'diet');
     $('#lgSize').innerHTML = teeBlock(L, H);
     if ($('#lgStaffSize')) $('#lgStaffSize').innerHTML = staffTeeBlock(L);
+    if ($('#lgStaffRole')) { $('#lgStaffRole').innerHTML = staffRoleBlock(); const n = $('#lgSrN'); if (n) n.textContent = nn(teeRoleRows().rows.length, 'row'); }
     if (H && UI.lgLast !== H) { const sec = document.getElementById(H.startsWith('tee') ? 'sec-tee' : 'sec-' + H.split('-')[0]); if (sec && !sec.open) { sec.open = true; UI.foldSet = Object.assign(UI.foldSet || {}, { [sec.id]: true }); } const el = document.getElementById(H.startsWith('tee') ? 'tee-list' : H.split('-')[0] + '-list'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
     UI.lgLast = H;
   }
@@ -2399,6 +2401,92 @@ function staffTee() {
     blanks.sort((a, b) => a.name.localeCompare(b.name)).forEach((x, i) => { perPerson[x.id] = bag[i]; est[bag[i]] = (est[bag[i]] || 0) + 1; });
   }
   return { ST, est, perPerson };
+}
+/* staff T-shirt sizes for each role: the sizes people gave, plus blanks estimated the same way as the staff order */
+/* each staff member's size for the order: their own, or the estimate (or the custom split) for blanks */
+function staffSizesFinal() {
+  const { ST, perPerson: sug } = staffTee();
+  /* with a custom split of staff blanks, hand those sizes out in the same order as the suggestion (smallest suggested size first) */
+  const perPerson = Object.assign({}, sug), B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s));
+  if (B.custom && B.custom.s) { const blanks = ST.filter(x => !x.tshirt).sort((a, b) => sizeRank(sug[a.id]) - sizeRank(sug[b.id]) || a.name.localeCompare(b.name)), bag = [];
+    SIZE_ORDER.forEach(z => { for (let i = 0; i < (+B.custom.s[z] || 0); i++) bag.push(z); }); blanks.forEach((x, i) => { if (bag[i]) perPerson[x.id] = bag[i]; }); }
+  return { ST, perPerson, B };
+}
+/* the vendor order by role: participants first, then each staff role; each cell is [chosen, estimated] */
+function teeRoleRows() {
+  const L = UI.teeL || S.P.filter(p => p.inc || p.s), { ST, perPerson, B } = staffSizesFinal(), rows = [];
+  const yc = {}; SIZE_ORDER.forEach(z => { const t = B.R.totals[z]; yc[z] = [t ? t.given : 0, +(B.use.y[z] || 0)]; });
+  rows.push({ label: 'Participants', c: yc });
+  STAFF_ROLES.forEach(r => { const list = ST.filter(x => x.role === r); if (!list.length) return; const c = {}; SIZE_ORDER.forEach(z => { c[z] = [list.filter(x => x.tshirt === z).length, list.filter(x => !x.tshirt && perPerson[x.id] === z).length]; }); rows.push({ label: ROLE_PLURAL[r] || ROLES[r], c }); });
+  const sizes = SIZE_ORDER.filter(z => rows.some(r => r.c[z][0] + r.c[z][1]));
+  rows.forEach(r => { r.t = sizes.reduce((a, z) => a + r.c[z][0] + r.c[z][1], 0); r.e = sizes.reduce((a, z) => a + r.c[z][1], 0); });
+  return { rows, sizes };
+}
+async function printTeeByRole() {
+  const { rows, sizes } = teeRoleRows(); if (!sizes.length) { toast('There are no T-shirt sizes to print yet.', true); return; }
+  toast('Preparing the order…');
+  let Lb; try { Lb = await loadPdfLib(); } catch (e) { toast('Could not load the PDF tool. Check your connection and try again.', true); return; }
+  const { PDFDocument, StandardFonts, rgb, degrees } = Lb;
+  const C = h => rgb(parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255);
+  const doc = await PDFDocument.create();
+  const sess = (!S.config.sessionName || S.config.sessionName === 'FSY Kenya 2') ? 'FSY Kenya 2nd 2026' : S.config.sessionName;
+  doc.setTitle(pdfSafe(`${sess} T-shirt order by role`)); doc.setAuthor(pdfSafe(sess)); doc.setCreator('FSY Check-in');
+  const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  let logo = null; try { logo = await doc.embedPng(await logoPngBytes()); } catch (e) { }
+  const W = 595.28, H = 841.89, M = 36, ROW = 34, pg = doc.addPage([W, H]), top = H - M, bandH = 84;
+  const printed = new Date().toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const grand = rows.reduce((a, r) => a + r.t, 0), est = rows.reduce((a, r) => a + r.e, 0);
+  pg.drawRectangle({ x: M, y: top - bandH, width: W - 2 * M, height: bandH, color: C('#f6faf4') });
+  pg.drawRectangle({ x: M, y: top - bandH - 4, width: W - 2 * M, height: 4, color: C('#fcb449') });
+  let tx = M + 16; if (logo) { const sz = 62; pg.drawImage(logo, { x: M + 10, y: top - bandH + (bandH - sz) / 2, width: sz, height: sz }); tx = M + 84; }
+  pg.drawText(pdfSafe(`${sess.toUpperCase()}  -  T-SHIRT ORDER`), { x: tx, y: top - 22, size: 8, font: bold, color: C('#007da5') });
+  pg.drawText('T-shirt sizes by role', { x: tx, y: top - 46, size: 19, font: bold, color: C('#002846') });
+  pg.drawText(pdfSafe(`Participants (${UI.logScope === 'in' ? 'checked in now' : 'everyone registered'}) and staff`), { x: tx, y: top - 64, size: 11.5, font, color: C('#005175') });
+  const rt = `${grand} T-shirts`; pg.drawText(rt, { x: W - M - 14 - bold.widthOfTextAtSize(rt, 13), y: top - 46, size: 13, font: bold, color: C('#002846') });
+  const pr = pdfSafe('Printed ' + printed); pg.drawText(pr, { x: W - M - 14 - font.widthOfTextAtSize(pr, 8), y: top - 62, size: 8, font, color: C('#4f6f84') });
+  const roleW = 160, totW = 62, colW = (W - 2 * M - roleW - totW) / sizes.length;
+  const right = (t, x, y, f, sz, col) => pg.drawText(String(t), { x: x - f.widthOfTextAtSize(String(t), sz), y, size: sz, font: f, color: C(col || '#002846') });
+  const cx = i => M + roleW + colW * (i + 1) - 8, tX = W - M - 10;
+  let y = top - bandH - 32;
+  pg.drawRectangle({ x: M, y: y - 9, width: W - 2 * M, height: 26, color: C('#005175') });
+  pg.drawText('ROLE', { x: M + 10, y, size: 9, font: bold, color: C('#ffffff') });
+  sizes.forEach((z, i) => right(z, cx(i), y, bold, 9.5, '#ffffff')); right('TOTAL', tX, y, bold, 9, '#ffffff');
+  y -= ROW;
+  const drawRow = (label, vals, tot, shade, strong, colour) => {
+    if (shade) pg.drawRectangle({ x: M, y: y - 11, width: W - 2 * M, height: ROW, color: C(shade) });
+    pg.drawLine({ start: { x: M, y: y - 11 }, end: { x: W - M, y: y - 11 }, thickness: 0.5, color: C('#d2e5ee') });
+    pg.drawText(pdfSafe(label), { x: M + 10, y: colour ? y + 4 : y, size: strong ? 12 : 11, font: bold, color: C('#002846') });
+    if (colour) pg.drawText('Colour: ____________', { x: M + 10, y: y - 7, size: 7.5, font, color: C('#4f6f84') });
+    vals.forEach((v, i) => right(v || '-', cx(i), y, v ? (strong ? bold : font) : font, strong ? 12 : 11.5, v ? '#002846' : '#9fb3c0'));
+    right(tot, tX, y, bold, strong ? 13.5 : 12);
+    y -= ROW;
+  };
+  rows.forEach((r, k) => drawRow(r.label, sizes.map(z => r.c[z][0] + r.c[z][1]), r.t, k % 2 ? '#f6faf4' : null, false, true));
+  drawRow('Total to order', sizes.map(z => rows.reduce((a, r) => a + r.c[z][0] + r.c[z][1], 0)), grand, '#e8f3f8', true);
+  y -= 16;
+  const para = (t, sz, col, f) => { let line = ''; for (const w of pdfSafe(t).split(' ')) { const nx = line ? line + ' ' + w : w; if ((f || font).widthOfTextAtSize(nx, sz) > W - 2 * M - 8) { pg.drawText(line, { x: M + 4, y, size: sz, font: f || font, color: C(col) }); y -= sz + 4; line = w; } else line = nx; } if (line) { pg.drawText(line, { x: M + 4, y, size: sz, font: f || font, color: C(col) }); y -= sz + 8; } };
+  if (est) para(`${est} of these are for people who gave no size; their sizes were ${teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)).custom ? 'split by hand' : 'estimated from others in the same group'}.`, 9.5, '#4f6f84');
+  para('Each row is a separate order line, one shirt colour per role. Write the colour under each role.', 9.5, '#002846');
+  para('Sizes: XS extra small, S small, M medium, L large, XL extra large, XXL 2X large, 3XL 3X large. Test staff are not included.', 9, '#4f6f84');
+  y -= 10;
+  pg.drawText('Ordered by: ______________________________', { x: M + 4, y, size: 10.5, font, color: C('#002846') });
+  pg.drawText('Date: _______________', { x: M + 330, y, size: 10.5, font, color: C('#002846') });
+  pg.drawLine({ start: { x: M, y: M + 14 }, end: { x: W - M, y: M + 14 }, thickness: 0.5, color: C('#cfe3ec') });
+  pg.drawText(pdfSafe(`${sess}  -  T-shirt order by role`), { x: M, y: M, size: 8, font, color: C('#4f6f84') });
+  const bytes = await doc.save();
+  await S.dl.save({ filename: pdfSafe(`T-shirt order by role - ${sess}.pdf`).replace(/[\\/:*?"<>|]+/g, ''), data: new Blob([bytes], { type: 'application/pdf' }) });
+  audit('settings', `Downloaded the T-shirt order by role (${grand} shirts)`); toast(`Order by role ready: ${grand} shirts`);
+}
+function staffRoleBlock() {
+  const { rows, sizes } = teeRoleRows();
+  if (!sizes.length) return '<p class="note">Sizes appear here once participants or staff have T-shirt sizes.</p>';
+  const cell = v => `<td class="n">${v[0] + v[1] ? `<b>${v[0] + v[1]}</b>${v[1] ? ` <small class="est">(+${v[1]})</small>` : ''}` : '<span class="muted">–</span>'}</td>`;
+  const sumRow = list => { const c = {}; sizes.forEach(z => { c[z] = [list.reduce((a, r) => a + r.c[z][0], 0), list.reduce((a, r) => a + r.c[z][1], 0)]; }); return { c, t: list.reduce((a, r) => a + r.t, 0) }; };
+  const tr = (label, r, cls) => `<tr${cls ? ` class="${cls}"` : ''}><td><b>${esc(label)}</b></td>${sizes.map(z => cell(r.c[z])).join('')}<td class="n"><b>${r.t}</b></td></tr>`;
+  const staff = rows.slice(1);
+  return `<div class="tablewrap"><table><thead><tr><th>Role</th>${sizes.map(z => `<th class="n">${esc(SIZE_LABEL[z] || z)}</th>`).join('')}<th class="n">Total</th></tr></thead><tbody>
+    ${rows.map(r => tr(r.label, r)).join('')}${tr('Total to order', sumRow(rows), 'total')}</tbody></table></div>
+    <p class="note">Each role is its own line, so each can be ordered in its own colour. Numbers include people whose size was estimated, shown in brackets, for example <b>12</b> (+2). The totals match the full order above, including any custom split of blanks. Participants follow the choice at the top of the page; test staff are left out.</p>`;
 }
 function staffTeeBlock(L) {
   const { ST, est, perPerson } = staffTee();
@@ -3719,6 +3807,7 @@ document.addEventListener('click', async e => {
     case 'nmToggle': { const o = UI.nmOpen || (UI.nmOpen = new Set()); o.has(v) ? o.delete(v) : o.add(v); renderNonMembers(); break; }
     case 'dupDelAll': await deleteDuplicates(v === 'likely'); break;
     case 'teePdf': await printTeeOrder(); break;
+    case 'teeRolePdf': await printTeeByRole(); break;
     case 'teeEdit': if (can.teeEdit()) openTeeEditor(); break;
     case 'teeSug': { const B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)); document.querySelectorAll('.te-in').forEach(i => { i.value = +(B.sug[i.dataset.k][i.dataset.z] || 0); }); teeLeft(); break; }
     case 'teeSave': { const o = teeRead(); const B = teeBlanks(UI.teeL || S.P.filter(p => p.inc || p.s)); const same = ['y', 's'].every(k => SIZE_ORDER.every(z => (+(o[k][z] || 0)) === (+(B.sug[k][z] || 0)))); await saveTeeSplit(same ? null : o); break; }
