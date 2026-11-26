@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-26c · close check-in';
+const APP_VERSION = '2026-11-26d · undo all check-ins';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1662,6 +1662,7 @@ function moveSelect(p) {
 const PAGE_IMPL = {};
 function ciLockView() {
   const L = S.config.checkinLock, b = $('#ciLockBtn'), n = $('#ciLockNote');
+  const u = $('#ciUndoAllBtn'); if (u) { const n = S.P.filter(p => p.s === 'in' || p.s === 'out').length; u.disabled = !n; u.textContent = n ? `Undo all check-ins (${n})` : 'Undo all check-ins'; }
   if (b) { b.textContent = L ? 'Open check-in' : 'Close check-in'; b.classList.toggle('danger', !L); b.classList.toggle('primary', !!L); }
   if (n) n.innerHTML = L ? `<p class="ci-closed">Check-in is closed${L.by ? ' by ' + esc(L.by) : ''}${L.at ? ' since ' + esc(fmtWhen(L.at)) : ''}.${can.lockCheckin() ? ' You can still check people in.' : ''}</p>` : '';
 }
@@ -1671,7 +1672,7 @@ PAGE_IMPL.checkin = {
     const r = role();
     const mineLabel = r === 'counselor' ? 'My group' : r === 'ac' ? 'My company' : null;
     const segs = [['all', 'Everyone'], ['arrive', 'Not arrived'], ['in', 'Checked in'], ['out', 'Checked out']].concat(mineLabel ? [['mine', mineLabel]] : []);
-    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow" id="ciEye">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div>${can.lockCheckin() ? '<button class="btn" data-act="ciLock" id="ciLockBtn">Close check-in</button>' : ''}</div><div id="ciLockNote"></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
+    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow" id="ciEye">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div>${can.lockCheckin() ? '<div class="btnrow ci-admin"><button class="btn" data-act="ciUndoAll" id="ciUndoAllBtn">Undo all check-ins</button><button class="btn" data-act="ciLock" id="ciLockBtn">Close check-in</button></div>' : ''}</div><div id="ciLockNote"></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
     <div id="ciAnchor"></div>
     <div class="searchbar" id="ciBar">
       <div class="searchrow">${ICONS.search}<input type="search" id="ciQ" placeholder="Search name, unit or G12" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
@@ -4018,6 +4019,11 @@ document.addEventListener('click', async e => {
     case 'stSpare': { const st = S.staffMap[id]; if (!st || !can.staff() || !canManage(st)) break; const on = !st.spare;
       if (on && !await confirmBox(`Mark ${esc(st.name)} as spare?`, `They stay on the staff list but are kept in reserve. Rebalance and Regenerate leave them out${st.role === 'counselor' ? ': no group is given to them, and if they lead a group now, the next Rebalance gives it to another counselor' : ': no company is given to them, and if they oversee one now, the next Rebalance gives it to another AC'}.`, 'Mark spare')) break;
       await saveStaffRec(Object.assign({}, S.staff[id] || st, { spare: on || null })); audit('staff', `${on ? 'Marked' : 'Unmarked'} ${st.name} as spare`, id); toast(on ? `${st.name} is spare. Press Rebalance to apply.` : `${st.name} is available again. Press Rebalance to give them a group.`); break; }
+    case 'ciUndoAll': { if (!can.lockCheckin()) break; const L = S.P.filter(p => p.s === 'in' || p.s === 'out');
+      if (!L.length) { toast('Nobody is checked in.'); break; }
+      if (!await confirmTyped(`Undo all ${L.length} check-ins?`, `Everyone checked in or out in <b>${esc(sessName(S.sid))}</b> goes back to "not arrived". Their groups, records and walk-in entries stay. ${S.config.checkinLock ? '' : 'Close check-in first if you do not want people checking in again straight away.'}`, 'UNDO', 'Undo all check-ins')) break;
+      const m = {}; L.forEach(p => m[p.id] = { s: null, ti: null, to: null, by: null }); await setStates(m);
+      audit('checkin', `Undid all ${L.length} check-ins`); toast(`${L.length} check-ins undone`); break; }
     case 'ciLock': { if (!can.lockCheckin()) break; const L = S.config.checkinLock;
       if (!L && !await confirmBox('Close check-in?', 'Nobody except the registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics can check youth in or out until you open it again. Check-ins already made stay as they are.', 'Close check-in', true)) break;
       const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('checkin', v ? 'Closed check-in' : 'Opened check-in'); await saveConfig({ checkinLock: v }); toast(v ? 'Check-in closed' : 'Check-in open'); break; }
