@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-26g · My details shown in preview';
+const APP_VERSION = '2026-11-26h · installable app';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1398,6 +1398,8 @@ function subscribe() {
   else if (S.uid) db.doc('reports/' + S.uid).onSnapshot(d => { S.reports = d.exists ? { [S.uid]: (d.data() || {}).r || {} } : {}; S.reportsEx = d.exists; recompute(); }, () => { });
 }
 async function boot() {
+  /* lets phones install the app (Install / Add to Home screen); see sw.js */
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
   window.addEventListener('hashchange', () => { closeModal(); render(); });
   const CFG = appConfig(); if (!window.firebase || !CFG || !CFG.apiKey || /PASTE/.test(CFG.apiKey)) { S.setupNeeded = true; render(); return; }
   FB.app = firebase.initializeApp(CFG); FB.auth = firebase.auth(); FB.fs = firebase.firestore();
