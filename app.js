@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-26a · role changes follow who reports to whom';
+const APP_VERSION = '2026-11-26c · close check-in';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1015,7 +1015,7 @@ const S = {
   org: { groups: {}, companies: {} }, orgEx: false, config: Object.assign({}, DEFAULT_CONFIG), configEx: false,
   access: {}, accessEx: false, requests: {}, loaded: {},
   P: [], staffList: [], staffMap: {}, viewAs: null, viewAsStaff: null, names: {},
-  hc: {}, hcLoaded: false, sid: 'main', sessions: {}, mySessions: [],
+  hc: {}, hcLoaded: false, cached: {}, sid: 'main', sessions: {}, mySessions: [],
   medAdmin: false, medRead: false, reports: {}, email: null, medical: {}, medicalEx: new Set(), intake: {}, share: null, shares: {}, invites: {}, members: {}, inviteEmails: {}, claimTried: false
 };
 const UI = { stFold: (() => { try { return localStorage.getItem('fsy.stFold') !== '0'; } catch (e) { return true; } })(), page: null, frameKey: '', q: '', filter: 'all', stake: '', unit: '', limit: 40, logScope: 'all', staffTab: 'counselor', open: new Set(), openStakes: new Set(), band: '', imp: null, genLog: null, pending: false };
@@ -1054,6 +1054,8 @@ const can = {
   // closing or opening the addition of staff: the registration admin, Session Directing Couple, Area Seventy and Head of Logistics
   // splitting blank T-shirt sizes by hand: admins and the logistics team
   teeEdit: () => ['regadmin', 'sdc', 'seventy', 'loghead', 'logistics', 'coordinator'].includes(role()),
+  // opening and closing check-in for everyone
+  lockCheckin: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
   lockStaff: () => ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role()),
   // adding staff (new records, imports, making someone a counselor): anyone with staff rights, but once closed only the roles above
   addStaff: () => can.staff() && (!S.config.staffLock || ['regadmin', 'sdc', 'seventy', 'loghead'].includes(role())),
@@ -1168,7 +1170,17 @@ function auditState(pid, before, patch) {
   if ('do' in patch) audit('health', patch.do === 'n' ? `Marked ${n}'s dietary note as not an issue` : `Counted ${n}'s dietary note as an issue`, pid);
   if (patch.del) audit('settings', `Deleted participant ${n}`, pid);
 }
+/* while check-in is closed, only the people who can reopen it may check anyone in or out */
+function checkinClosed() { return !!S.config.checkinLock && !can.lockCheckin(); }
+function checkinClosedNotice() {
+  const L = S.config.checkinLock || {};
+  openModal(`<div class="modal-head"><h2>Check-in is closed</h2><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <p>${esc(L.by || 'The registration team')} closed check-in${L.at ? ' on ' + esc(fmtWhen(L.at)) : ''}. Nobody can check youth in or out until it is opened again.</p>
+    <p class="note">Ask the registration admin or the Session Directing Couple if you think it should be open.</p>
+    <div class="btnrow" style="justify-content:flex-end"><button class="btn primary" data-act="close">OK</button></div>`);
+}
 function setState(pid, patch) {
+  if (patch && 's' in patch && checkinClosed()) { checkinClosedNotice(); render(); return Promise.resolve(); }
   try { const b0 = bucketOf(pid); auditState(pid, (S.state[b0] || {})[pid], patch); } catch (e) { }
   const b = bucketOf(pid); S.state[b] = Object.assign({}, S.state[b] || {}); S.state[b][pid] = Object.assign({}, S.state[b][pid] || {}, patch);
   recompute(true); const ex = S.stateEx.has(b); S.stateEx.add(b);
@@ -1176,6 +1188,7 @@ function setState(pid, patch) {
   return upd('state/' + b, { p: { [pid]: patch } }, ex).catch(fail);
 }
 async function setStates(map) { // pid -> patch
+  if (Object.values(map).some(x => x && 's' in x) && checkinClosed()) { checkinClosedNotice(); return; }
   const byB = {}; for (const pid in map) { const b = bucketOf(pid); (byB[b] = byB[b] || {})[pid] = map[pid]; S.state[b] = Object.assign({}, S.state[b] || {}); S.state[b][pid] = Object.assign({}, S.state[b][pid] || {}, map[pid]); }
   recompute(true);
   for (const b in byB) { const ex = S.stateEx.has(b); S.stateEx.add(b); await upd('state/' + b, { p: byB[b] }, ex); }
@@ -1206,6 +1219,7 @@ function recompute(now) {
   };
   if (now) run(); else rcT = setTimeout(run, 120);
 }
+function cacheReady() { return ['roster', 'state', 'staff', 'org', 'config', 'access', 'med', 'inv', 'mem'].every(k => S.loaded[k] || (S.cached && S.cached[k])); }
 function loadedAll() { return ['roster', 'state', 'staff', 'org', 'config', 'access', 'med', 'inv', 'mem'].every(k => S.loaded[k]); }
 /* Medical and dietary notes are stored apart from the roster. Editors read them all; everyone else
    only gets a copy of the notes for the youth in their own scope (share/<their id>). */
@@ -1333,21 +1347,24 @@ async function scopeRefresh(force) {
 function touchMoves() { setDoc('state/_mv', { at: Date.now() }).catch(() => { }); }
 function subscribe() {
   const db = S.db; const onErr = e => { console.error(e); if (e.code === 'revoked') { S.noDb = true; render(); } };
-  const mark = (k, meta) => { if (!meta.fromCache) S.loaded[k] = true; };
+  /* server data marks a part as loaded; data already on the phone from last time lets the page show at once while it syncs */
+  const mark = (k, meta, has) => { if (!meta.fromCache) S.loaded[k] = true; else if (has !== false) S.cached[k] = true; };
   setTimeout(() => { if (!loadedAll()) { S.slow = true; render(); } }, 10000);
   if (scopeOn()) { SC.on = true; SC.key = null; db.doc('state/_mv').onSnapshot(d => { const v = d.exists ? d.data().at : 0; if (SC.mv != null && v !== SC.mv) scopeRefresh(true); SC.mv = v; }, () => { }); }
   else {
-  db.collection('roster').onSnapshot(sn => { const r = {}; S.rosterEx = new Set(); sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.rosterEx.add(d.id); }); S.roster = r; mark('roster', sn.metadata); recompute(); }, onErr);
-  db.collection('state').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.stateEx.add(d.id); }); S.state = r; mark('state', sn.metadata); recompute(); }, onErr);
+  db.collection('roster').onSnapshot(sn => { const r = {}; S.rosterEx = new Set(); sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.rosterEx.add(d.id); }); S.roster = r; mark('roster', sn.metadata, sn.size > 0); recompute(); }, onErr);
+  db.collection('state').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => { r[d.id] = Object.assign({}, (d.data() || {}).p || {}); S.stateEx.add(d.id); }); S.state = r; mark('state', sn.metadata, sn.size > 0); recompute(); }, onErr);
   }
-  db.doc('staff/all').onSnapshot(d => { S.staffCols = d.exists ? d.data().cols || null : null; S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata); recompute(); }, onErr);
-  db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata); recompute(); }, onErr);
+  db.doc('staff/all').onSnapshot(d => { S.staffCols = d.exists ? d.data().cols || null : null; S.staff = d.exists ? Object.assign({}, d.data().s || {}) : {}; S.staffEx = d.exists || S.staffEx; mark('staff', d.metadata, d.exists); recompute(); }, onErr);
+  db.doc('org/structure').onSnapshot(d => { const v = d.exists ? d.data() : {}; S.org = { groups: Object.assign({}, v.groups || {}), companies: Object.assign({}, v.companies || {}) }; S.orgGen = v.gen || null; S.orgLock = v.lock || null; S.orgEx = d.exists || S.orgEx; mark('org', d.metadata, d.exists); recompute(); }, onErr);
   S.hcSub = null; hcSubscribe(); /* headcounts load only what this person needs (see hcSubscribe) */
   db.doc('config/tee').onSnapshot(d => { const v = d.exists ? d.data() : null; S.teeDoc = v || {}; S.teeCustom = v && (v.y || v.s) ? v : null; S.teeExtra = (v && v.extra) || {}; recompute(); }, () => { });
-  db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata); recompute(); }, onErr);
+  db.doc('config/session').onSnapshot(d => { S.config = Object.assign({}, DEFAULT_CONFIG, d.exists ? d.data() : {}); S.configEx = d.exists; mark('config', d.metadata, d.exists); recompute(); }, onErr);
   S.access = {}; S.loaded.access = true;
   if (S.medAdmin) {
-    db.collection('requests').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.requests = r; recompute(); }, onErr);
+    db.collection('requests').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); const before = S.reqSeen; S.requests = r;
+      const now = pendingReqs(); if (before) { const fresh = now.filter(id => !before.has(id)); if (fresh.length && can.accounts()) toast(fresh.length === 1 ? `New sign-in request from ${S.requests[fresh[0]].name || S.requests[fresh[0]].email || 'someone'}` : `${fresh.length} new sign-in requests`, false, { label: 'See', fn: () => { location.hash = 'access'; } }); }
+      if (!sn.metadata.fromCache) S.reqSeen = new Set(now); renderReqs(); recompute(); }, onErr);
     db.collection('invites').onSnapshot(sn => { const r = {}; sn.docs.forEach(d => r[d.id] = d.data()); S.invites = r; mark('inv', sn.metadata); recompute(); }, onErr);
     db.collection('profiles').onSnapshot(sn => { const m = {}, p = {}; sn.docs.forEach(d => { const v = d.data() || {}; p[d.id] = v; if (v.email) m[d.id] = { h: emailKey(v.email) }; }); S.profiles = p; S.members = m; mark('mem', sn.metadata); recompute(); }, onErr);
   } else {
@@ -1452,7 +1469,8 @@ function renderHeader() {
 const SHORT_ROLE = { wellness: 'Wellness', regadmin: 'Reg admin', sdc: 'Session Directing Couple', seventy: 'Area Seventy', loghead: 'Logistics head', coordinator: 'Coordinator', ac: 'Asst. coordinator', counselor: 'Counselor', logistics: 'Logistics' };
 function renderNav() {
   const cur = currentPage() === 'planner' ? 'sessions' : currentPage(); const keys = navPages();
-  $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}</button>`).join('');
+  const nReq = can.accounts() ? pendingReqs().length : 0;
+  $('#nav').innerHTML = keys.map(k => `<button class="tab" data-act="nav" data-v="${k}" ${k === cur ? 'aria-current="page"' : ''}>${esc(PAGES.find(p => p[0] === k)[1])}${k === 'access' && nReq ? ` <span class="nav-badge" title="${nReq} sign-in request${nReq === 1 ? '' : 's'}">${nReq}</span>` : ''}</button>`).join('');
   fitWidth();
   const bn = $('#bnav');
   if (!keys.length || gateView()) { bn.hidden = true; return; }
@@ -1540,7 +1558,7 @@ function gateView() {
   if (S.setupNeeded) return `<div class="gate">${ident}<h1>Finish setting up</h1><p class="note">Put your Firebase settings and owner emails in <b>config.js</b>, upload it next to index.html, then reload.</p></div>`;
   if (S.signedOut) return `<div class="gate">${ident}<p class="tag">FSY Kenya 2nd 2026 · Check-in</p><h1>Welcome, let's get everyone checked in</h1><p class="note">Sign in with the Google account your registration admin set up for you.</p><button class="btn primary gbtn" data-act="signIn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.6a4.8 4.8 0 0 1-2.1 3.1v2.6h3.4c2-1.8 3.1-4.5 3.1-7.5z"/><path fill="#34A853" d="M12 22c2.8 0 5.2-.9 6.9-2.5l-3.4-2.6c-.9.6-2.1 1-3.5 1-2.7 0-5-1.8-5.8-4.3H2.7v2.7A10 10 0 0 0 12 22z"/><path fill="#FBBC05" d="M6.2 13.6a6 6 0 0 1 0-3.8V7.1H2.7a10 10 0 0 0 0 9.2z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.9.5 4 1.5l3-3A10 10 0 0 0 2.7 7.1l3.5 2.7C7 7.7 9.3 5.9 12 5.9z"/></svg>Sign in with Google</button></div>`;
   if (!S.uid) return `<div class="empty"><h3>Checking your sign-in…</h3>One moment.</div>`;
-  if (!loadedAll() && !S.slow) return `<div class="empty"><h3>Loading the session…</h3>Participants, groups and check-ins appear here once the data connects.</div>`;
+  if (!loadedAll() && !cacheReady() && !S.slow) return `<div class="empty"><h3>Loading the session…</h3>Participants, groups and check-ins appear here once the data connects.</div>`;
   if (!role()) {
     const mine = S.requests[S.uid];
     return `<div class="gate">${ident}<h1>No account for you yet</h1>
@@ -1642,13 +1660,18 @@ function moveSelect(p) {
 
 /* page: check-in */
 const PAGE_IMPL = {};
+function ciLockView() {
+  const L = S.config.checkinLock, b = $('#ciLockBtn'), n = $('#ciLockNote');
+  if (b) { b.textContent = L ? 'Open check-in' : 'Close check-in'; b.classList.toggle('danger', !L); b.classList.toggle('primary', !!L); }
+  if (n) n.innerHTML = L ? `<p class="ci-closed">Check-in is closed${L.by ? ' by ' + esc(L.by) : ''}${L.at ? ' since ' + esc(fmtWhen(L.at)) : ''}.${can.lockCheckin() ? ' You can still check people in.' : ''}</p>` : '';
+}
 PAGE_IMPL.checkin = {
   frame() {
     if (!UI.filterSet) { UI.filterSet = true; if (['counselor', 'ac'].includes(role())) UI.filter = 'mine'; }
     const r = role();
     const mineLabel = r === 'counselor' ? 'My group' : r === 'ac' ? 'My company' : null;
     const segs = [['all', 'Everyone'], ['arrive', 'Not arrived'], ['in', 'Checked in'], ['out', 'Checked out']].concat(mineLabel ? [['mine', mineLabel]] : []);
-    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow" id="ciEye">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
+    return `<section class="hero ci-hero"><div class="ci-top"><div><p class="eyebrow" id="ciEye">Check-in${r === 'counselor' || r === 'ac' ? '' : ' · whole session'}</p><div class="bignum"><b id="ciNum">0</b><span id="ciOf"></span></div></div>${can.lockCheckin() ? '<button class="btn" data-act="ciLock" id="ciLockBtn">Close check-in</button>' : ''}</div><div id="ciLockNote"></div><div class="prog"><i id="ciProg" style="width:0"></i></div><div class="hstats" id="ciK"></div></section>
     <div id="ciAnchor"></div>
     <div class="searchbar" id="ciBar">
       <div class="searchrow">${ICONS.search}<input type="search" id="ciQ" placeholder="Search name, unit or G12" value="${esc(UI.q)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Search participants"><span id="ciCount" class="count"></span><button type="button" class="clr" data-act="ciClear" aria-label="Clear search">×</button></div>
@@ -1658,6 +1681,7 @@ PAGE_IMPL.checkin = {
     <div id="ciList"></div><div class="more" id="ciMore"></div>`;
   },
   update() {
+    ciLockView();
     const P = S.P;
     const exp = P.filter(isExpected).length;
     const inn = P.filter(p => p.s === 'in').length, out = P.filter(p => p.s === 'out').length, wk = P.filter(p => p.src === 'walkin').length;
@@ -3674,6 +3698,15 @@ async function doImport() {
 }
 
 /* page: access */
+/* sign-in requests: drawn on their own so a new one shows straight away, even while another part of the page is in use */
+function pendingReqs() { return Object.keys(S.requests || {}).filter(id => S.requests[id] && !S.invites[emailKey(S.requests[id].email || '')]).sort((a, b) => (S.requests[a].at || 0) - (S.requests[b].at || 0)); }
+function reqHTML() {
+  const ids = pendingReqs(), ps = S.profiles || {};
+  const nm = id => (S.requests[id] && S.requests[id].name) || (ps[id] && ps[id].name) || 'Someone';
+  const roleSel = id => `<select data-act="reqRole" data-id="${esc(id)}" aria-label="Role">${opt('', 'Choose role…', true)}${Object.keys(ROLES).filter(r => roleAssignable(r)).map(r => opt(r, ROLES[r], false)).join('')}</select>`;
+  return ids.length ? ids.map(id => { const r = S.requests[id]; return `<div class="panel req-card" style="box-shadow:none;margin-bottom:8px"><b>${esc(nm(id))}</b>${r.email ? ` <small class="muted">${esc(r.email)}</small>` : ''}<br><small class="muted">${esc(fmtTime(r.at))}</small><p style="margin:6px 0">“${esc(r.note || 'No note')}”</p><div class="inline">${roleSel(id)}<button class="btn small danger" data-act="reqDel" data-id="${esc(id)}">Dismiss</button></div></div>`; }).join('') : '<p class="note">No pending requests.</p>';
+}
+function renderReqs() { const box = $('#acReq'); if (box && !box.contains(document.activeElement)) box.innerHTML = reqHTML(); renderNav(); }
 PAGE_IMPL.access = {
   frame() {
     return `<section class="pagehead"><div><p class="th">Accounts</p><h1>Who can use the app</h1><p class="note" style="margin:4px 0 0">Create an account for each person with their Google email. When they sign in with that Google account, they get their role straight away.</p></div></section>
@@ -3729,7 +3762,7 @@ PAGE_IMPL.access = {
     const nm = id => (S.requests[id] && S.requests[id].name) || (ps[id] && ps[id].name) || 'Someone';
     const roleSel = (id, cur, act) => `<select data-act="${act}" data-id="${esc(id)}" aria-label="Role">${opt('', 'Choose role…', !cur)}${Object.keys(ROLES).filter(r => roleAssignable(r)).map(r => opt(r, ROLES[r], r === cur)).join('')}</select>`;
     const staffSel = (id, cur) => `<select data-act="acStaff" data-id="${esc(id)}" aria-label="Linked staff record">${staffOpts(cur)}</select>`;
-    $('#acReq').innerHTML = reqIds.length ? reqIds.map(id => { const r = S.requests[id]; return `<div class="panel" style="box-shadow:none;margin-bottom:8px"><b>${esc(nm(id))}</b>${r.email ? ` <small class="muted">${esc(r.email)}</small>` : ''}<br><small class="muted">${esc(fmtTime(r.at))}</small><p style="margin:6px 0">“${esc(r.note || 'No note')}”</p><div class="inline">${roleSel(id, '', 'reqRole')}<button class="btn small danger" data-act="reqDel" data-id="${esc(id)}">Dismiss</button></div></div>`; }).join('') : '<p class="note">No pending requests.</p>';
+    if (!$('#acReq').contains(document.activeElement)) $('#acReq').innerHTML = reqHTML();
     if ($('#acList')) $('#acList').innerHTML = accIds.length ? `<div class="tablewrap"><table><thead><tr><th>Person</th><th>Role</th><th>Staff record</th><th></th></tr></thead><tbody>${accIds.map(id => { const a = S.access[id]; return `<tr><td><b>${esc(nm(id))}</b></td><td>${roleSel(id, a.role, 'acRole')}</td><td>${['counselor', 'ac', 'coordinator', 'sdc'].includes(a.role) ? staffSel(id, a.staffId) : '<span class="muted">—</span>'}</td><td><button class="btn small danger" data-act="acDel" data-id="${esc(id)}">Remove</button></td></tr>`; }).join('')}</tbody></table></div>` : '<p class="note">None. Roles given from a request show here.</p>';
   }
 };
@@ -3985,6 +4018,9 @@ document.addEventListener('click', async e => {
     case 'stSpare': { const st = S.staffMap[id]; if (!st || !can.staff() || !canManage(st)) break; const on = !st.spare;
       if (on && !await confirmBox(`Mark ${esc(st.name)} as spare?`, `They stay on the staff list but are kept in reserve. Rebalance and Regenerate leave them out${st.role === 'counselor' ? ': no group is given to them, and if they lead a group now, the next Rebalance gives it to another counselor' : ': no company is given to them, and if they oversee one now, the next Rebalance gives it to another AC'}.`, 'Mark spare')) break;
       await saveStaffRec(Object.assign({}, S.staff[id] || st, { spare: on || null })); audit('staff', `${on ? 'Marked' : 'Unmarked'} ${st.name} as spare`, id); toast(on ? `${st.name} is spare. Press Rebalance to apply.` : `${st.name} is available again. Press Rebalance to give them a group.`); break; }
+    case 'ciLock': { if (!can.lockCheckin()) break; const L = S.config.checkinLock;
+      if (!L && !await confirmBox('Close check-in?', 'Nobody except the registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics can check youth in or out until you open it again. Check-ins already made stay as they are.', 'Close check-in', true)) break;
+      const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('checkin', v ? 'Closed check-in' : 'Opened check-in'); await saveConfig({ checkinLock: v }); toast(v ? 'Check-in closed' : 'Check-in open'); break; }
     case 'stLock': { if (!can.lockStaff()) break; const L = S.config.staffLock;
       if (!L && !await confirmBox('Close addition of staff?', 'Coordinators and everyone else can no longer add staff, import the staff form or make someone a counselor. The registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics still can. Editing and deleting existing records still works.', 'Close addition', true)) break;
       const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('staff', v ? 'Closed the addition of staff' : 'Opened the addition of staff'); await saveConfig({ staffLock: v }); toast(v ? 'Addition of staff closed' : 'Addition of staff opened'); break; }
