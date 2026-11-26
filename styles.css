@@ -838,3 +838,13 @@ td.st-act .st-spare{display:block;margin-top:6px}
 .modal>.modal-head{position:sticky;top:-12px;z-index:3;background:var(--surface);margin:-12px -18px 0;padding:12px 18px 10px;border-bottom:1px solid var(--line)}
 @media (min-width:700px){.modal>.modal-head{top:-20px;margin:-20px -20px 0;padding:16px 20px 12px}}
 .modal-done{width:100%;margin-top:4px}
+/* Split companies */
+#spSeg{flex-wrap:wrap}
+.sp-tbl{width:100%;border-collapse:collapse;font-size:.9rem}
+.sp-tbl th,.sp-tbl td{padding:6px 8px;border-bottom:1px solid var(--line,#dde5e0);text-align:left}
+.sp-tbl .num{text-align:right}
+.sp-acs{margin-top:10px;font-size:.88rem}
+.sp-acs summary{cursor:pointer;font-weight:700}
+.sp-acs ul{margin:6px 0 0;padding-left:18px;max-height:220px;overflow:auto}
+.callout.sp-prev{border:2px dashed var(--blue35,#006184);background:#eef6fa;padding:12px 16px;border-radius:14px;margin-bottom:12px}
+.callout.sp-prev ul{margin:6px 0 8px;padding-left:18px}
