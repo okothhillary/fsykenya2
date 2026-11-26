@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-26e · check-in lock in the database';
+const APP_VERSION = '2026-11-26f · easier to close details on phones';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -1132,8 +1132,19 @@ function askText(title, label) {
     $('#cfOk').onclick = () => { const v = clean(($('#atText') || {}).value); closeModal(); res(v); }; $('#cfNo').onclick = () => { closeModal(); res(null); };
   });
 }
-function openModal(html) { $('#modalRoot').innerHTML = `<div class="modal-bg" id="mbg"><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`; $('#mbg').addEventListener('click', e => { if (e.target.id === 'mbg') closeModal(); }); }
-function closeModal() { $('#modalRoot').innerHTML = ''; }
+/* pop-up windows: the phone's Back button closes them, and the close button stays in view while scrolling */
+let modalHist = false, ignorePop = false;
+function openModal(html) {
+  $('#modalRoot').innerHTML = `<div class="modal-bg" id="mbg"><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`;
+  $('#mbg').addEventListener('click', e => { if (e.target.id === 'mbg') closeModal(); });
+  if (!modalHist) { try { history.pushState({ fsyModal: 1 }, ''); modalHist = true; } catch (e) { } }
+}
+function closeModal() {
+  $('#modalRoot').innerHTML = '';
+  /* take the extra history step back, unless another pop-up opened straight away */
+  setTimeout(() => { if (!$('#mbg') && modalHist) { modalHist = false; ignorePop = true; try { history.back(); } catch (e) { ignorePop = false; } } }, 0);
+}
+window.addEventListener('popstate', () => { if (ignorePop) { ignorePop = false; return; } if (modalHist) { modalHist = false; $('#modalRoot').innerHTML = ''; } });
 async function exportCSV(name, rows) {
   if (!S.dl) { toast('Downloads are not available in this view.', true); return; }
   try { await S.dl.save({ filename: name, data: '﻿' + toCSV(rows) }); } catch (e) { if (e && e.code !== 'declined') toast('The file was not saved.', true); }
@@ -3795,7 +3806,8 @@ function openDetail(id) {
     <div class="span2 btnrow"><button class="btn primary" type="submit">Save changes</button></div></form></details>
   <div class="btnrow">${p.inc ? `<button class="btn" data-act="ovr" data-v="exc" data-id="${esc(p.id)}">Exclude from session</button>` : `<button class="btn" data-act="ovr" data-v="inc" data-id="${esc(p.id)}">Include in session</button>`}${p.ov ? `<button class="btn" data-act="ovr" data-v="" data-id="${esc(p.id)}">Use area rules</button>` : ''}
     <button class="btn" data-act="flagIssue" data-v="mo" data-id="${esc(p.id)}">${p.medIssue ? 'Medical: not an issue' : 'Medical: count as issue'}</button><button class="btn" data-act="flagIssue" data-v="do" data-id="${esc(p.id)}">${p.dietIssue ? 'Diet: not an issue' : 'Diet: count as issue'}</button>
-    ${can.deleteP() ? `<button class="btn danger" data-act="delP" data-id="${esc(p.id)}">Delete participant</button>` : ''}</div>` : ''}`);
+    ${can.deleteP() ? `<button class="btn danger" data-act="delP" data-id="${esc(p.id)}">Delete participant</button>` : ''}</div>` : ''}
+    <button class="btn modal-done" data-act="close">Close</button>`);
 }
 
 /* generator actions */
