@@ -49,7 +49,7 @@ const downloadShim = {
 /* Core logic */
 /* FSY Check-in core logic (pure functions, no DOM) */
 const NBUCKETS = 32;
-const APP_VERSION = '2026-11-26d · undo all check-ins';
+const APP_VERSION = '2026-11-26e · check-in lock in the database';
 const BANDS = { Y: '14–15', O: '16–18' }; /* labels only: 13-year-olds turning 14 during the session are placed with the 14–15s, and every age is kept as recorded */
 const GENDERS = { F: 'Female', M: 'Male' };
 const ROLES = {
@@ -4021,9 +4021,9 @@ document.addEventListener('click', async e => {
       await saveStaffRec(Object.assign({}, S.staff[id] || st, { spare: on || null })); audit('staff', `${on ? 'Marked' : 'Unmarked'} ${st.name} as spare`, id); toast(on ? `${st.name} is spare. Press Rebalance to apply.` : `${st.name} is available again. Press Rebalance to give them a group.`); break; }
     case 'ciUndoAll': { if (!can.lockCheckin()) break; const L = S.P.filter(p => p.s === 'in' || p.s === 'out');
       if (!L.length) { toast('Nobody is checked in.'); break; }
-      if (!await confirmTyped(`Undo all ${L.length} check-ins?`, `Everyone checked in or out in <b>${esc(sessName(S.sid))}</b> goes back to "not arrived". Their groups, records and walk-in entries stay. ${S.config.checkinLock ? '' : 'Close check-in first if you do not want people checking in again straight away.'}`, 'UNDO', 'Undo all check-ins')) break;
+      if (!await confirmTyped(`Undo ${L.length === 1 ? 'the 1 check-in' : 'all ' + L.length + ' check-ins'}?`, `Everyone checked in or out in <b>${esc(sessName(S.sid))}</b> goes back to "not arrived". Their groups, records and walk-in entries stay. ${S.config.checkinLock ? '' : 'Close check-in first if you do not want people checking in again straight away.'}`, 'UNDO', 'Undo all check-ins')) break;
       const m = {}; L.forEach(p => m[p.id] = { s: null, ti: null, to: null, by: null }); await setStates(m);
-      audit('checkin', `Undid all ${L.length} check-ins`); toast(`${L.length} check-ins undone`); break; }
+      audit('checkin', `Undid ${L.length === 1 ? 'the only check-in' : 'all ' + L.length + ' check-ins'}`); toast(`${nn(L.length, 'check-in')} undone`); break; }
     case 'ciLock': { if (!can.lockCheckin()) break; const L = S.config.checkinLock;
       if (!L && !await confirmBox('Close check-in?', 'Nobody except the registration admin, the Session Directing Couple, the Area Seventy and the Head of Logistics can check youth in or out until you open it again. Check-ins already made stay as they are.', 'Close check-in', true)) break;
       const v = L ? null : { at: Date.now(), by: S.meName || S.email || '' }; audit('checkin', v ? 'Closed check-in' : 'Opened check-in'); await saveConfig({ checkinLock: v }); toast(v ? 'Check-in closed' : 'Check-in open'); break; }
